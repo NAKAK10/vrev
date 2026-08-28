@@ -21,19 +21,20 @@ interface ServeArguments {
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve --project-root <root> --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--allow-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: visual-review serve --project-root <root> --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
   if (argv[0] !== "serve") serveUsage();
   const values = new Map<string, string>();
   let allowScripts = false;
-  let allowAiJobsWithScripts = false;
+  let allowAiJobsWithScripts = true;
   let open = true;
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index]!;
     if (argument === "--allow-scripts") { allowScripts = true; continue; }
     if (argument === "--allow-ai-jobs-with-scripts") { allowAiJobsWithScripts = true; continue; }
+    if (argument === "--no-ai-jobs-with-scripts") { allowAiJobsWithScripts = false; continue; }
     if (argument === "--no-open") { open = false; continue; }
     if (!["--project-root", "--target", "--start", "--stop", "--host", "--port"].includes(argument)) serveUsage();
     const value = argv[index + 1];
@@ -50,9 +51,6 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   }
   if (values.has("--start") && !liveTarget) throw new Error("--start requires a loopback URL target");
   if (values.has("--stop") && !values.has("--start")) throw new Error("--stop requires --start");
-  if (allowAiJobsWithScripts && !allowScripts && !liveTarget) {
-    throw new Error("--allow-ai-jobs-with-scripts requires --allow-scripts or a loopback URL target");
-  }
   const host = values.get("--host") ?? "127.0.0.1";
   assertLoopbackHost(host);
   const portText = values.get("--port") ?? "18765";

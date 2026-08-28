@@ -33,7 +33,7 @@ review保存先、schema v2、schema 1 migration、status/event規則は既存re
 
 `--allow-scripts`は信頼済みlocal prototype専用である。対象scriptからAI processを意図せず起動する
 経路を作らないため、このmodeでは既定でjobs APIとUIのAI一括修正を無効にする。動的UIとAI修正を
-併用する場合は、対象コードを完全に信頼したうえで`--allow-ai-jobs-with-scripts`を追加する二段階の明示許可とする。
+AI一括修正は通常運用を優先してCLI既定で有効とする。対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。
 
 ## Coordinator sessions are CLI-owned
 

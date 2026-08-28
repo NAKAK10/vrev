@@ -291,7 +291,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         const url = new URL(request.url ?? "/", "http://localhost");
         const pathname = url.pathname;
         if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
-          throw new HttpError(403, "AI jobs require explicit --allow-ai-jobs-with-scripts consent when target scripts are allowed");
+          throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, "index.html"));
         if (request.method === "GET" && ["/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname)) {

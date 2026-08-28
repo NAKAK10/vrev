@@ -79,17 +79,7 @@ visual-review serve \
   --allow-scripts
 ```
 
-対象JavaScriptとAI一括修正を併用する場合は、追加の明示許可が必要です。
-
-```bash
-visual-review serve \
-  --project-root /absolute/path/to/project \
-  --target .code/htmls/example/index.html \
-  --allow-scripts \
-  --allow-ai-jobs-with-scripts
-```
-
-未確認または第三者由来のHTMLでは、上記2つのflagを使用しないでください。
+AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI修正を無効にしたい場合だけ、`--no-ai-jobs-with-scripts`を指定します。未確認または第三者由来のHTMLでは`--allow-scripts`を使用しないでください。
 
 ## 操作
 
@@ -117,8 +107,7 @@ npm run build
 ```bash
 visual-review serve \
   --project-root /path/to/repository \
-  --target http://127.0.0.1:5173 \
-  --allow-ai-jobs-with-scripts
+  --target http://127.0.0.1:5173
 ```
 
 開発サーバーも同時に起動する場合:
@@ -127,8 +116,7 @@ visual-review serve \
 visual-review serve \
   --project-root /path/to/repository \
   --target http://127.0.0.1:5173 \
-  --start "npm run dev" \
-  --allow-ai-jobs-with-scripts
+  --start "npm run dev"
 ```
 
 `--start`のprocessはproject rootで起動し、Visual Review終了時に停止します。Docker Composeなど起動command自体が終了してserviceだけが残る構成では、`--stop "npm run down"`も指定してください。

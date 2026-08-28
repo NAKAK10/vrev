@@ -333,6 +333,9 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.equal(parsed.open, false);
   const defaults = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png"], "/tmp");
   assert.equal(defaults.port, 18765);
+  assert.equal(defaults.allowAiJobsWithScripts, true);
+  const optedOut = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--no-ai-jobs-with-scripts"], "/tmp");
+  assert.equal(optedOut.allowAiJobsWithScripts, false);
   const live = parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--start", "npm run dev", "--stop", "npm run down"], "/tmp");
   assert.equal(live.target, "http://localhost:5173");
   assert.equal(live.startCommand, "npm run dev");
@@ -340,7 +343,6 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.throws(() => assertLoopbackHost("0.0.0.0"), /host/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets\\x.png"]), /POSIX/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--port", "0"]), /port/);
-  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--allow-ai-jobs-with-scripts"]), /requires --allow-scripts/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback URL/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--stop", "npm run down"]), /requires --start/);
 });
