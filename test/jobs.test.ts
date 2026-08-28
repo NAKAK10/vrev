@@ -97,6 +97,7 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   const manager = new JobManager(store, { executor: control.executor });
   manager.start();
   const enqueued = manager.enqueue({ cli: "opencode", max_parallel: 4 });
+  assert.ok(store.load().annotations.every(({ status }) => status === "in_progress"));
   await waitFor(() => control.pending.length === 1);
   const prompt = control.pending[0]!.spec.args.at(-1)!;
   assert.equal(control.pending[0]!.spec.cwd, store.target.projectRoot);
@@ -110,6 +111,7 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();
   assert.equal(enqueued.jobs.length, 3);
+  assert.ok(store.load().annotations.every(({ status }) => status === "open"));
 });
 
 test("requires addressed plus a new AI message for each successful job", async () => {
@@ -130,6 +132,8 @@ test("requires addressed plus a new AI message for each successful job", async (
   assert.equal(byAnnotation.get(succeededId)?.state, "succeeded");
   assert.equal(byAnnotation.get(failedId)?.state, "failed");
   assert.match(byAnnotation.get(failedId)?.summary ?? "", /postcondition/);
+  assert.equal(store.load().annotations.find(({ id }) => id === succeededId)?.status, "addressed");
+  assert.equal(store.load().annotations.find(({ id }) => id === failedId)?.status, "open");
   await manager.close();
 });
 

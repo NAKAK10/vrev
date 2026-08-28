@@ -87,12 +87,12 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 - `N`: DOMノード選択
 - `R`: 矩形範囲指定
 - `PC / タブレット / スマホ`: responsive表示切り替え
-- `最大並列数`: read-only調査agentを1〜10で選択
-- `注釈を保存したら自動でAI修正を開始`: 有効にすると、注釈保存後に確認dialogなしでjobをqueueへ追加。設定はbrowserに保存
+- AI一括修正欄右上の`•••`: CLI、最大並列数（read-only調査agent 1〜10）、自動実行をmodalで設定
+- `注釈を保存したら自動でAI修正を開始`: 有効にすると、注釈保存後に確認dialogなしでjobをqueueへ追加。設定はbrowserに保存され、手動の「AIにまとめて修正依頼」ボタンは非表示
 
 注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。
 
-AIは修正後にメッセージを追加して `addressed` へ変更します。`resolved`へ変更できるのは人間だけです。
+注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。job失敗・キャンセル時は`in_progress`から`open`へ戻ります。`resolved`へ変更できるのは人間だけです。
 
 ## 開発
 

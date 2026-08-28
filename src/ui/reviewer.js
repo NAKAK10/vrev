@@ -52,6 +52,7 @@ const elements = {
 
 const STATUS_LABELS = {
   open: "未対応",
+  in_progress: "AI対応中",
   addressed: "AI対応済み",
   resolved: "解決済み",
 };
@@ -292,7 +293,7 @@ function setMode(mode) {
 
 function renderSidebar() {
   const all = annotations();
-  const statusCounts = { open: 0, addressed: 0, resolved: 0 };
+  const statusCounts = { open: 0, in_progress: 0, addressed: 0, resolved: 0 };
   for (const annotation of all) {
     const status = annotation.status || "open";
     if (status in statusCounts) statusCounts[status] += 1;
@@ -300,6 +301,7 @@ function renderSidebar() {
   elements.annotationTotal.textContent = String(all.length);
   elements.statusCounts.replaceChildren(
     countItem(`未対応 ${statusCounts.open}`),
+    countItem(`AI対応中 ${statusCounts.in_progress}`),
     countItem(`AI対応済み ${statusCounts.addressed}`),
     countItem(`解決済み ${statusCounts.resolved}`),
   );
@@ -399,6 +401,10 @@ function createAnnotationCard(annotation, number) {
   if (status === "open") {
     statusButton.classList.add("waiting");
     statusButton.textContent = "AI対応待ち";
+    statusButton.disabled = true;
+  } else if (status === "in_progress") {
+    statusButton.classList.add("waiting");
+    statusButton.textContent = "AIが修正中";
     statusButton.disabled = true;
   } else if (status === "addressed") {
     statusButton.classList.add("resolve");

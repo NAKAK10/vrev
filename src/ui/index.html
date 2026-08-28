@@ -58,38 +58,12 @@
           <section class="sidebar-section ai-jobs-section" aria-labelledby="ai-jobs-heading">
             <div class="section-heading-row">
               <h2 id="ai-jobs-heading">AI一括修正</h2>
-              <span class="open-count"><span id="ai-open-count">0</span>件 未対応</span>
+              <div class="ai-heading-actions">
+                <span class="open-count"><span id="ai-open-count">0</span>件 未対応</span>
+                <button id="ai-settings-open" class="ai-settings-open" type="button" aria-label="AI修正設定を開く" title="AI修正設定">•••</button>
+              </div>
             </div>
             <form id="ai-batch-form" class="ai-batch-form">
-              <div class="ai-control-grid">
-                <label for="ai-cli">
-                  <span>CLI</span>
-                  <select id="ai-cli" name="cli">
-                    <option value="opencode">OpenCode</option>
-                    <option value="claude">Claude</option>
-                    <option value="codex">Codex</option>
-                  </select>
-                </label>
-                <label for="ai-max-parallel">
-                  <span>最大並列数</span>
-                  <select id="ai-max-parallel" name="max_parallel">
-                    <option value="1">1</option>
-                    <option value="2" selected>2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6">6</option>
-                    <option value="7">7</option>
-                    <option value="8">8</option>
-                    <option value="9">9</option>
-                    <option value="10">10</option>
-                  </select>
-                </label>
-              </div>
-              <label class="ai-auto-run-toggle" for="ai-auto-run">
-                <input id="ai-auto-run" type="checkbox">
-                <span>注釈を保存したら自動でAI修正を開始</span>
-              </label>
               <button id="ai-batch-submit" class="primary-button ai-batch-submit" type="submit" disabled>AIにまとめて修正依頼</button>
             </form>
             <div id="ai-job-panel" class="ai-job-panel" aria-label="AI修正ジョブ"></div>
@@ -106,6 +80,7 @@
                 <select id="status-filter">
                   <option value="all">すべて</option>
                   <option value="open">未対応</option>
+                  <option value="in_progress">AI対応中</option>
                   <option value="addressed">AI対応済み</option>
                   <option value="resolved">解決済み</option>
                 </select>
@@ -138,6 +113,50 @@
         </aside>
       </main>
     </div>
+
+    <dialog id="ai-settings-dialog" class="comment-dialog ai-settings-dialog">
+      <form id="ai-settings-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">AI SETTINGS</span>
+            <h2>AI修正設定</h2>
+          </div>
+          <button class="dialog-close" type="button" data-ai-settings-close aria-label="閉じる">×</button>
+        </div>
+        <div class="ai-control-grid">
+          <label for="ai-cli">
+            <span>CLI</span>
+            <select id="ai-cli" name="cli">
+              <option value="opencode">OpenCode</option>
+              <option value="claude">Claude</option>
+              <option value="codex">Codex</option>
+            </select>
+          </label>
+          <label for="ai-max-parallel">
+            <span>最大並列数</span>
+            <select id="ai-max-parallel" name="max_parallel">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+              <option value="8">8</option>
+              <option value="9">9</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+        </div>
+        <label class="ai-auto-run-toggle" for="ai-auto-run">
+          <input id="ai-auto-run" type="checkbox">
+          <span>注釈を保存したら自動でAI修正を開始</span>
+        </label>
+        <div class="dialog-actions">
+          <button class="primary-button" type="submit">設定を閉じる</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="comment-dialog" class="comment-dialog">
       <form id="comment-form" method="dialog">

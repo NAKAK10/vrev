@@ -28,7 +28,11 @@ CLIだけを起動する。coordinatorが依存関係、編集順、検証結果
 `max_parallel`は1〜10のread-only subagent調査上限に限定する。共有working treeで複数writerを
 走らせると、互いの未commit変更を上書きしたり、不完全な状態を検証したりするため、編集は
 親coordinatorだけが順次行う。自動実行modeは注釈作成eventを300ms debounceして新規open annotationをqueueへ追加し、
-既存batch実行中でも次batchとして待機させる。自動実行の選択はbrowser localStorageへ保持する。
+既存batch実行中でも次batchとして待機させる。自動実行の選択はbrowser localStorageへ保持し、有効時は手動実行buttonを隠す。
+CLI・最大並列数・自動実行は通常画面を圧迫しないよう、AI欄右上のmenuから開くsettings modalへ集約する。
+
+jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinator成功時は`addressed`、失敗・cancel・起動前skip時は`open`へ戻し、
+server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。
 
 ## Compatibility and trust boundary
 

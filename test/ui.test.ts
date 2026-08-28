@@ -11,6 +11,8 @@ const jobsSource = readFileSync(path.join(packageRoot, "src/ui/jobs.ts"), "utf8"
 test("AI batch controls and compiled script are present", () => {
   for (const id of [
     "ai-batch-form",
+    "ai-settings-open",
+    "ai-settings-dialog",
     "ai-cli",
     "ai-max-parallel",
     "ai-auto-run",
@@ -21,6 +23,7 @@ test("AI batch controls and compiled script are present", () => {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
   assert.match(sourceHtml, /<option value="10">10<\/option>/);
+  assert.match(sourceHtml, /<option value="in_progress">AI対応中<\/option>/);
   assert.match(sourceHtml, /<script type="module" src="jobs\.js"><\/script>/);
   assert.ok(existsSync(path.join(packageRoot, "dist/src/ui/jobs.js")));
 });
@@ -43,6 +46,8 @@ test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
   assert.match(jobsSource, /visual-review:annotation-created/);
   assert.match(jobsSource, /enqueueOpenAnnotations\(true\)/);
   assert.match(jobsSource, /visual-review:auto-run/);
+  assert.match(jobsSource, /settingsDialog\.showModal\(\)/);
+  assert.match(jobsSource, /form\.hidden = autoRunCheckbox\.checked/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-attach-url["']/);
@@ -60,6 +65,7 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /__vueParentComponent/);
   assert.match(reviewerSource, /__reactFiber\$/);
   assert.match(reviewerSource, /source_hint/);
+  assert.match(reviewerSource, /in_progress: "AI対応中"/);
 });
 
 test("active mode controls remain readable while hovered", () => {

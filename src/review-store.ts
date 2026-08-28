@@ -20,7 +20,7 @@ import type {
 } from "./types.js";
 
 const ACTORS = new Set(["human", "ai"]);
-const STATUSES = new Set(["open", "addressed", "resolved"]);
+const STATUSES = new Set(["open", "in_progress", "addressed", "resolved"]);
 const ATTRIBUTE_NAMES = new Set([
   "id", "class", "role", "aria-label", "data-testid", "data-test", "data-qa",
   "data-cy", "data-id",
@@ -287,14 +287,18 @@ export class ReviewStore {
   }
 
   setStatus(annotationId: string, payload: SetStatusInput): Review {
-    if (!STATUSES.has(payload.status)) throw new Error("status must be open, addressed, or resolved");
+    if (!STATUSES.has(payload.status)) throw new Error("status must be open, in_progress, addressed, or resolved");
     const statusActor = actor(payload.actor ?? "human");
     return withFileLock(this.path, () => {
       const review = this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
       const previous = annotation.status;
       if (previous === payload.status) return review;
-      const allowed = (statusActor === "ai" && previous === "open" && payload.status === "addressed") || (statusActor === "human" && previous === "addressed" && (payload.status === "resolved" || payload.status === "open")) || (statusActor === "human" && previous === "resolved" && payload.status === "open");
+      const allowed = (statusActor === "ai" && previous === "open" && (payload.status === "in_progress" || payload.status === "addressed"))
+        || (statusActor === "ai" && previous === "in_progress" && (payload.status === "addressed" || payload.status === "open"))
+        || (statusActor === "human" && previous === "in_progress" && payload.status === "open")
+        || (statusActor === "human" && previous === "addressed" && (payload.status === "resolved" || payload.status === "open"))
+        || (statusActor === "human" && previous === "resolved" && payload.status === "open");
       if (!allowed) throw new Error(`invalid ${statusActor} status transition: ${previous} -> ${payload.status}`);
       const timestamp = now();
       annotation.status = payload.status;

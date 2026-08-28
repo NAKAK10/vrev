@@ -43,6 +43,9 @@ function element<T extends Element>(selector: string, type: { new (): T }): T {
 }
 
 const form = element("#ai-batch-form", HTMLFormElement);
+const settingsOpenButton = element("#ai-settings-open", HTMLButtonElement);
+const settingsDialog = element("#ai-settings-dialog", HTMLDialogElement);
+const settingsCloseButton = element("[data-ai-settings-close]", HTMLButtonElement);
 const cliSelect = element("#ai-cli", HTMLSelectElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
@@ -62,7 +65,14 @@ let autoRunTimer: number | undefined;
 let destroyed = false;
 
 const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
+const CLI_STORAGE_KEY = "visual-review:cli";
+const PARALLEL_STORAGE_KEY = "visual-review:max-parallel";
+const storedCli = window.localStorage.getItem(CLI_STORAGE_KEY);
+const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
+if (storedCli !== null && isCli(storedCli)) cliSelect.value = storedCli;
+if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
 autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
+form.hidden = autoRunCheckbox.checked;
 
 function isCli(value: string): value is ReviewCli {
   return value === "opencode" || value === "claude" || value === "codex";
@@ -323,8 +333,13 @@ function destroy(): void {
 }
 
 form.addEventListener("submit", (event) => void submitBatch(event));
+settingsOpenButton.addEventListener("click", () => settingsDialog.showModal());
+settingsCloseButton.addEventListener("click", () => settingsDialog.close());
+cliSelect.addEventListener("change", () => window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value));
+parallelSelect.addEventListener("change", () => window.localStorage.setItem(PARALLEL_STORAGE_KEY, parallelSelect.value));
 autoRunCheckbox.addEventListener("change", () => {
   window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, String(autoRunCheckbox.checked));
+  form.hidden = autoRunCheckbox.checked;
   setStatus(autoRunCheckbox.checked ? "自動実行を有効にしました。次に保存した注釈からAI修正を開始します。" : "自動実行を無効にしました。");
 });
 window.addEventListener("visual-review:annotation-created", scheduleAutoRun);

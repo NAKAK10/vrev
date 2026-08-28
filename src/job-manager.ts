@@ -63,6 +63,7 @@ export class JobManager {
   start(): void {
     if (!this.stopped) return;
     this.jobStore.recoverRunning();
+    this.reconcileInProgressAnnotations();
     this.stopped = false;
     this.schedule();
   }
@@ -85,10 +86,13 @@ export class JobManager {
       }
       return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: annotation.source_hash, cli: input.cli, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
     });
-    if (jobs.length > 0) this.jobStore.update((state) => {
-      state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach });
-      state.jobs.push(...jobs);
-    });
+    if (jobs.length > 0) {
+      this.jobStore.update((state) => {
+        state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach });
+        state.jobs.push(...jobs);
+      });
+      for (const job of jobs) if (job.state === "queued") this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
+    }
     this.schedule();
     return { batch_id: batchId, jobs };
   }
@@ -102,6 +106,7 @@ export class JobManager {
         const job = stored.jobs.find((candidate) => candidate.id === id);
         if (job?.state === "queued") { job.state = "cancelled"; job.finished = timestamp; job.summary = "cancelled before start"; }
       });
+      this.reopenInProgressAnnotation(existing.annotation_id);
       this.schedule();
       return state.jobs.find((job) => job.id === id)!;
     }
@@ -117,6 +122,15 @@ export class JobManager {
   }
 
   private errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private reopenInProgressAnnotation(annotationId: string): void {
+    try { this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
+  }
+  private reconcileInProgressAnnotations(): void {
+    const active = new Set(this.jobStore.load().jobs.filter(({ state }) => state === "queued" || state === "running").map(({ annotation_id }) => annotation_id));
+    for (const annotation of this.reviewStore.load().annotations) {
+      if (annotation.status === "in_progress" && !active.has(annotation.id)) this.reopenInProgressAnnotation(annotation.id);
+    }
+  }
   private pageHash(annotation: Pick<Annotation, "page_path">): string {
     return this.reviewStore.sourceHash(annotation.page_path);
   }
@@ -184,10 +198,12 @@ export class JobManager {
   }
 
   private finishBeforeLaunch(id: string, stateValue: "failed" | "skipped", summary: string, timestamp: string): void {
-    this.jobStore.update((state) => {
-      const job = state.jobs.find((candidate) => candidate.id === id);
+    const state = this.jobStore.update((stored) => {
+      const job = stored.jobs.find((candidate) => candidate.id === id);
       if (job?.state === "queued") { job.state = stateValue; job.finished = timestamp; job.summary = summary; }
     });
+    const job = state.jobs.find((candidate) => candidate.id === id);
+    if (job) this.reopenInProgressAnnotation(job.annotation_id);
   }
 
   private finishBatch(batchId: string, result: CommandResult, jobIds: string[], checkpoints: Map<string, Checkpoint>): void {
@@ -196,7 +212,7 @@ export class JobManager {
     let annotations: Annotation[] = [];
     let reviewError: unknown;
     try { annotations = this.reviewStore.load().annotations; } catch (error) { reviewError = error; }
-    this.jobStore.update((state) => {
+    const finalState = this.jobStore.update((state) => {
       for (const job of state.jobs) {
         if (!jobIds.includes(job.id) || job.state !== "running") continue;
         job.finished = timestamp; job.exit_code = result.exitCode;
@@ -224,6 +240,9 @@ export class JobManager {
         }
       }
     });
+    for (const job of finalState.jobs) {
+      if (jobIds.includes(job.id) && job.state !== "succeeded") this.reopenInProgressAnnotation(job.annotation_id);
+    }
     this.schedule();
   }
 }
