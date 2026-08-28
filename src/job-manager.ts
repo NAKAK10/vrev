@@ -25,7 +25,7 @@ export function validateEnqueueInput(value: Record<string, unknown>): Required<E
   const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("job batch contains an unknown field");
   if (value.cli !== "opencode" && value.cli !== "claude" && value.cli !== "codex") throw new Error("cli must be opencode, claude, or codex");
-  if (!Number.isInteger(value.max_parallel) || (value.max_parallel as number) < 1 || (value.max_parallel as number) > 4) throw new Error("max_parallel must be an integer from 1 to 4");
+  if (!Number.isInteger(value.max_parallel) || (value.max_parallel as number) < 1 || (value.max_parallel as number) > 10) throw new Error("max_parallel must be an integer from 1 to 10");
   const sessionId = value.session_id === undefined ? null : value.session_id;
   if (sessionId !== null && (typeof sessionId !== "string" || !SESSION_ID.test(sessionId))) throw new Error("session_id is invalid");
   const attach = value.opencode_attach === undefined ? null : value.opencode_attach;
@@ -39,7 +39,7 @@ function shellDisplay(value: string): string { return `'${value.replaceAll("'", 
 export function buildBatchPrompt(reviewPath: string, annotationIds: string[], maxParallel: number, cliPath = "dist/src/cli.js"): string {
   const ids = annotationIds.map((id) => `- ${id}`).join("\n");
   const cli = `node ${shellDisplay(cliPath)} annotation`;
-  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\n${ids}\n\n最大${maxParallel}個のread-only subagentで各annotationを並列調査してください。subagentはファイル変更禁止です。親coordinatorだけが修正を順次適用・検証し、各annotationにAI message追加後addressedへ変更してください。read-only subagentを利用できないCLIでは親が順次処理してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを最優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintは補助情報なので、現在のrepository内で実在と内容を確認してから編集してください。各IDの修正と検証が成功した場合のみ次の安全なCLIをそのIDで実行してください。\n${cli} add-message --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --actor ai --body-stdin\n${cli} set-status --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --status addressed`;
+  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\n${ids}\n\n最大${maxParallel}個のread-only subagentで各annotationを並列調査してください。subagentはファイル変更禁止です。親coordinatorだけが修正を順次適用・検証し、各annotationにAI message追加後addressedへ変更してください。read-only subagentを利用できないCLIでは親が順次処理してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを最優先し、次にselector、text_excerpt、routeから編集元を特定してください。anchor.viewport_modeとviewport寸法に基づき、指摘されたdesktop/tablet/mobile表示で修正と検証を行ってください。source_hintは補助情報なので、現在のrepository内で実在と内容を確認してから編集してください。各IDの修正と検証が成功した場合のみ次の安全なCLIをそのIDで実行してください。\n${cli} add-message --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --actor ai --body-stdin\n${cli} set-status --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --status addressed`;
 }
 
 interface Checkpoint { threadLength: number; updatedAt: string; startedAt: string }

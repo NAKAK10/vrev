@@ -19,6 +19,7 @@ import {
   type CommandSpec,
   type ReviewCli,
   type RunningCommand,
+  validateEnqueueInput,
 } from "../src/index.js";
 import { installShutdownHandlers, parseAnnotationArguments, type SignalSource } from "../src/cli.js";
 
@@ -29,6 +30,11 @@ function repository(): string {
   writeFileSync(path.join(root, ".code/htmls/pages/b.html"), "<h1>B</h1>");
   return root;
 }
+
+test("accepts up to ten read-only investigation agents", () => {
+  assert.equal(validateEnqueueInput({ cli: "opencode", max_parallel: 10 }).max_parallel, 10);
+  assert.throws(() => validateEnqueueInput({ cli: "opencode", max_parallel: 11 }), /1 to 10/);
+});
 
 function annotate(store: ReviewStore, pagePath: string, comment: string): string {
   const page = new ReviewStore(pagePath, { projectRoot: store.target.projectRoot });

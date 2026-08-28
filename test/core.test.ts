@@ -17,7 +17,7 @@ function repository(): string {
 }
 
 function payload(store: ReviewStore) {
-  return { kind: "dom" as const, page_path: store.entryPath, comment: "直してください", anchor: { selector: " h1 ", attributes: { id: "title", "data-api-key": "secret" }, unknown: "secret" }, source_hash: fileSha256(store.targetPath) };
+  return { kind: "dom" as const, page_path: store.entryPath, comment: "直してください", anchor: { selector: " h1 ", attributes: { id: "title", "data-api-key": "secret" }, viewport_mode: "mobile" as const, unknown: "secret" }, source_hash: fileSha256(store.targetPath) };
 }
 
 test("uses deterministic destination and stable JSON format", () => {
@@ -77,7 +77,7 @@ test("creates schema v2, sanitizes anchors and records status/message events", (
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   let review = store.createAnnotation(payload(store));
   assert.equal(review.schema_version, 2);
-  assert.deepEqual(review.annotations[0]!.anchor, { selector: "h1", attributes: { id: "title" } });
+  assert.deepEqual(review.annotations[0]!.anchor, { selector: "h1", attributes: { id: "title" }, viewport_mode: "mobile" });
   const id = review.annotations[0]!.id;
   review = store.setStatus(id, { status: "addressed", actor: "ai" });
   assert.throws(() => store.setStatus(id, { status: "resolved", actor: "ai" }), /invalid/);
@@ -86,6 +86,7 @@ test("creates schema v2, sanitizes anchors and records status/message events", (
   assert.equal(review.revision, 4);
   assert.deepEqual(review.events.map(({ type }) => type), ["annotation_created", "status_changed", "message_added", "status_changed"]);
   assert.throws(() => sanitizeAnchor("region", { bounds: { x: 0, y: 0, width: -1, height: 1 } }), /nonnegative/);
+  assert.throws(() => sanitizeAnchor("dom", { selector: "h1", viewport_mode: "watch" }), /viewport_mode/);
 });
 
 test("matches the schema 1 compatibility fixture", () => {

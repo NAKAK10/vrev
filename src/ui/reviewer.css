@@ -182,6 +182,30 @@ h1 {
   background: white;
 }
 
+.ai-auto-run-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #dbe5e1;
+  border-radius: 8px;
+  background: #f7faf9;
+  cursor: pointer;
+}
+
+.ai-batch-form .ai-auto-run-toggle > span {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.ai-batch-form .ai-auto-run-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
 .ai-batch-submit {
   width: 100%;
 }
@@ -334,6 +358,11 @@ h1 {
 
 .mode-button.is-active {
   border-color: var(--ink);
+  color: white;
+  background: var(--ink);
+}
+
+.mode-button.is-active:hover:not(:disabled) {
   color: white;
   background: var(--ink);
 }

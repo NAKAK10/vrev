@@ -45,6 +45,7 @@ function element<T extends Element>(selector: string, type: { new (): T }): T {
 const form = element("#ai-batch-form", HTMLFormElement);
 const cliSelect = element("#ai-cli", HTMLSelectElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
+const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
 const submitButton = element("#ai-batch-submit", HTMLButtonElement);
 const openCountElement = element("#ai-open-count", HTMLSpanElement);
 const jobPanel = element("#ai-job-panel", HTMLDivElement);
@@ -57,7 +58,11 @@ let aiJobsEnabled = true;
 let activeBatchIds = new Set<string>();
 let sessionTimer: number | undefined;
 let jobsTimer: number | undefined;
+let autoRunTimer: number | undefined;
 let destroyed = false;
+
+const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
+autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
 
 function isCli(value: string): value is ReviewCli {
   return value === "opencode" || value === "claude" || value === "codex";
@@ -252,47 +257,39 @@ async function cancelJob(id: string, button: HTMLButtonElement): Promise<void> {
   }
 }
 
-async function submitBatch(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  if (submitting || hasActiveJobs) return;
+async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
+  if (submitting || (!automatic && hasActiveJobs)) return;
   await refreshSession(true);
   if (openCount === 0) {
-    setStatus("依頼できる未対応注釈はありません。", true);
+    if (!automatic) setStatus("依頼できる未対応注釈はありません。", true);
     return;
   }
 
   const cli = selectedCli();
   const maxParallel = Number(parallelSelect.value);
-  if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 4) {
-    setStatus("最大並列数は1〜4で選択してください。", true);
+  if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 10) {
+    setStatus("最大並列数は1〜10で選択してください。", true);
     return;
   }
-  const confirmed = window.confirm(
-    `${openCount}件の未対応注釈を${CLI_LABELS[cli]}（最大並列${maxParallel}）へ依頼しますか？`,
-  );
-  if (!confirmed) return;
+  if (!automatic && !window.confirm(`${openCount}件の未対応注釈を${CLI_LABELS[cli]}（最大並列${maxParallel}）へ依頼しますか？`)) return;
 
   submitting = true;
   updateSubmitState();
-  setStatus("AI修正ジョブを登録しています…");
-  const body = {
-    cli,
-    max_parallel: maxParallel,
-  };
+  setStatus(automatic ? "注釈を保存したため、AI修正を自動登録しています…" : "AI修正ジョブを登録しています…");
   try {
     const payload = await requestJson("/api/jobs/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ cli, max_parallel: maxParallel }),
     });
     if (typeof payload !== "object" || payload === null || !Array.isArray((payload as Partial<EnqueuePayload>).jobs)) {
       throw new Error("batch response is invalid");
     }
     const jobs = (payload as EnqueuePayload).jobs;
     renderJobs(jobs);
-    hasActiveJobs = jobs.some((job) => ACTIVE_STATES.has(job.state));
-    activeBatchIds = new Set(jobs.filter((job) => ACTIVE_STATES.has(job.state)).map((job) => job.batch_id));
-    setStatus(jobs.length === 0 ? "新しく登録できるジョブはありませんでした。" : `${jobs.length}件のジョブを登録しました。`);
+    hasActiveJobs = hasActiveJobs || jobs.some((job) => ACTIVE_STATES.has(job.state));
+    for (const job of jobs) if (ACTIVE_STATES.has(job.state)) activeBatchIds.add(job.batch_id);
+    setStatus(jobs.length === 0 ? "新しく登録できるジョブはありませんでした。" : `${jobs.length}件のジョブを${automatic ? "自動" : ""}登録しました。`);
     if (!hasActiveJobs) await refreshSession(true);
   } catch (error) {
     setStatus(`AI修正を依頼できません：${error instanceof Error ? error.message : String(error)}`, true);
@@ -303,13 +300,34 @@ async function submitBatch(event: SubmitEvent): Promise<void> {
   }
 }
 
+async function submitBatch(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  await enqueueOpenAnnotations(false);
+}
+
+function scheduleAutoRun(): void {
+  if (!autoRunCheckbox.checked || destroyed) return;
+  if (autoRunTimer !== undefined) window.clearTimeout(autoRunTimer);
+  autoRunTimer = window.setTimeout(() => {
+    autoRunTimer = undefined;
+    if (submitting) scheduleAutoRun();
+    else void enqueueOpenAnnotations(true);
+  }, 300);
+}
+
 function destroy(): void {
   destroyed = true;
   if (sessionTimer !== undefined) window.clearTimeout(sessionTimer);
   if (jobsTimer !== undefined) window.clearTimeout(jobsTimer);
+  if (autoRunTimer !== undefined) window.clearTimeout(autoRunTimer);
 }
 
 form.addEventListener("submit", (event) => void submitBatch(event));
+autoRunCheckbox.addEventListener("change", () => {
+  window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, String(autoRunCheckbox.checked));
+  setStatus(autoRunCheckbox.checked ? "自動実行を有効にしました。次に保存した注釈からAI修正を開始します。" : "自動実行を無効にしました。");
+});
+window.addEventListener("visual-review:annotation-created", scheduleAutoRun);
 window.addEventListener("focus", () => void Promise.all([refreshSession(), refreshJobs()]));
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) void Promise.all([refreshSession(), refreshJobs()]);

@@ -773,6 +773,7 @@ function completeHtmlRegion() {
         scroll_x: win.scrollX,
         scroll_y: win.scrollY,
       },
+      viewport_mode: state.viewport,
       nearest,
     },
     `範囲：${Math.round(width)} × ${Math.round(height)} px`,
@@ -911,6 +912,7 @@ function createDomAnchor(element) {
       scroll_x: win.scrollX,
       scroll_y: win.scrollY,
     },
+    viewport_mode: state.viewport,
   };
   const excerpt = safeTextExcerpt(element, 240);
   if (excerpt) anchor.text_excerpt = excerpt;
@@ -1353,6 +1355,7 @@ async function saveAnnotation() {
     elements.dialog.close();
     applyReview(review);
     setMode("browse");
+    window.dispatchEvent(new CustomEvent("visual-review:annotation-created"));
     showToast("注釈を保存しました。");
   } catch (error) {
     showToast(`注釈の保存に失敗しました：${error.message}`, true);

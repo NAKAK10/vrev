@@ -13,12 +13,14 @@ test("AI batch controls and compiled script are present", () => {
     "ai-batch-form",
     "ai-cli",
     "ai-max-parallel",
+    "ai-auto-run",
     "ai-open-count",
     "ai-batch-submit",
     "ai-job-panel",
   ]) {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
+  assert.match(sourceHtml, /<option value="10">10<\/option>/);
   assert.match(sourceHtml, /<script type="module" src="jobs\.js"><\/script>/);
   assert.ok(existsSync(path.join(packageRoot, "dist/src/ui/jobs.js")));
 });
@@ -38,6 +40,9 @@ test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
   assert.match(jobsSource, /running.*batch coordinator全体/s);
   assert.match(jobsSource, /target\?\.ai_jobs_enabled/);
   assert.match(jobsSource, /target\?\.allow_scripts !== true/);
+  assert.match(jobsSource, /visual-review:annotation-created/);
+  assert.match(jobsSource, /enqueueOpenAnnotations\(true\)/);
+  assert.match(jobsSource, /visual-review:auto-run/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-attach-url["']/);
@@ -57,12 +62,18 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /source_hint/);
 });
 
+test("active mode controls remain readable while hovered", () => {
+  const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
+  assert.match(css, /\.mode-button\.is-active:hover:not\(:disabled\)[^{]*\{[^}]*color:\s*white;[^}]*background:\s*var\(--ink\);/s);
+});
+
 test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   for (const viewport of ["desktop", "tablet", "mobile"]) {
     assert.match(sourceHtml, new RegExp(`data-viewport=["']${viewport}["']`));
   }
   assert.match(reviewerSource, /function setViewport\(viewport\)/);
   assert.match(reviewerSource, /elements\.stage\.dataset\.viewport = viewport/);
+  assert.match(reviewerSource, /viewport_mode: state\.viewport/);
   assert.match(reviewerSource, /resizeObserver\.observe\(elements\.frame\)/);
 });
 

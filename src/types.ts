@@ -36,6 +36,7 @@ export interface DomAnchor {
   rect?: NumericBox;
   document?: Dimensions;
   viewport?: Dimensions;
+  viewport_mode?: "desktop" | "tablet" | "mobile";
   source_hint?: {
     framework?: string;
     component?: string;
@@ -48,6 +49,7 @@ export interface RegionAnchor {
   space?: string;
   document?: Dimensions;
   viewport?: Dimensions;
+  viewport_mode?: "desktop" | "tablet" | "mobile";
   natural?: Dimensions;
   nearest?: Pick<DomAnchor, "selector" | "xpath" | "tag">;
 }

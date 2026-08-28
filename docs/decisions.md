@@ -25,9 +25,10 @@ AI一括修正は、annotationごとにjob recordを作りつつ、batch全体�
 CLIだけを起動する。coordinatorが依存関係、編集順、検証結果を一元管理でき、複数process
 が同じ修正を競合して適用することを防ぐためである。
 
-`max_parallel`はread-only subagent調査の上限に限定する。共有working treeで複数writerを
+`max_parallel`は1〜10のread-only subagent調査上限に限定する。共有working treeで複数writerを
 走らせると、互いの未commit変更を上書きしたり、不完全な状態を検証したりするため、編集は
-親coordinatorだけが順次行う。
+親coordinatorだけが順次行う。自動実行modeは注釈作成eventを300ms debounceして新規open annotationをqueueへ追加し、
+既存batch実行中でも次batchとして待機させる。自動実行の選択はbrowser localStorageへ保持する。
 
 ## Compatibility and trust boundary
 
@@ -49,6 +50,7 @@ Visual Review側ではIDを捏造しない。HTTP APIの`session_id`と`opencode
 HTML reviewはPC（stageの利用可能幅）、タブレット768px、スマホ390pxを同じiframeで切り替える。
 別pageや別reviewを作らず、annotationのpage pathとDOM anchorを共通利用することで、同じ指摘を各responsive layoutで
 再確認できる。切替後はiframeのresizeとoverlay再描画を行い、画像reviewではviewport controlsを無効にする。
+annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI coordinatorへ同じmodeでの修正・検証を要求する。
 
 ## Annotation focus restores transient UI context
 

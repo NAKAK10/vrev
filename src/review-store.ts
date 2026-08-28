@@ -78,6 +78,10 @@ export function sanitizeAnchor(kind: AnnotationKind, value: unknown): UnknownRec
     for (const [key, fields] of [["rect", RECT_FIELDS], ["document", DIMENSION_FIELDS], ["viewport", DIMENSION_FIELDS]] as const) {
       if (key in input) cleaned[key] = numericObject(input[key], key, fields);
     }
+    if ("viewport_mode" in input) {
+      if (!["desktop", "tablet", "mobile"].includes(String(input.viewport_mode))) throw new Error("anchor viewport_mode is invalid");
+      cleaned.viewport_mode = input.viewport_mode as JsonValue;
+    }
     if ("source_hint" in input) {
       const hint = record(input.source_hint, "anchor source_hint must be an object");
       cleaned.source_hint = Object.fromEntries(["framework", "component", "file"].filter((key) => typeof hint[key] === "string" && Boolean((hint[key] as string).trim())).map((key) => [key, cleanString(hint[key], `source_hint.${key}`)]));
@@ -90,6 +94,10 @@ export function sanitizeAnchor(kind: AnnotationKind, value: unknown): UnknownRec
   if (!["x", "y", "width", "height"].every((key) => key in bounds)) throw new Error("region bounds require x, y, width, and height");
   const cleaned: UnknownRecord = { bounds };
   if ("space" in input) cleaned.space = cleanString(input.space, "space");
+  if ("viewport_mode" in input) {
+    if (!["desktop", "tablet", "mobile"].includes(String(input.viewport_mode))) throw new Error("anchor viewport_mode is invalid");
+    cleaned.viewport_mode = input.viewport_mode as JsonValue;
+  }
   for (const [key, fields] of [["document", DIMENSION_FIELDS], ["viewport", DIMENSION_FIELDS], ["natural", DIMENSION_FIELDS]] as const) {
     if (key in input) cleaned[key] = numericObject(input[key], key, fields);
   }
