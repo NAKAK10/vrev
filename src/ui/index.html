@@ -72,28 +72,12 @@
           <section class="sidebar-section filters-section" aria-labelledby="annotation-heading">
             <div class="section-heading-row">
               <h2 id="annotation-heading">注釈</h2>
-              <span id="annotation-total" class="count-badge">0</span>
+              <div class="annotation-heading-actions">
+                <span id="annotation-total" class="count-badge">0</span>
+                <button id="annotation-filter-open" class="ai-settings-open" type="button" aria-label="注釈フィルターを開く" title="注釈フィルター">•••</button>
+              </div>
             </div>
-            <div class="filter-grid">
-              <label>
-                <span>状態</span>
-                <select id="status-filter">
-                  <option value="all">すべて</option>
-                  <option value="open">未対応</option>
-                  <option value="in_progress">AI対応中</option>
-                  <option value="addressed">AI対応済み</option>
-                  <option value="resolved">解決済み</option>
-                </select>
-              </label>
-              <label>
-                <span>種類</span>
-                <select id="kind-filter">
-                  <option value="all">すべて</option>
-                  <option value="dom">ノード</option>
-                  <option value="region">範囲</option>
-                </select>
-              </label>
-            </div>
+            <div id="filter-summary" class="filter-summary" aria-label="選択中のフィルター"></div>
             <div id="status-counts" class="status-counts" aria-label="状態別件数"></div>
           </section>
 
@@ -153,6 +137,34 @@
           <span>注釈を保存したら自動でAI修正を開始</span>
         </label>
         <div class="dialog-actions">
+          <button class="primary-button" type="submit">設定を閉じる</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="annotation-filter-dialog" class="comment-dialog annotation-filter-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">ANNOTATION FILTER</span>
+            <h2>注釈の絞り込み</h2>
+          </div>
+          <button class="dialog-close" type="button" data-annotation-filter-close aria-label="閉じる">×</button>
+        </div>
+        <fieldset class="filter-badge-group">
+          <legend>状態</legend>
+          <label class="filter-badge"><input type="checkbox" name="annotation-status" value="open" checked><span>未対応</span></label>
+          <label class="filter-badge"><input type="checkbox" name="annotation-status" value="in_progress" checked><span>AI対応中</span></label>
+          <label class="filter-badge"><input type="checkbox" name="annotation-status" value="addressed" checked><span>AI対応済み</span></label>
+          <label class="filter-badge"><input type="checkbox" name="annotation-status" value="resolved"><span>解決済み</span></label>
+        </fieldset>
+        <fieldset class="filter-badge-group">
+          <legend>種類</legend>
+          <label class="filter-badge"><input type="checkbox" name="annotation-kind" value="dom" checked><span>ノード</span></label>
+          <label class="filter-badge"><input type="checkbox" name="annotation-kind" value="region" checked><span>範囲</span></label>
+        </fieldset>
+        <div class="dialog-actions">
+          <button id="annotation-filter-reset" class="secondary-button" type="button">初期値に戻す</button>
           <button class="primary-button" type="submit">設定を閉じる</button>
         </div>
       </form>

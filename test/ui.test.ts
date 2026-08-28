@@ -23,7 +23,9 @@ test("AI batch controls and compiled script are present", () => {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
   assert.match(sourceHtml, /<option value="10">10<\/option>/);
-  assert.match(sourceHtml, /<option value="in_progress">AI対応中<\/option>/);
+  assert.match(sourceHtml, /name="annotation-status" value="in_progress" checked/);
+  assert.match(sourceHtml, /name="annotation-kind" value="dom" checked/);
+  assert.match(sourceHtml, /name="annotation-kind" value="region" checked/);
   assert.match(sourceHtml, /<script type="module" src="jobs\.js"><\/script>/);
   assert.ok(existsSync(path.join(packageRoot, "dist/src/ui/jobs.js")));
 });
@@ -66,6 +68,10 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /__reactFiber\$/);
   assert.match(reviewerSource, /source_hint/);
   assert.match(reviewerSource, /in_progress: "AI対応中"/);
+  assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "addressed"\]/);
+  assert.match(reviewerSource, /DEFAULT_KIND_FILTERS = \["dom", "region"\]/);
+  assert.match(reviewerSource, /filterDialog\.showModal\(\)/);
+  assert.match(reviewerSource, /new Set\(elements\.statusFilterInputs/);
 });
 
 test("active mode controls remain readable while hovered", () => {

@@ -1,11 +1,15 @@
 "use strict";
 
+const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "addressed"];
+const DEFAULT_KIND_FILTERS = ["dom", "region"];
+const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
+
 const state = {
   session: null,
   review: { annotations: [], events: [] },
   mode: "browse",
   viewport: "desktop",
-  filters: { status: "all", kind: "all" },
+  filters: { statuses: new Set(DEFAULT_STATUS_FILTERS), kinds: new Set(DEFAULT_KIND_FILTERS) },
   pendingAnnotation: null,
   drag: null,
   highlightedId: null,
@@ -31,8 +35,13 @@ const elements = {
   stageEmpty: document.querySelector("#stage-empty"),
   modeHelp: document.querySelector("#mode-help"),
   trustIndicator: document.querySelector("#trust-indicator"),
-  statusFilter: document.querySelector("#status-filter"),
-  kindFilter: document.querySelector("#kind-filter"),
+  filterOpenButton: document.querySelector("#annotation-filter-open"),
+  filterDialog: document.querySelector("#annotation-filter-dialog"),
+  filterCloseButton: document.querySelector("[data-annotation-filter-close]"),
+  filterResetButton: document.querySelector("#annotation-filter-reset"),
+  statusFilterInputs: [...document.querySelectorAll('input[name="annotation-status"]')],
+  kindFilterInputs: [...document.querySelectorAll('input[name="annotation-kind"]')],
+  filterSummary: document.querySelector("#filter-summary"),
   statusCounts: document.querySelector("#status-counts"),
   annotationTotal: document.querySelector("#annotation-total"),
   annotationList: document.querySelector("#annotation-list"),
@@ -56,6 +65,45 @@ const STATUS_LABELS = {
   addressed: "AI対応済み",
   resolved: "解決済み",
 };
+const KIND_LABELS = { dom: "ノード", region: "範囲" };
+
+function restoreFilters() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(FILTER_STORAGE_KEY) ?? "null");
+    if (!stored || !Array.isArray(stored.statuses) || !Array.isArray(stored.kinds)) return;
+    state.filters.statuses = new Set(stored.statuses.filter((value) => value in STATUS_LABELS));
+    state.filters.kinds = new Set(stored.kinds.filter((value) => value in KIND_LABELS));
+  } catch (_error) { /* retain defaults */ }
+}
+
+function syncFilterControls() {
+  for (const input of elements.statusFilterInputs) input.checked = state.filters.statuses.has(input.value);
+  for (const input of elements.kindFilterInputs) input.checked = state.filters.kinds.has(input.value);
+}
+
+function persistFilters() {
+  window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ statuses: [...state.filters.statuses], kinds: [...state.filters.kinds] }));
+}
+
+function renderFilterSummary() {
+  const badges = [
+    ...[...state.filters.statuses].map((value) => STATUS_LABELS[value]).filter(Boolean),
+    ...[...state.filters.kinds].map((value) => KIND_LABELS[value]).filter(Boolean),
+  ].map((label) => {
+    const badge = document.createElement("span");
+    badge.className = "active-filter-badge";
+    badge.textContent = label;
+    return badge;
+  });
+  elements.filterSummary.replaceChildren(...badges);
+}
+
+function updateFiltersFromControls() {
+  state.filters.statuses = new Set(elements.statusFilterInputs.filter(({ checked }) => checked).map(({ value }) => value));
+  state.filters.kinds = new Set(elements.kindFilterInputs.filter(({ checked }) => checked).map(({ value }) => value));
+  persistFilters();
+  renderSidebar();
+}
 
 const MODE_HELP = {
   browse: "閲覧モード：ページを通常どおり操作できます。",
@@ -293,6 +341,7 @@ function setMode(mode) {
 
 function renderSidebar() {
   const all = annotations();
+  renderFilterSummary();
   const statusCounts = { open: 0, in_progress: 0, addressed: 0, resolved: 0 };
   for (const annotation of all) {
     const status = annotation.status || "open";
@@ -306,11 +355,7 @@ function renderSidebar() {
     countItem(`解決済み ${statusCounts.resolved}`),
   );
 
-  const filtered = all.filter((annotation) => {
-    const statusMatches = state.filters.status === "all" || annotation.status === state.filters.status;
-    const kindMatches = state.filters.kind === "all" || annotation.kind === state.filters.kind;
-    return statusMatches && kindMatches;
-  });
+  const filtered = all.filter((annotation) => state.filters.statuses.has(annotation.status || "open") && state.filters.kinds.has(annotation.kind));
 
   elements.annotationList.replaceChildren();
   const fragment = document.createDocumentFragment();
@@ -1450,12 +1495,14 @@ function isTypingTarget(target) {
 elements.modeButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 elements.viewportButtons.forEach((button) => button.addEventListener("click", () => setViewport(button.dataset.viewport)));
 elements.refreshButton.addEventListener("click", () => loadSession({ reloadTarget: true }));
-elements.statusFilter.addEventListener("change", () => {
-  state.filters.status = elements.statusFilter.value;
-  renderSidebar();
-});
-elements.kindFilter.addEventListener("change", () => {
-  state.filters.kind = elements.kindFilter.value;
+elements.filterOpenButton.addEventListener("click", () => elements.filterDialog.showModal());
+elements.filterCloseButton.addEventListener("click", () => elements.filterDialog.close());
+for (const input of [...elements.statusFilterInputs, ...elements.kindFilterInputs]) input.addEventListener("change", updateFiltersFromControls);
+elements.filterResetButton.addEventListener("click", () => {
+  state.filters.statuses = new Set(DEFAULT_STATUS_FILTERS);
+  state.filters.kinds = new Set(DEFAULT_KIND_FILTERS);
+  syncFilterControls();
+  persistFilters();
   renderSidebar();
 });
 elements.historyToggle.addEventListener("click", () => {
@@ -1483,12 +1530,13 @@ elements.image.addEventListener("pointercancel", cancelDrag);
 elements.imageWrap.addEventListener("scroll", renderOverlay, { passive: true });
 window.addEventListener("resize", renderOverlay, { passive: true });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !elements.dialog.open) {
+  const modalOpen = elements.dialog.open || elements.filterDialog.open || document.querySelector("#ai-settings-dialog")?.open;
+  if (event.key === "Escape" && !modalOpen) {
     cancelDrag();
     setMode("browse");
     return;
   }
-  if (isTypingTarget(event.target) || elements.dialog.open || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (isTypingTarget(event.target) || modalOpen || event.metaKey || event.ctrlKey || event.altKey) return;
   const mode = { v: "browse", n: "node", r: "region" }[event.key.toLowerCase()];
   if (mode) {
     event.preventDefault();
@@ -1503,5 +1551,7 @@ if (window.ResizeObserver) {
   resizeObserver.observe(elements.image);
 }
 
+restoreFilters();
+syncFilterControls();
 setViewport(state.viewport);
 loadSession();

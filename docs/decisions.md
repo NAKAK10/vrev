@@ -30,6 +30,8 @@ CLIだけを起動する。coordinatorが依存関係、編集順、検証結果
 親coordinatorだけが順次行う。自動実行modeは注釈作成eventを300ms debounceして新規open annotationをqueueへ追加し、
 既存batch実行中でも次batchとして待機させる。自動実行の選択はbrowser localStorageへ保持し、有効時は手動実行buttonを隠す。
 CLI・最大並列数・自動実行は通常画面を圧迫しないよう、AI欄右上のmenuから開くsettings modalへ集約する。
+注釈の状態・種類filterも注釈欄右上のmenuから開くmodalへ移し、checkbox badgeによる複数選択とする。fresh browserの既定値は
+`open`・`in_progress`・`addressed`および全種類で、`resolved`は明示的に選択した場合だけ表示する。選択はlocalStorageへ保持する。
 
 jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinator成功時は`addressed`、失敗・cancel・起動前skip時は`open`へ戻し、
 server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。
