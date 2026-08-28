@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 
 import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
 import {
@@ -77,6 +78,10 @@ export function sanitizeAnchor(kind: AnnotationKind, value: unknown): UnknownRec
     for (const [key, fields] of [["rect", RECT_FIELDS], ["document", DIMENSION_FIELDS], ["viewport", DIMENSION_FIELDS]] as const) {
       if (key in input) cleaned[key] = numericObject(input[key], key, fields);
     }
+    if ("source_hint" in input) {
+      const hint = record(input.source_hint, "anchor source_hint must be an object");
+      cleaned.source_hint = Object.fromEntries(["framework", "component", "file"].filter((key) => typeof hint[key] === "string" && Boolean((hint[key] as string).trim())).map((key) => [key, cleanString(hint[key], `source_hint.${key}`)]));
+    }
     if (!("selector" in cleaned) && !("xpath" in cleaned)) throw new Error("DOM anchor requires selector or xpath");
     return cleaned;
   }
@@ -104,6 +109,10 @@ export function sanitizeLegacyAnchor(kind: unknown, value: unknown): UnknownReco
   if (kind === "dom" && typeof input.attributes === "object" && input.attributes !== null && !Array.isArray(input.attributes)) {
     const attrs = input.attributes as UnknownRecord;
     candidate.attributes = Object.fromEntries([...ATTRIBUTE_NAMES].filter((key) => typeof attrs[key] === "string" && Boolean((attrs[key] as string).trim())).map((key) => [key, truncate((attrs[key] as string).trim(), STRING_LIMIT)]));
+  }
+  if (kind === "dom" && typeof input.source_hint === "object" && input.source_hint !== null && !Array.isArray(input.source_hint)) {
+    const hint = input.source_hint as UnknownRecord;
+    candidate.source_hint = Object.fromEntries(["framework", "component", "file"].filter((key) => typeof hint[key] === "string" && Boolean((hint[key] as string).trim())).map((key) => [key, truncate((hint[key] as string).trim(), STRING_LIMIT)]));
   }
   const numeric = kind === "dom" ? [["rect", RECT_FIELDS], ["document", DIMENSION_FIELDS], ["viewport", DIMENSION_FIELDS]] as const : [["bounds", RECT_FIELDS], ["document", DIMENSION_FIELDS], ["viewport", DIMENSION_FIELDS], ["natural", DIMENSION_FIELDS]] as const;
   for (const [key, fields] of numeric) try { candidate[key] = numericObject(input[key], key, fields); } catch { /* omit malformed legacy data */ }
@@ -142,9 +151,20 @@ export class ReviewStore {
   get entryPath(): string { return this.target.entryPath; }
   get targetPath(): string { return this.target.absolutePath; }
 
+  sourceHash(pagePath = this.entryPath): string {
+    if (this.target.liveUrl) {
+      const page = new URL(pagePath, this.target.liveUrl);
+      const origin = new URL(this.target.liveUrl).origin;
+      if (page.origin !== origin) throw new Error("page URL is outside the active live origin");
+      page.hash = "";
+      return createHash("sha256").update(`live-url:${page.toString()}`, "utf8").digest("hex");
+    }
+    return fileSha256(new ReviewStore(pagePath, { projectRoot: this.target.projectRoot }).targetPath);
+  }
+
   private newReview(): Review {
     const timestamp = now();
-    return { schema_version: 2, review_id: randomUUID(), revision: 0, created_at: timestamp, updated_at: timestamp, target: { entry_path: this.entryPath, kind: this.target.kind, sha256: fileSha256(this.targetPath) }, annotations: [], events: [] };
+    return { schema_version: 2, review_id: randomUUID(), revision: 0, created_at: timestamp, updated_at: timestamp, target: { entry_path: this.entryPath, kind: this.target.kind, sha256: this.sourceHash() }, annotations: [], events: [] };
   }
 
   private loadUnlocked(): Review {
@@ -171,6 +191,13 @@ export class ReviewStore {
 
   private pagePath(value: unknown): { entryPath: string; absolutePath: string } {
     const pagePath = nonblank(value, "page_path");
+    if (this.target.liveUrl) {
+      const resolved = resolveTarget(new URL(pagePath, this.target.liveUrl).toString(), this.target.projectRoot);
+      if (!resolved.liveUrl || new URL(resolved.liveUrl).origin !== new URL(this.target.liveUrl).origin) {
+        throw new Error("page URL is outside the active live origin");
+      }
+      return { entryPath: resolved.entryPath, absolutePath: resolved.absolutePath };
+    }
     const resolved = resolveTarget(pagePath, this.target.projectRoot);
     if (this.target.kind === "image") {
       if (resolved.absolutePath !== this.targetPath) throw new Error("page_path is outside the active image session");
@@ -178,6 +205,22 @@ export class ReviewStore {
       throw new Error("HTML session page_path must be HTML or HTM");
     }
     return { entryPath: resolved.entryPath, absolutePath: resolved.absolutePath };
+  }
+
+  private normalizeSourceHint(anchor: UnknownRecord): void {
+    const hint = anchor.source_hint;
+    if (typeof hint !== "object" || hint === null || Array.isArray(hint)) return;
+    const sourceHint = hint as UnknownRecord;
+    const file = sourceHint.file;
+    if (typeof file !== "string" || !file.trim()) return;
+    const normalized = file.replace(/^file:\/\//, "").replaceAll("\\", "/");
+    if (normalized.startsWith(`${this.target.projectRoot.replaceAll("\\", "/")}/`)) {
+      sourceHint.file = normalized.slice(this.target.projectRoot.length + 1);
+      return;
+    }
+    const sourcePath = /(?:^|\/)((?:src|app|pages|components|packages|wp-content)\/.*)$/.exec(normalized)?.[1];
+    if (sourcePath) sourceHint.file = sourcePath;
+    else if (path.isAbsolute(normalized) || path.win32.isAbsolute(normalized)) delete sourceHint.file;
   }
 
   private findAnnotation(review: Review, annotationId: string): Annotation {
@@ -196,12 +239,13 @@ export class ReviewStore {
     if (payload.kind !== "dom" && payload.kind !== "region") throw new Error("kind must be dom or region");
     const comment = nonblank(payload.comment, "comment");
     const anchor = sanitizeAnchor(payload.kind, payload.anchor);
+    this.normalizeSourceHint(anchor);
     const page = this.pagePath(payload.page_path);
     const annotationActor = actor(payload.actor ?? "human");
     if (!SOURCE_HASH.test(payload.source_hash)) throw new Error("source_hash must be a 64-character lowercase hex digest");
     return withFileLock(this.path, () => {
       const review = this.loadUnlocked();
-      if (fileSha256(page.absolutePath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
+      if (this.sourceHash(page.entryPath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
       const timestamp = now();
       const annotationId = randomUUID();
       const message = { id: randomUUID(), body: comment, actor: annotationActor, at: timestamp };

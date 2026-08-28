@@ -46,6 +46,17 @@ test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
   assert.doesNotMatch(sourceHtml, /セッションは選択したCLIが自動作成します/);
 });
 
+test("captures framework source hints for live applications", () => {
+  assert.match(reviewerSource, /\? "nuxt" : "vue"/);
+  assert.match(reviewerSource, /\? "next" : "react"/);
+  for (const framework of ["angular", "svelte", "wordpress"]) {
+    assert.match(reviewerSource, new RegExp(`framework: ["']${framework}["']`), framework);
+  }
+  assert.match(reviewerSource, /__vueParentComponent/);
+  assert.match(reviewerSource, /__reactFiber\$/);
+  assert.match(reviewerSource, /source_hint/);
+});
+
 test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   for (const viewport of ["desktop", "tablet", "mobile"]) {
     assert.match(sourceHtml, new RegExp(`data-viewport=["']${viewport}["']`));

@@ -21,6 +21,20 @@ export interface ResolvedTarget {
   absolutePath: string;
   entryPath: string;
   kind: TargetKind;
+  liveUrl?: string;
+}
+
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+export function normalizeLoopbackUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("target URL must be a valid loopback HTTP URL"); }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  if (url.protocol !== "http:" || !LOOPBACK_HOSTNAMES.has(hostname) || url.username || url.password) {
+    throw new Error("target URL must use HTTP on localhost, 127.0.0.1, or ::1 without credentials");
+  }
+  url.hash = "";
+  return url.toString();
 }
 
 export function resolveProjectRoot(projectRoot = process.cwd()): string {
@@ -73,6 +87,10 @@ export function resolveTarget(
   projectRoot = process.cwd(),
 ): ResolvedTarget {
   const root = resolveProjectRoot(projectRoot);
+  if (/^https?:\/\//i.test(target)) {
+    const liveUrl = normalizeLoopbackUrl(target);
+    return { projectRoot: root, absolutePath: liveUrl, entryPath: liveUrl, kind: "html", liveUrl };
+  }
   const parts = relativeParts(target);
   const extension = path.extname(parts.at(-1)!).toLowerCase();
   const kind: TargetKind = HTML_EXTENSIONS.has(extension)

@@ -15,11 +15,13 @@ interface ServeArguments {
   port: number;
   allowScripts: boolean;
   allowAiJobsWithScripts: boolean;
+  startCommand: string | null;
+  stopCommand: string | null;
   open: boolean;
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve --project-root <root> --target <relative> [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--allow-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: visual-review serve --project-root <root> --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--allow-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
@@ -33,7 +35,7 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
     if (argument === "--allow-scripts") { allowScripts = true; continue; }
     if (argument === "--allow-ai-jobs-with-scripts") { allowAiJobsWithScripts = true; continue; }
     if (argument === "--no-open") { open = false; continue; }
-    if (!["--project-root", "--target", "--host", "--port"].includes(argument)) serveUsage();
+    if (!["--project-root", "--target", "--start", "--stop", "--host", "--port"].includes(argument)) serveUsage();
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) serveUsage();
     values.set(argument, value);
@@ -42,11 +44,14 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   const rootValue = values.get("--project-root");
   const target = values.get("--target");
   if (rootValue === undefined || target === undefined) serveUsage();
-  if (!target.trim() || path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")) {
-    throw new Error("target must be a POSIX relative path");
+  const liveTarget = /^https?:\/\//i.test(target);
+  if (!target.trim() || (!liveTarget && (path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")))) {
+    throw new Error("target must be a POSIX relative path or loopback HTTP URL");
   }
-  if (allowAiJobsWithScripts && !allowScripts) {
-    throw new Error("--allow-ai-jobs-with-scripts requires --allow-scripts");
+  if (values.has("--start") && !liveTarget) throw new Error("--start requires a loopback URL target");
+  if (values.has("--stop") && !values.has("--start")) throw new Error("--stop requires --start");
+  if (allowAiJobsWithScripts && !allowScripts && !liveTarget) {
+    throw new Error("--allow-ai-jobs-with-scripts requires --allow-scripts or a loopback URL target");
   }
   const host = values.get("--host") ?? "127.0.0.1";
   assertLoopbackHost(host);
@@ -61,6 +66,8 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
     port,
     allowScripts,
     allowAiJobsWithScripts,
+    startCommand: values.get("--start") ?? null,
+    stopCommand: values.get("--stop") ?? null,
     open,
   };
 }
@@ -193,6 +200,38 @@ export async function listenOnAvailablePort(server: Server, host: string, startP
   throw new Error(`no available port from ${startPort} to 65535`);
 }
 
+async function waitForLiveTarget(url: string, child: ReturnType<typeof spawn> | null, timeoutMs = 120_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child?.exitCode !== null && child?.exitCode !== undefined && child.exitCode !== 0) throw new Error(`start command exited with ${child.exitCode} before ${url} became ready`);
+    try {
+      const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
+      if (response.status < 500) return;
+    } catch {
+      // Retry until the local development server is ready.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`timed out waiting for ${url}`);
+}
+
+function stopStartedProcess(child: ReturnType<typeof spawn> | null): void {
+  if (!child || child.exitCode !== null || child.killed) return;
+  if (process.platform !== "win32" && child.pid) {
+    try { process.kill(-child.pid, "SIGTERM"); return; } catch { /* fall through */ }
+  }
+  child.kill("SIGTERM");
+}
+
+function runLifecycleCommand(command: string | null, cwd: string): Promise<void> {
+  if (command === null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { cwd, shell: true, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`lifecycle command exited with ${code ?? "unknown"}`)));
+  });
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv[0] === "annotation") {
     const args = parseAnnotationArguments(argv);
@@ -202,17 +241,38 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   const args = parseCliArguments(argv);
+  const startedProcess = args.startCommand === null ? null : spawn(args.startCommand, {
+    cwd: args.projectRoot,
+    shell: true,
+    stdio: "inherit",
+    detached: process.platform !== "win32",
+  });
+  if (/^https?:\/\//i.test(args.target) && args.startCommand !== null) {
+    try {
+      await waitForLiveTarget(args.target, startedProcess);
+    } catch (error) {
+      stopStartedProcess(startedProcess);
+      await runLifecycleCommand(args.stopCommand, args.projectRoot);
+      throw error;
+    }
+  }
   const visualReview = createVisualReviewServer({
     projectRoot: args.projectRoot,
     target: args.target,
     allowScripts: args.allowScripts,
     allowAiJobsWithScripts: args.allowAiJobsWithScripts,
   });
-  installShutdownHandlers(() => visualReview.close());
+  installShutdownHandlers(async () => {
+    await visualReview.close();
+    stopStartedProcess(startedProcess);
+    await runLifecycleCommand(args.stopCommand, args.projectRoot);
+  });
   try {
     await listenOnAvailablePort(visualReview.server, args.host, args.port);
   } catch (error) {
     await visualReview.close();
+    stopStartedProcess(startedProcess);
+    await runLifecycleCommand(args.stopCommand, args.projectRoot);
     throw error;
   }
   const address = visualReview.server.address();

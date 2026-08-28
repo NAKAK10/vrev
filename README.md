@@ -108,6 +108,40 @@ npm test
 npm run build
 ```
 
-## localhostアプリ対応
+## localhostアプリ
 
-開発サーバーURLと編集対象リポジトリを組み合わせる `visual-review local --repo ... --url ...` は今後の実装対象です。DOM選択を維持するため、loopback限定reverse proxyとして実装します。詳細は `docs/roadmap.md` を参照してください。
+`--target`へloopback URLを渡すと、同一生成元のローカルreverse proxyを通してDOM注釈できます。HTTPの`localhost`、`127.0.0.1`、`::1`だけを許可し、外部URLやURL内credentialは拒否します。
+
+起動済みの開発サーバーを確認する場合:
+
+```bash
+visual-review serve \
+  --project-root /path/to/repository \
+  --target http://127.0.0.1:5173 \
+  --allow-ai-jobs-with-scripts
+```
+
+開発サーバーも同時に起動する場合:
+
+```bash
+visual-review serve \
+  --project-root /path/to/repository \
+  --target http://127.0.0.1:5173 \
+  --start "npm run dev" \
+  --allow-ai-jobs-with-scripts
+```
+
+`--start`のprocessはproject rootで起動し、Visual Review終了時に停止します。Docker Composeなど起動command自体が終了してserviceだけが残る構成では、`--stop "npm run down"`も指定してください。
+
+### 対応framework
+
+DOM selector、表示text、routeに加え、development runtimeから取得できる場合はcomponent名とsource file hintも注釈へ保存します。
+
+- Vue / Nuxt
+- React / Next.js
+- Angular
+- Svelte / SvelteKit
+- WordPress / PHP theme
+- framework情報を取得できない一般的なHTML/JavaScriptアプリ
+
+source hintはframeworkのdevelopment runtimeに依存する補助情報です。AI coordinatorはrepository内で実在と内容を確認してから編集します。

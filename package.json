@@ -21,6 +21,8 @@
   "scripts": {
     "build": "node scripts/copy-ui.mjs --clean && tsc -p tsconfig.json && node scripts/copy-ui.mjs && node scripts/make-cli-executable.mjs",
     "start": "node dist/src/cli.js serve",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "pretest": "npm run check:secrets",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
   },

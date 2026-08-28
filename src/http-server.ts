@@ -1,9 +1,8 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { fileSha256 } from "./file-utils.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { ReviewStore } from "./review-store.js";
 import { acquireServerLease, type ServerLease } from "./server-lease.js";
@@ -93,6 +92,66 @@ function sendError(response: ServerResponse, status: number, message: string): v
 
 function contentType(filePath: string): string {
   return CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+function rewriteLiveText(content: string, contentTypeValue: string, origin: string): string {
+  const upstream = new URL(origin);
+  const port = upstream.port ? `:${upstream.port}` : "";
+  let result = content;
+  for (const hostname of ["localhost", "127.0.0.1", "[::1]"]) {
+    result = result.replaceAll(`http://${hostname}${port}`, "/live");
+  }
+  if (contentTypeValue.includes("text/html")) {
+    result = result.replace(/\b(src|href|action)=(['"])\/(?!\/|live\/)/gi, (_match, name: string, quote: string) => `${name}=${quote}/live/`);
+  }
+  if (contentTypeValue.includes("text/css")) {
+    result = result.replace(/url\((['"]?)\/(?!\/|live\/)/gi, (_match, quote: string) => `url(${quote}/live/`);
+  }
+  if (contentTypeValue.includes("javascript")) {
+    result = result.replace(/(['"`])\/(?!\/|live\/)/g, "$1/live/");
+  }
+  return result;
+}
+
+function proxyLiveRequest(request: IncomingMessage, response: ServerResponse, liveUrl: string, requestUrl: URL): Promise<void> {
+  const origin = new URL(liveUrl).origin;
+  const suffix = requestUrl.pathname.slice("/live".length) || "/";
+  const upstream = new URL(`${suffix}${requestUrl.search}`, origin);
+  return new Promise((resolve, reject) => {
+    const headers = { ...request.headers, host: upstream.host, "accept-encoding": "identity" };
+    delete headers.connection;
+    const outgoing = httpRequest(upstream, { method: request.method, headers }, (incoming) => {
+      const contentTypeValue = String(incoming.headers["content-type"] ?? "application/octet-stream");
+      const textual = /text\/|javascript|json|xml|svg/i.test(contentTypeValue);
+      const responseHeaders = { ...incoming.headers };
+      for (const name of ["content-length", "content-encoding", "transfer-encoding", "content-security-policy", "x-frame-options"]) delete responseHeaders[name];
+      const location = incoming.headers.location;
+      if (location) {
+        const resolved = new URL(location, upstream);
+        responseHeaders.location = resolved.origin === origin ? `/live${resolved.pathname}${resolved.search}${resolved.hash}` : location;
+      }
+      setSecurityHeaders(response);
+      if (!textual) {
+        response.writeHead(incoming.statusCode ?? 502, responseHeaders);
+        incoming.pipe(response);
+        incoming.once("end", resolve);
+        incoming.once("error", reject);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      incoming.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      incoming.once("error", reject);
+      incoming.once("end", () => {
+        const rewritten = Buffer.from(rewriteLiveText(Buffer.concat(chunks).toString("utf8"), contentTypeValue, origin));
+        responseHeaders["content-length"] = String(rewritten.byteLength);
+        response.writeHead(incoming.statusCode ?? 502, responseHeaders);
+        response.end(rewritten);
+        resolve();
+      });
+    });
+    outgoing.once("error", reject);
+    request.pipe(outgoing);
+  });
 }
 
 function serveFile(response: ServerResponse, filePath: string): void {
@@ -218,7 +277,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
     }
   }
   const lease = acquireServerLease(store.path);
-  const allowScripts = options.allowScripts === true;
+  const allowScripts = options.allowScripts === true || store.target.liveUrl !== undefined;
   const aiJobsEnabled = !allowScripts || options.allowAiJobsWithScripts === true;
   try {
     if (aiJobsEnabled) jobManager.start();
@@ -243,10 +302,13 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             target: {
               entry_path: store.entryPath,
               kind: store.target.kind,
-              sha256: fileSha256(store.targetPath),
+              sha256: store.sourceHash(),
               allow_scripts: allowScripts,
               ai_jobs_enabled: aiJobsEnabled,
-              url: `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
+              live_url: store.target.liveUrl ?? null,
+              url: store.target.liveUrl
+                ? `/live${new URL(store.target.liveUrl).pathname}${new URL(store.target.liveUrl).search}`
+                : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
             },
             review: store.load(),
           });
@@ -254,15 +316,18 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         if (request.method === "GET" && pathname === "/api/file-state") {
           const paths = url.searchParams.getAll("path");
           if (paths.length !== 1 || !paths[0]?.trim()) throw new HttpError(400, "exactly one nonblank path is required");
-          let page;
           try {
-            page = new ReviewStore(paths[0], { projectRoot: store.target.projectRoot });
+            const pagePath = paths[0];
+            if (store.target.liveUrl) {
+              return sendJson(response, 200, { path: pagePath, sha256: store.sourceHash(pagePath) });
+            }
+            const page = new ReviewStore(pagePath, { projectRoot: store.target.projectRoot });
             if (store.target.kind === "image" && page.targetPath !== store.targetPath) throw new Error("outside session");
             if (store.target.kind === "html" && page.target.kind !== "html") throw new Error("outside session");
+            return sendJson(response, 200, { path: page.entryPath, sha256: page.sourceHash() });
           } catch {
             throw new HttpError(400, "path is outside the active session");
           }
-          return sendJson(response, 200, { path: page.entryPath, sha256: fileSha256(page.targetPath) });
         }
         if (request.method === "GET" && pathname === "/api/jobs") {
           return sendJson(response, 200, jobManager.list());
@@ -272,6 +337,10 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));
+        if (store.target.liveUrl && pathname.startsWith("/live")) {
+          await proxyLiveRequest(request, response, store.target.liveUrl, url);
+          return;
+        }
         if (request.method === "GET" && pathname.startsWith("/target/")) {
           return serveFile(response, resolvePublicFile(store.target.projectRoot, decodePath(pathname.slice(8))));
         }

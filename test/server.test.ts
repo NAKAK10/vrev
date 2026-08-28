@@ -117,6 +117,59 @@ test("owner lease rejects a live owner, recovers stale PID, and only owner token
   assert.equal(existsSync(leasePath), false);
 });
 
+test("proxies loopback applications and persists URL annotations", async () => {
+  let alternateOrigin = "";
+  const upstream = http.createServer((request, response) => {
+    if (request.url === "/app.js") {
+      response.writeHead(200, { "Content-Type": "application/javascript" });
+      response.end("fetch('/api/data');");
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end(`<a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main>`);
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress !== "string");
+  const liveUrl = `http://127.0.0.1:${upstreamAddress.port}/`;
+  alternateOrigin = `http://localhost:${upstreamAddress.port}`;
+  const live = createVisualReviewServer({ projectRoot: root, target: liveUrl, allowAiJobsWithScripts: true });
+  await new Promise<void>((resolve) => live.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = live.server.address();
+    assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}`;
+    const session = await (await fetch(`${url}/api/session`)).json() as {
+      target: { entry_path: string; live_url: string; url: string; sha256: string; allow_scripts: boolean; ai_jobs_enabled: boolean };
+    };
+    assert.equal(session.target.entry_path, liveUrl);
+    assert.equal(session.target.live_url, liveUrl);
+    assert.equal(session.target.url, "/live/");
+    assert.equal(session.target.allow_scripts, true);
+    assert.equal(session.target.ai_jobs_enabled, true);
+    const html = await (await fetch(`${url}/live/`)).text();
+    assert.match(html, /href="\/live\/next"/);
+    assert.match(html, /src="\/live\/app\.js"/);
+    assert.match(html, /href="\/live\/alias"/);
+    assert.equal(await (await fetch(`${url}/live/app.js`)).text(), "fetch('/live/api/data');");
+    const state = await (await fetch(`${url}/api/file-state?path=${encodeURIComponent(liveUrl)}`)).json() as { sha256: string };
+    assert.equal(state.sha256, session.target.sha256);
+    const machinePath = ["/", "Users", "/demo/project/src/App.vue"].join("");
+    const created = await fetch(`${url}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "dom", page_path: liveUrl, comment: "Live fix", anchor: { selector: "#app", source_hint: { framework: "vue", component: "App", file: machinePath } }, source_hash: state.sha256 }),
+    });
+    assert.equal(created.status, 200);
+    const review = await created.json() as { annotations: Array<{ page_path: string; anchor: { source_hint: Record<string, string> } }> };
+    assert.equal(review.annotations[0]!.page_path, liveUrl);
+    assert.deepEqual(review.annotations[0]!.anchor.source_hint, { framework: "vue", component: "App", file: "src/App.vue" });
+  } finally {
+    await live.close();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
 test("trusted script mode disables every jobs API without explicit AI consent", async () => {
   const trusted = createVisualReviewServer({ projectRoot: root, target: ".code/htmls/pages/other.html", allowScripts: true });
   await new Promise<void>((resolve) => trusted.server.listen(0, "127.0.0.1", resolve));
@@ -280,10 +333,16 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.equal(parsed.open, false);
   const defaults = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png"], "/tmp");
   assert.equal(defaults.port, 18765);
+  const live = parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--start", "npm run dev", "--stop", "npm run down"], "/tmp");
+  assert.equal(live.target, "http://localhost:5173");
+  assert.equal(live.startCommand, "npm run dev");
+  assert.equal(live.stopCommand, "npm run down");
   assert.throws(() => assertLoopbackHost("0.0.0.0"), /host/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets\\x.png"]), /POSIX/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--port", "0"]), /port/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--allow-ai-jobs-with-scripts"]), /requires --allow-scripts/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback URL/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--stop", "npm run down"]), /requires --start/);
 });
 
 test("session target hash matches the target file", async () => {

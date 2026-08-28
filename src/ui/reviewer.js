@@ -96,6 +96,15 @@ function targetUrl() {
 function repositoryPath(path) {
   if (!path) return "";
   let value = String(path).trim();
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      url.hash = "";
+      return url.toString();
+    } catch (_error) {
+      return value;
+    }
+  }
   try {
     const url = new URL(value, window.location.origin);
     if (/^https?:/i.test(value) && url.origin === window.location.origin) value = url.pathname;
@@ -122,7 +131,12 @@ function repositoryPath(path) {
 }
 
 function targetUrlForPath(path) {
-  const encodedPath = repositoryPath(path)
+  const normalized = repositoryPath(path);
+  if (/^https?:\/\//i.test(normalized)) {
+    const url = new URL(normalized);
+    return `/live${url.pathname}${url.search}${url.hash}`;
+  }
+  const encodedPath = normalized
     .split("/")
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
@@ -135,8 +149,14 @@ function currentPagePath() {
     return repositoryPath(state.session?.target?.entry_path);
   }
   try {
-    const path = elements.frame.contentWindow.location.pathname;
-    return repositoryPath(path);
+    const location = elements.frame.contentWindow.location;
+    const liveUrl = state.session?.target?.live_url;
+    if (liveUrl) {
+      const upstream = new URL(liveUrl);
+      const pathname = location.pathname.startsWith("/live") ? location.pathname.slice(5) || "/" : location.pathname;
+      return `${upstream.origin}${pathname}${location.search}`;
+    }
+    return repositoryPath(location.pathname);
   } catch (_error) {
     return repositoryPath(state.session?.target?.entry_path);
   }
@@ -823,6 +843,53 @@ function cancelDrag() {
   clearTransientOverlay("draft-region");
 }
 
+function frameworkSourceHint(element) {
+  const doc = element.ownerDocument;
+  const win = doc.defaultView;
+  let current = element;
+  while (current) {
+    const vue = current.__vueParentComponent;
+    if (vue) {
+      const type = vue.type ?? {};
+      return {
+        framework: doc.querySelector("#__nuxt") ? "nuxt" : "vue",
+        component: type.name ?? type.__name ?? "AnonymousComponent",
+        file: type.__file ?? "",
+      };
+    }
+    const reactKey = Object.keys(current).find((key) => key.startsWith("__reactFiber$"));
+    if (reactKey) {
+      let fiber = current[reactKey];
+      while (fiber) {
+        const type = fiber.type;
+        const component = typeof type === "function" || typeof type === "object"
+          ? type?.displayName ?? type?.name
+          : "";
+        const source = fiber._debugSource;
+        if (component || source?.fileName) {
+          return {
+            framework: doc.querySelector("#__next") ? "next" : "react",
+            component: component ?? "AnonymousComponent",
+            file: source?.fileName ?? "",
+          };
+        }
+        fiber = fiber.return;
+      }
+    }
+    current = current.parentElement;
+  }
+  if (win.ng?.getOwningComponent) {
+    const component = win.ng.getOwningComponent(element);
+    if (component) return { framework: "angular", component: component.constructor?.name ?? "AnonymousComponent", file: "" };
+  }
+  if (doc.querySelector("[data-svelte-h]")) return { framework: "svelte", component: "", file: "" };
+  const generator = doc.querySelector('meta[name="generator"]')?.content ?? "";
+  if (/wordpress/i.test(generator) || doc.body?.classList.contains("wp-site-blocks") || doc.body?.className.includes("wordpress")) {
+    return { framework: "wordpress", component: doc.body?.className.split(/\s+/).slice(0, 8).join(" ") ?? "", file: "" };
+  }
+  return null;
+}
+
 function createDomAnchor(element) {
   const doc = element.ownerDocument;
   const win = doc.defaultView;
@@ -847,6 +914,8 @@ function createDomAnchor(element) {
   };
   const excerpt = safeTextExcerpt(element, 240);
   if (excerpt) anchor.text_excerpt = excerpt;
+  const sourceHint = frameworkSourceHint(element);
+  if (sourceHint) anchor.source_hint = sourceHint;
   return anchor;
 }
 

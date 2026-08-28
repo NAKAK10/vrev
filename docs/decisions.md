@@ -1,5 +1,15 @@
 # Design decisions
 
+## Loopback live application proxy
+
+URL targetはHTTPの`localhost` / `127.0.0.1` / `::1`だけを許可し、review serverの`/live/`配下へreverse proxyする。
+同一生成元に揃えることでVue、React、WordPressなどのDOMを親reviewerから選択できる。HTML/CSS/JavaScript内のroot-relative URLと
+同じportのloopback aliasを`/live/`へ書き換え、route URLをannotationの`page_path`として保存する。外部URL、credential付きURL、
+redirectの自動追跡は許可しない。live targetのsource hashはcontentではなく正規化URLのhashであり、実際の修正確認はbrowser再検証を必須とする。
+
+framework source hintはVue/Nuxt、React/Next、Angular、Svelte、WordPressのdevelopment runtimeから取得できる場合だけ保存する。
+absolute pathはproject-relativeな`src`、`app`、`pages`、`components`、`packages`、`wp-content`以下へ縮約し、machine固有pathをreviewへ残さない。
+
 ## Automatic port selection
 
 serverは`18765`を既定の開始ポートとし、`EADDRINUSE`の場合だけ次の番号を65535まで順に試す。

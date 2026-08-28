@@ -36,6 +36,11 @@ export interface DomAnchor {
   rect?: NumericBox;
   document?: Dimensions;
   viewport?: Dimensions;
+  source_hint?: {
+    framework?: string;
+    component?: string;
+    file?: string;
+  };
 }
 
 export interface RegionAnchor {
