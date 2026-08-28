@@ -1,0 +1,132 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import type { Readable } from "node:stream";
+
+import type { ReviewCli } from "./types.js";
+
+export const MAX_COMMAND_OUTPUT = 1024 * 1024;
+export const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+
+export interface CommandSpec {
+  command: ReviewCli;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface CommandResult {
+  exitCode: number | null;
+  reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error";
+}
+
+export interface RunningCommand {
+  result: Promise<CommandResult>;
+  cancel(): void;
+}
+
+export type CommandExecutor = (spec: CommandSpec) => RunningCommand;
+
+export interface AdapterInput {
+  cli: ReviewCli;
+  prompt: string;
+  projectRoot: string;
+  sessionId: string | null;
+  opencodeAttach: string | null;
+}
+
+export function buildCommand(input: AdapterInput): CommandSpec {
+  let args: string[];
+  if (input.cli === "opencode") {
+    args = ["run", "--format", "json"];
+    if (input.sessionId !== null) args.push("--session", input.sessionId);
+    if (input.opencodeAttach !== null) args.push("--attach", input.opencodeAttach);
+    args.push(input.prompt);
+  } else if (input.cli === "claude") {
+    args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits"];
+    if (input.sessionId !== null) args.push("--resume", input.sessionId);
+    args.push(input.prompt);
+  } else if (input.sessionId === null) {
+    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", input.prompt];
+  } else {
+    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", input.sessionId, input.prompt];
+  }
+  return { command: input.cli, args, cwd: input.projectRoot, env: { ...process.env } };
+}
+
+export interface SpawnExecutorOptions {
+  timeoutMs?: number;
+  outputLimit?: number;
+  killGraceMs?: number;
+  spawnProcess?: typeof spawn;
+  killProcess?: (pid: number, signal: NodeJS.Signals) => void;
+  platform?: NodeJS.Platform;
+}
+
+export function createSpawnExecutor(options: SpawnExecutorOptions = {}): CommandExecutor {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  const outputLimit = options.outputLimit ?? MAX_COMMAND_OUTPUT;
+  const killGraceMs = options.killGraceMs ?? 2_000;
+  const spawnProcess = options.spawnProcess ?? spawn;
+  const killProcess = options.killProcess ?? process.kill.bind(process);
+  const platform = options.platform ?? process.platform;
+  return (spec) => {
+    let child: ChildProcess & { stdout: Readable; stderr: Readable };
+    let requestedReason: CommandResult["reason"] | undefined;
+    let settled = false;
+    let outputBytes = 0;
+    let killTimer: NodeJS.Timeout | undefined;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    let resolveResult!: (result: CommandResult) => void;
+    const result = new Promise<CommandResult>((resolve) => { resolveResult = resolve; });
+
+    const finish = (value: CommandResult): void => {
+      if (settled) return;
+      settled = true;
+      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      resolveResult(value);
+    };
+    const terminate = (reason: CommandResult["reason"]): void => {
+      if (settled || requestedReason !== undefined) return;
+      requestedReason = reason;
+      const signalTree = (signal: NodeJS.Signals): void => {
+        if (child.pid === undefined) return;
+        if (platform === "win32") {
+          spawnProcess("taskkill", ["/pid", String(child.pid), "/t", ...(signal === "SIGKILL" ? ["/f"] : [])], {
+            shell: false, stdio: "ignore",
+          });
+        } else {
+          try { killProcess(-child.pid, signal); } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        }
+      };
+      signalTree("SIGTERM");
+      killTimer = setTimeout(() => signalTree("SIGKILL"), killGraceMs);
+      killTimer.unref();
+    };
+
+    try {
+      child = spawnProcess(spec.command, spec.args, {
+        cwd: spec.cwd,
+        env: spec.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: platform !== "win32",
+      }) as ChildProcess & { stdout: Readable; stderr: Readable };
+    } catch {
+      finish({ exitCode: null, reason: "spawn-error" });
+      return { result, cancel: () => undefined };
+    }
+    const countOutput = (chunk: Buffer | string): void => {
+      outputBytes += Buffer.byteLength(chunk);
+      if (outputBytes > outputLimit) terminate("output-limit");
+    };
+    child.stdout.on("data", countOutput);
+    child.stderr.on("data", countOutput);
+    child.once("error", () => finish({ exitCode: null, reason: requestedReason ?? "spawn-error" }));
+    child.once("close", (code) => finish({ exitCode: code, reason: requestedReason ?? "exit" }));
+    timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+    timeoutTimer.unref();
+    return { result, cancel: () => terminate("cancelled") };
+  };
+}

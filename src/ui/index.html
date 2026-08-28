@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ローカルのHTMLや画像にノード・範囲単位で注釈を残すビジュアルレビュー画面。">
+    <title>Visual Redline Review</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="reviewer.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="target-heading">
+          <span class="eyebrow">LOCAL VISUAL REVIEW</span>
+          <h1 id="target-path">対象を読み込み中…</h1>
+        </div>
+        <div class="mode-toolbar" role="toolbar" aria-label="レビュー操作">
+          <div class="viewport-toolbar" role="group" aria-label="表示サイズ">
+            <button class="viewport-button is-active" type="button" data-viewport="desktop" aria-pressed="true" title="PC幅">PC</button>
+            <button class="viewport-button" type="button" data-viewport="tablet" aria-pressed="false" title="タブレット幅 768px">タブレット</button>
+            <button class="viewport-button" type="button" data-viewport="mobile" aria-pressed="false" title="スマホ幅 390px">スマホ</button>
+          </div>
+          <button class="mode-button is-active" type="button" data-mode="browse" aria-pressed="true">
+            閲覧 <kbd>V</kbd>
+          </button>
+          <button class="mode-button" type="button" data-mode="node" aria-pressed="false">
+            ノード選択 <kbd>N</kbd>
+          </button>
+          <button class="mode-button" type="button" data-mode="region" aria-pressed="false">
+            範囲指定 <kbd>R</kbd>
+          </button>
+          <button id="refresh-button" class="icon-button" type="button" aria-label="レビューと対象を再読み込み" title="再読み込み">
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <div id="hash-warning" class="warning-banner" role="status" hidden></div>
+
+      <main class="review-layout">
+        <section class="stage-panel" aria-label="レビュー対象">
+          <div id="stage" class="stage" data-mode="browse">
+            <iframe id="target-frame" title="レビュー対象ページ" sandbox="allow-same-origin allow-forms" hidden></iframe>
+            <div id="image-wrap" class="image-wrap" hidden>
+              <img id="target-image" alt="レビュー対象画像">
+            </div>
+            <div id="overlay" class="review-overlay" aria-hidden="true"></div>
+            <div id="stage-empty" class="stage-empty">対象を読み込んでいます…</div>
+          </div>
+          <div class="stage-help-row">
+            <p id="mode-help" class="mode-help">閲覧モード：ページを通常どおり操作できます。</p>
+            <span id="trust-indicator" class="trust-indicator">安全モード（対象JS無効）</span>
+          </div>
+        </section>
+
+        <aside class="review-sidebar" aria-label="レビュー注釈">
+          <section class="sidebar-section ai-jobs-section" aria-labelledby="ai-jobs-heading">
+            <div class="section-heading-row">
+              <h2 id="ai-jobs-heading">AI一括修正</h2>
+              <span class="open-count"><span id="ai-open-count">0</span>件 未対応</span>
+            </div>
+            <form id="ai-batch-form" class="ai-batch-form">
+              <div class="ai-control-grid">
+                <label for="ai-cli">
+                  <span>CLI</span>
+                  <select id="ai-cli" name="cli">
+                    <option value="opencode">OpenCode</option>
+                    <option value="claude">Claude</option>
+                    <option value="codex">Codex</option>
+                  </select>
+                </label>
+                <label for="ai-max-parallel">
+                  <span>最大並列数</span>
+                  <select id="ai-max-parallel" name="max_parallel">
+                    <option value="1">1</option>
+                    <option value="2" selected>2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </label>
+              </div>
+              <button id="ai-batch-submit" class="primary-button ai-batch-submit" type="submit" disabled>AIにまとめて修正依頼</button>
+            </form>
+            <div id="ai-job-panel" class="ai-job-panel" aria-label="AI修正ジョブ"></div>
+          </section>
+
+          <section class="sidebar-section filters-section" aria-labelledby="annotation-heading">
+            <div class="section-heading-row">
+              <h2 id="annotation-heading">注釈</h2>
+              <span id="annotation-total" class="count-badge">0</span>
+            </div>
+            <div class="filter-grid">
+              <label>
+                <span>状態</span>
+                <select id="status-filter">
+                  <option value="all">すべて</option>
+                  <option value="open">未対応</option>
+                  <option value="addressed">AI対応済み</option>
+                  <option value="resolved">解決済み</option>
+                </select>
+              </label>
+              <label>
+                <span>種類</span>
+                <select id="kind-filter">
+                  <option value="all">すべて</option>
+                  <option value="dom">ノード</option>
+                  <option value="region">範囲</option>
+                </select>
+              </label>
+            </div>
+            <div id="status-counts" class="status-counts" aria-label="状態別件数"></div>
+          </section>
+
+          <section class="sidebar-section annotation-section">
+            <div id="annotation-list" class="annotation-list"></div>
+            <p id="annotation-empty" class="empty-message">注釈はまだありません。</p>
+          </section>
+
+          <section class="sidebar-section history-section" aria-labelledby="history-heading">
+            <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="history-list">
+              <span id="history-heading">履歴</span>
+              <span id="history-count" class="count-badge">0</span>
+              <span class="chevron" aria-hidden="true">⌄</span>
+            </button>
+            <ol id="history-list" class="history-list" hidden></ol>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="comment-dialog" class="comment-dialog">
+      <form id="comment-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">NEW ANNOTATION</span>
+            <h2 id="dialog-title">コメントを追加</h2>
+          </div>
+          <button class="dialog-close" type="button" data-dialog-cancel aria-label="閉じる">×</button>
+        </div>
+        <p id="selection-summary" class="selection-summary"></p>
+        <label class="comment-label" for="comment-input">修正内容・確認事項</label>
+        <textarea id="comment-input" rows="5" maxlength="2000" required placeholder="例：見出しと本文の間隔をもう少し広げてください"></textarea>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-dialog-cancel>キャンセル</button>
+          <button id="comment-submit" class="primary-button" type="submit">注釈を保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="reviewer.js" defer></script>
+    <script type="module" src="jobs.js"></script>
+  </body>
+</html>

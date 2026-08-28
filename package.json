@@ -1,0 +1,31 @@
+{
+  "name": "@nakak10/visual-review",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
+  "type": "module",
+  "bin": {
+    "visual-review": "dist/src/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NAKAK10/visual-review.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "types": "./dist/src/index.d.ts",
+  "scripts": {
+    "build": "node scripts/copy-ui.mjs --clean && tsc -p tsconfig.json && node scripts/copy-ui.mjs && node scripts/make-cli-executable.mjs",
+    "start": "node dist/src/cli.js serve",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.7.0"
+  }
+}
