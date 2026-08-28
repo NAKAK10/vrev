@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildCommand, createSpawnExecutor, type CommandExecutor, type CommandResult, type RunningCommand } from "./adapters.js";
+import { buildCommand, createSpawnExecutor, parseCustomCommand, type CommandExecutor, type CommandResult, type RunningCommand } from "./adapters.js";
 import { JobStore } from "./job-store.js";
 import { ReviewStore } from "./review-store.js";
 import type { Annotation, EnqueueJobsInput, ReviewJob, ReviewJobState } from "./types.js";
@@ -22,16 +22,24 @@ function validateAttach(value: string): string {
 }
 
 export function validateEnqueueInput(value: Record<string, unknown>): Required<EnqueueJobsInput> {
-  const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach"]);
+  const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach", "custom_name", "custom_command"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("job batch contains an unknown field");
-  if (value.cli !== "opencode" && value.cli !== "claude" && value.cli !== "codex") throw new Error("cli must be opencode, claude, or codex");
+  if (!["opencode", "claude", "codex", "copilot", "pi", "custom"].includes(String(value.cli))) throw new Error("cli is unsupported");
   if (!Number.isInteger(value.max_parallel) || (value.max_parallel as number) < 1 || (value.max_parallel as number) > 10) throw new Error("max_parallel must be an integer from 1 to 10");
   const sessionId = value.session_id === undefined ? null : value.session_id;
   if (sessionId !== null && (typeof sessionId !== "string" || !SESSION_ID.test(sessionId))) throw new Error("session_id is invalid");
+  if (sessionId !== null && value.cli !== "opencode" && value.cli !== "claude" && value.cli !== "codex") throw new Error("session_id is not available for this CLI");
   const attach = value.opencode_attach === undefined ? null : value.opencode_attach;
   if (attach !== null && typeof attach !== "string") throw new Error("opencode_attach must be a string or null");
   if (attach !== null && value.cli !== "opencode") throw new Error("opencode_attach is only valid for opencode");
-  return { cli: value.cli, max_parallel: value.max_parallel as number, session_id: sessionId, opencode_attach: attach === null ? null : validateAttach(attach) };
+  const customName = value.custom_name === undefined ? null : value.custom_name;
+  const customCommand = value.custom_command === undefined ? null : value.custom_command;
+  if (value.cli === "custom") {
+    if (typeof customName !== "string" || !customName.trim() || customName.length > 80) throw new Error("custom_name must be 1 to 80 characters");
+    if (typeof customCommand !== "string" || !customCommand.trim() || customCommand.length > 2000 || /[\0\r\n]/.test(customCommand)) throw new Error("custom_command must be a single nonblank line up to 2000 characters");
+    parseCustomCommand(customCommand, "validation-prompt");
+  } else if (customName !== null || customCommand !== null) throw new Error("custom command fields require cli=custom");
+  return { cli: value.cli as Required<EnqueueJobsInput>["cli"], max_parallel: value.max_parallel as number, session_id: sessionId, opencode_attach: attach === null ? null : validateAttach(attach), custom_name: customName, custom_command: customCommand };
 }
 
 function shellDisplay(value: string): string { return `'${value.replaceAll("'", `'"'"'`)}'`; }
@@ -84,11 +92,11 @@ export class JobManager {
       } catch (error) {
         state = "failed"; summary = `failed: page unavailable before enqueue (${this.errorMessage(error)})`;
       }
-      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: annotation.source_hash, cli: input.cli, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
+      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: annotation.source_hash, cli: input.cli, custom_name: input.custom_name, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
     });
     if (jobs.length > 0) {
       this.jobStore.update((state) => {
-        state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach });
+        state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach, custom_command: input.custom_command });
         state.jobs.push(...jobs);
       });
       for (const job of jobs) if (job.state === "queued") this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
@@ -188,7 +196,7 @@ export class JobManager {
     const prompt = buildBatchPrompt(this.reviewPath, claimed.map(({ annotation_id }) => annotation_id), batch.max_parallel, fileURLToPath(new URL("./cli.js", import.meta.url)));
     let command: RunningCommand;
     try {
-      command = this.executor(buildCommand({ cli: claimed[0]!.cli, prompt, projectRoot: this.reviewStore.target.projectRoot, sessionId: claimed[0]!.session_id, opencodeAttach: batch.opencode_attach }));
+      command = this.executor(buildCommand({ cli: claimed[0]!.cli, prompt, projectRoot: this.reviewStore.target.projectRoot, sessionId: claimed[0]!.session_id, opencodeAttach: batch.opencode_attach, customCommand: batch.custom_command }));
     } catch (error) {
       this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
       return;

@@ -122,7 +122,7 @@ export interface SetStatusInput {
   actor?: Actor;
 }
 
-export type ReviewCli = "opencode" | "claude" | "codex";
+export type ReviewCli = "opencode" | "claude" | "codex" | "copilot" | "pi" | "custom";
 
 export type ReviewJobStatus =
   | "queued"
@@ -139,6 +139,7 @@ export interface ReviewJob {
   page_path: string;
   source_hash: string;
   cli: ReviewCli;
+  custom_name: string | null;
   session_id: string | null;
   state: ReviewJobStatus;
   created: string;
@@ -152,6 +153,7 @@ export interface ReviewJobBatch {
   id: string;
   max_parallel: number;
   opencode_attach: string | null;
+  custom_command: string | null;
 }
 
 export interface ReviewJobState {
@@ -165,4 +167,6 @@ export interface EnqueueJobsInput {
   max_parallel: number;
   session_id?: string | null;
   opencode_attach?: string | null;
+  custom_name?: string | null;
+  custom_command?: string | null;
 }

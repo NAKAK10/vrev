@@ -7,7 +7,7 @@ export const MAX_COMMAND_OUTPUT = 1024 * 1024;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface CommandSpec {
-  command: ReviewCli;
+  command: string;
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -31,6 +31,42 @@ export interface AdapterInput {
   projectRoot: string;
   sessionId: string | null;
   opencodeAttach: string | null;
+  customCommand?: string | null;
+}
+
+export function parseCustomCommand(value: string, prompt: string): { command: string; args: string[] } {
+  if (!value.trim() || value.length > 2000 || /[\0\r\n]/.test(value)) throw new Error("custom command must be a single nonblank line up to 2000 characters");
+  const parts: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (const character of value.trim()) {
+    if (escaped) { current += character; escaped = false; continue; }
+    if (character === "\\" && quote !== "'") { escaped = true; continue; }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      else current += character;
+      continue;
+    }
+    if (character === "'" || character === '"') { quote = character; continue; }
+    if (/\s/.test(character)) {
+      if (current) { parts.push(current); current = ""; }
+      continue;
+    }
+    current += character;
+  }
+  if (escaped || quote !== null) throw new Error("custom command contains an unfinished escape or quote");
+  if (current) parts.push(current);
+  if (parts.length === 0) throw new Error("custom command must include an executable");
+  const command = parts.shift()!;
+  let replaced = false;
+  const args = parts.map((part) => {
+    if (!part.includes("{prompt}")) return part;
+    replaced = true;
+    return part.replaceAll("{prompt}", prompt);
+  });
+  if (!replaced) args.push(prompt);
+  return { command, args };
 }
 
 export function buildCommand(input: AdapterInput): CommandSpec {
@@ -44,10 +80,17 @@ export function buildCommand(input: AdapterInput): CommandSpec {
     args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits"];
     if (input.sessionId !== null) args.push("--resume", input.sessionId);
     args.push(input.prompt);
-  } else if (input.sessionId === null) {
+  } else if (input.cli === "codex" && input.sessionId === null) {
     args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", input.prompt];
+  } else if (input.cli === "codex") {
+    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", input.sessionId!, input.prompt];
+  } else if (input.cli === "copilot") {
+    args = ["--prompt", input.prompt, "--allow-all-tools"];
+  } else if (input.cli === "pi") {
+    args = ["--print", "--mode", "json", "--no-session", "--approve", input.prompt];
   } else {
-    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", input.sessionId, input.prompt];
+    const custom = parseCustomCommand(input.customCommand ?? "", input.prompt);
+    return { command: custom.command, args: custom.args, cwd: input.projectRoot, env: { ...process.env } };
   }
   return { command: input.cli, args, cwd: input.projectRoot, env: { ...process.env } };
 }

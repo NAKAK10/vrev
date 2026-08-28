@@ -1,15 +1,15 @@
 # visual-review
 
-ローカルHTML・画像へDOMノード／範囲単位で注釈を付け、OpenCode・Claude・Codexへ修正を依頼するためのローカルVisual Reviewツールです。
+ローカルHTML・画像へDOMノード／範囲単位で注釈を付け、各種coding agentへ修正を依頼するためのローカルVisual Reviewツールです。
 
 ## 主な機能
 
 - HTMLのDOMノード選択と矩形範囲指定
 - 画像の矩形範囲指定
-- 注釈スレッドと `open` / `addressed` / `resolved` の状態管理
+- 注釈スレッドと `open` / `in_progress` / `addressed` / `resolved` の状態管理
 - 注釈カード選択時のモーダル・ドロワー・popover・details復元
 - PC／タブレット（768px）／スマホ（390px）の表示切り替え
-- OpenCode／Claude／CodexによるAI一括修正
+- OpenCode／Claude／Codex／GitHub Copilot／Pi／カスタムコマンドによるAI一括修正
 - リポジトリ外から `--project-root` を指定できるCLI
 - schema v2、atomic write、lock、server lease、永続ジョブキュー
 
@@ -20,6 +20,9 @@
   - `opencode`
   - `claude`
   - `codex`
+  - `copilot`
+  - `pi`
+  - または登録したカスタムコマンド
 
 ## セットアップ
 
@@ -87,13 +90,21 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 - `N`: DOMノード選択
 - `R`: 矩形範囲指定
 - `PC / タブレット / スマホ`: responsive表示切り替え
-- AI一括修正欄右上の`•••`: CLI、最大並列数（read-only調査agent 1〜10）、自動実行をmodalで設定
+- AI一括修正欄右上の`•••`: CLI、最大並列数（read-only調査agent 1〜10）、自動実行、カスタムコマンドをmodalで設定
 - 注釈欄右上の`•••`: 状態と種類を複数選択できるbadge形式のfilter modal。初期状態は「未対応・AI対応中・AI対応済み」と全種類を選択
 - `注釈を保存したら自動でAI修正を開始`: 有効にすると、注釈保存後に確認dialogなしでjobをqueueへ追加。設定はbrowserに保存され、手動の「AIにまとめて修正依頼」ボタンは非表示
 
 注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。
 
 注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。job失敗・キャンセル時は`in_progress`から`open`へ戻ります。`resolved`へ変更できるのは人間だけです。
+
+カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。`{prompt}`を書いた引数へ依頼文を挿入し、省略時は最後の引数に追加します。
+
+```text
+ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}
+```
+
+API keyやtokenをコマンド欄へ記載しないでください。認証は各CLIの既存設定または環境変数を利用します。
 
 ## 開発
 

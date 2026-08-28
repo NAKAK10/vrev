@@ -23,6 +23,9 @@ test("AI batch controls and compiled script are present", () => {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
   assert.match(sourceHtml, /<option value="10">10<\/option>/);
+  assert.match(sourceHtml, /<option value="copilot">GitHub Copilot<\/option>/);
+  assert.match(sourceHtml, /<option value="pi">Pi<\/option>/);
+  assert.match(sourceHtml, /id="custom-command-add"/);
   assert.match(sourceHtml, /name="annotation-status" value="in_progress" checked/);
   assert.match(sourceHtml, /name="annotation-kind" value="dom" checked/);
   assert.match(sourceHtml, /name="annotation-kind" value="region" checked/);
@@ -50,6 +53,8 @@ test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
   assert.match(jobsSource, /visual-review:auto-run/);
   assert.match(jobsSource, /settingsDialog\.showModal\(\)/);
   assert.match(jobsSource, /form\.hidden = autoRunCheckbox\.checked/);
+  assert.match(jobsSource, /visual-review:custom-commands/);
+  assert.match(jobsSource, /custom_name: custom\.name, custom_command: custom\.command/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-attach-url["']/);

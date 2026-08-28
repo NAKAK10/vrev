@@ -114,6 +114,9 @@
               <option value="opencode">OpenCode</option>
               <option value="claude">Claude</option>
               <option value="codex">Codex</option>
+              <option value="copilot">GitHub Copilot</option>
+              <option value="pi">Pi</option>
+              <optgroup id="ai-custom-options" label="カスタムコマンド"></optgroup>
             </select>
           </label>
           <label for="ai-max-parallel">
@@ -133,9 +136,19 @@
           </label>
         </div>
         <label class="ai-auto-run-toggle" for="ai-auto-run">
-          <input id="ai-auto-run" type="checkbox">
+          <input id="ai-auto-run" type="checkbox" role="switch">
           <span>注釈を保存したら自動でAI修正を開始</span>
         </label>
+        <section class="custom-command-section" aria-labelledby="custom-command-heading">
+          <h3 id="custom-command-heading">カスタムコマンド</h3>
+          <p>shellを経由せず直接実行します。<code>{prompt}</code>を記述するとその位置へ依頼文を渡し、省略時は最後の引数として追加します。</p>
+          <div class="custom-command-fields">
+            <label for="custom-command-name"><span>表示名</span><input id="custom-command-name" type="text" maxlength="80" placeholder="Ollama Claude"></label>
+            <label for="custom-command-value"><span>コマンド</span><input id="custom-command-value" type="text" maxlength="2000" placeholder="ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}"></label>
+          </div>
+          <button id="custom-command-add" class="secondary-button" type="button">カスタムコマンドを登録</button>
+          <div id="custom-command-list" class="custom-command-list" aria-live="polite"></div>
+        </section>
         <div class="dialog-actions">
           <button class="primary-button" type="submit">設定を閉じる</button>
         </div>

@@ -5,7 +5,7 @@ import { atomicWriteJson, readJson, withFileLock } from "./file-utils.js";
 import type { ReviewJob, ReviewJobBatch, ReviewJobState } from "./types.js";
 
 const JOB_STATES = new Set(["queued", "running", "succeeded", "failed", "cancelled", "skipped"]);
-const CLIS = new Set(["opencode", "claude", "codex"]);
+const CLIS = new Set(["opencode", "claude", "codex", "copilot", "pi", "custom"]);
 
 function isStringOrNull(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -24,12 +24,14 @@ function isSafeAttach(value: unknown): value is string | null {
 function validateJob(value: unknown): asserts value is ReviewJob {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("job-state contains an invalid job");
   const job = value as Record<string, unknown>;
-  const allowed = new Set(["id", "batch_id", "annotation_id", "page_path", "source_hash", "cli", "session_id", "state", "created", "started", "finished", "exit_code", "summary"]);
+  const allowed = new Set(["id", "batch_id", "annotation_id", "page_path", "source_hash", "cli", "custom_name", "session_id", "state", "created", "started", "finished", "exit_code", "summary"]);
   if (Object.keys(job).some((key) => !allowed.has(key))) throw new Error("job-state job contains an unknown field");
   for (const key of ["id", "batch_id", "annotation_id", "page_path", "source_hash", "created", "summary"] as const) {
     if (typeof job[key] !== "string") throw new Error(`job-state job.${key} must be a string`);
   }
+  if (!("custom_name" in job)) job.custom_name = null;
   if (!CLIS.has(job.cli as string)) throw new Error("job-state job.cli is invalid");
+  if (!isStringOrNull(job.custom_name) || (job.cli === "custom" && !job.custom_name)) throw new Error("job-state job.custom_name is invalid");
   if (!JOB_STATES.has(job.state as string)) throw new Error("job-state job.state is invalid");
   if (!isStringOrNull(job.session_id) || !isStringOrNull(job.started) || !isStringOrNull(job.finished)) {
     throw new Error("job-state job contains an invalid nullable string");
@@ -42,8 +44,9 @@ function validateJob(value: unknown): asserts value is ReviewJob {
 function validateBatch(value: unknown): asserts value is ReviewJobBatch {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("job-state contains an invalid batch");
   const batch = value as Record<string, unknown>;
-  if (Object.keys(batch).some((key) => key !== "id" && key !== "max_parallel" && key !== "opencode_attach")) throw new Error("job-state batch contains an unknown field");
-  if (typeof batch.id !== "string" || !Number.isInteger(batch.max_parallel) || (batch.max_parallel as number) < 1 || (batch.max_parallel as number) > 4 || !isSafeAttach(batch.opencode_attach)) {
+  if (Object.keys(batch).some((key) => key !== "id" && key !== "max_parallel" && key !== "opencode_attach" && key !== "custom_command")) throw new Error("job-state batch contains an unknown field");
+  if (!("custom_command" in batch)) batch.custom_command = null;
+  if (typeof batch.id !== "string" || !Number.isInteger(batch.max_parallel) || (batch.max_parallel as number) < 1 || (batch.max_parallel as number) > 10 || !isSafeAttach(batch.opencode_attach) || !isStringOrNull(batch.custom_command)) {
     throw new Error("job-state contains an invalid batch");
   }
 }
@@ -57,8 +60,11 @@ function validateState(value: unknown): ReviewJobState {
   }
   state.batches.forEach(validateBatch);
   state.jobs.forEach(validateJob);
-  const batchIds = new Set((state.batches as ReviewJobBatch[]).map(({ id }) => id));
-  if ((state.jobs as ReviewJob[]).some(({ batch_id }) => !batchIds.has(batch_id))) throw new Error("job-state job refers to an unknown batch");
+  const batches = state.batches as ReviewJobBatch[];
+  const jobs = state.jobs as ReviewJob[];
+  const batchIds = new Set(batches.map(({ id }) => id));
+  if (jobs.some(({ batch_id }) => !batchIds.has(batch_id))) throw new Error("job-state job refers to an unknown batch");
+  if (jobs.some((job) => job.cli === "custom" && !batches.find(({ id }) => id === job.batch_id)?.custom_command)) throw new Error("job-state custom job has no command");
   return state as unknown as ReviewJobState;
 }
 

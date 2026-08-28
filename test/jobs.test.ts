@@ -13,6 +13,7 @@ import {
   fileSha256,
   JobManager,
   JobStore,
+  parseCustomCommand,
   ReviewStore,
   type CommandExecutor,
   type CommandResult,
@@ -31,8 +32,13 @@ function repository(): string {
   return root;
 }
 
-test("accepts up to ten read-only investigation agents", () => {
+test("accepts supported and custom command configurations", () => {
   assert.equal(validateEnqueueInput({ cli: "opencode", max_parallel: 10 }).max_parallel, 10);
+  assert.equal(validateEnqueueInput({ cli: "copilot", max_parallel: 2 }).cli, "copilot");
+  assert.equal(validateEnqueueInput({ cli: "pi", max_parallel: 2 }).cli, "pi");
+  const custom = validateEnqueueInput({ cli: "custom", max_parallel: 2, custom_name: "Cloud model", custom_command: "runner --prompt {prompt}" });
+  assert.equal(custom.custom_command, "runner --prompt {prompt}");
+  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2 }), /custom_name/);
   assert.throws(() => validateEnqueueInput({ cli: "opencode", max_parallel: 11 }), /1 to 10/);
 });
 
@@ -85,6 +91,13 @@ test("builds fixed argv for all adapters without annotation comments", () => {
   assert.deepEqual(buildCommand({ ...base, cli: "claude", sessionId: "s.1" }).args, ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--resume", "s.1", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: null }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: "abc" }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", "abc", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "copilot", sessionId: null }).args, ["--prompt", "fixed prompt", "--allow-all-tools"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "pi", sessionId: null }).args, ["--print", "--mode", "json", "--no-session", "--approve", "fixed prompt"]);
+  const custom = buildCommand({ ...base, cli: "custom", sessionId: null, customCommand: "ollama launch claude --model model -- {prompt}" });
+  assert.equal(custom.command, "ollama");
+  assert.deepEqual(custom.args, ["launch", "claude", "--model", "model", "--", "fixed prompt"]);
+  assert.deepEqual(parseCustomCommand("runner --flag", "prompt"), { command: "runner", args: ["--flag", "prompt"] });
+  assert.throws(() => parseCustomCommand("runner 'unfinished", "prompt"), /unfinished/);
 });
 
 test("runs one coordinator process per batch with IDs-only prompt and max subagent limit", async () => {
@@ -203,9 +216,9 @@ test("cancels queued jobs individually, running coordinator as a batch, and reco
   const jobStore = new JobStore(store.path);
   const timestamp = new Date().toISOString();
   jobStore.update((state) => {
-    state.batches.push({ id: "restart", max_parallel: 1, opencode_attach: null });
-    state.jobs.push({ id: "unknown", batch_id: "restart", annotation_id: firstId, page_path: ".code/htmls/pages/a.html", source_hash: fileSha256(path.join(root, ".code/htmls/pages/a.html")), cli: "opencode", session_id: null, state: "running", created: timestamp, started: timestamp, finished: null, exit_code: null, summary: "running" });
-    state.jobs.push({ id: "resume-queued", batch_id: "restart", annotation_id: secondId, page_path: ".code/htmls/pages/b.html", source_hash: fileSha256(path.join(root, ".code/htmls/pages/b.html")), cli: "opencode", session_id: null, state: "queued", created: timestamp, started: null, finished: null, exit_code: null, summary: "queued" });
+    state.batches.push({ id: "restart", max_parallel: 1, opencode_attach: null, custom_command: null });
+    state.jobs.push({ id: "unknown", batch_id: "restart", annotation_id: firstId, page_path: ".code/htmls/pages/a.html", source_hash: fileSha256(path.join(root, ".code/htmls/pages/a.html")), cli: "opencode", custom_name: null, session_id: null, state: "running", created: timestamp, started: timestamp, finished: null, exit_code: null, summary: "running" });
+    state.jobs.push({ id: "resume-queued", batch_id: "restart", annotation_id: secondId, page_path: ".code/htmls/pages/b.html", source_hash: fileSha256(path.join(root, ".code/htmls/pages/b.html")), cli: "opencode", custom_name: null, session_id: null, state: "queued", created: timestamp, started: null, finished: null, exit_code: null, summary: "queued" });
   });
   const restartControl = controlledExecutor();
   const restarted = new JobManager(store, { executor: restartControl.executor });

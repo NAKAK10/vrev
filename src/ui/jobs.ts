@@ -1,4 +1,4 @@
-type ReviewCli = "opencode" | "claude" | "codex";
+type ReviewCli = "opencode" | "claude" | "codex" | "copilot" | "pi" | "custom";
 type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 
 interface SessionPayload {
@@ -13,6 +13,7 @@ interface ReviewJob {
   batch_id: string;
   annotation_id: string;
   cli: ReviewCli;
+  custom_name: string | null;
   state: JobState;
   summary: string;
   exit_code: number | null;
@@ -22,6 +23,12 @@ interface ReviewJob {
 
 interface JobListPayload {
   jobs: ReviewJob[];
+}
+
+interface CustomCommand {
+  id: string;
+  name: string;
+  command: string;
 }
 
 interface EnqueuePayload {
@@ -34,6 +41,9 @@ const CLI_LABELS: Record<ReviewCli, string> = {
   opencode: "OpenCode",
   claude: "Claude",
   codex: "Codex",
+  copilot: "GitHub Copilot",
+  pi: "Pi",
+  custom: "Custom",
 };
 
 function element<T extends Element>(selector: string, type: { new (): T }): T {
@@ -47,6 +57,11 @@ const settingsOpenButton = element("#ai-settings-open", HTMLButtonElement);
 const settingsDialog = element("#ai-settings-dialog", HTMLDialogElement);
 const settingsCloseButton = element("[data-ai-settings-close]", HTMLButtonElement);
 const cliSelect = element("#ai-cli", HTMLSelectElement);
+const customOptions = element("#ai-custom-options", HTMLOptGroupElement);
+const customNameInput = element("#custom-command-name", HTMLInputElement);
+const customCommandInput = element("#custom-command-value", HTMLInputElement);
+const customAddButton = element("#custom-command-add", HTMLButtonElement);
+const customCommandList = element("#custom-command-list", HTMLDivElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
 const submitButton = element("#ai-batch-submit", HTMLButtonElement);
@@ -67,20 +82,73 @@ let destroyed = false;
 const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
 const CLI_STORAGE_KEY = "visual-review:cli";
 const PARALLEL_STORAGE_KEY = "visual-review:max-parallel";
+const CUSTOM_COMMANDS_STORAGE_KEY = "visual-review:custom-commands";
+let customCommands = loadCustomCommands();
+renderCustomCommands();
 const storedCli = window.localStorage.getItem(CLI_STORAGE_KEY);
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
-if (storedCli !== null && isCli(storedCli)) cliSelect.value = storedCli;
+if (storedCli !== null && (isCli(storedCli) || customCommands.some(({ id }) => storedCli === `custom:${id}`))) cliSelect.value = storedCli;
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
 autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
 form.hidden = autoRunCheckbox.checked;
 
 function isCli(value: string): value is ReviewCli {
-  return value === "opencode" || value === "claude" || value === "codex";
+  return value === "opencode" || value === "claude" || value === "codex" || value === "copilot" || value === "pi";
 }
 
-function selectedCli(): ReviewCli {
-  if (!isCli(cliSelect.value)) throw new Error("CLIの選択が不正です。");
-  return cliSelect.value;
+function loadCustomCommands(): CustomCommand[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(CUSTOM_COMMANDS_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is CustomCommand => typeof item === "object" && item !== null
+      && typeof (item as CustomCommand).id === "string" && typeof (item as CustomCommand).name === "string" && typeof (item as CustomCommand).command === "string");
+  } catch { return []; }
+}
+
+function saveCustomCommands(): void {
+  window.localStorage.setItem(CUSTOM_COMMANDS_STORAGE_KEY, JSON.stringify(customCommands));
+}
+
+function renderCustomCommands(): void {
+  customOptions.replaceChildren(...customCommands.map((item) => {
+    const option = document.createElement("option");
+    option.value = `custom:${item.id}`;
+    option.textContent = item.name;
+    return option;
+  }));
+  customCommandList.replaceChildren(...customCommands.map((item) => {
+    const row = document.createElement("div");
+    row.className = "custom-command-row";
+    const text = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const command = document.createElement("code");
+    command.textContent = item.command;
+    text.append(name, command);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "custom-command-remove";
+    remove.textContent = "削除";
+    remove.addEventListener("click", () => {
+      customCommands = customCommands.filter(({ id }) => id !== item.id);
+      if (cliSelect.value === `custom:${item.id}`) {
+        cliSelect.value = "opencode";
+        window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
+      }
+      saveCustomCommands();
+      renderCustomCommands();
+    });
+    row.append(text, remove);
+    return row;
+  }));
+}
+
+function selectedConfiguration(): { cli: ReviewCli; custom_name?: string; custom_command?: string } {
+  if (isCli(cliSelect.value)) return { cli: cliSelect.value };
+  const id = cliSelect.value.startsWith("custom:") ? cliSelect.value.slice(7) : "";
+  const custom = customCommands.find((item) => item.id === id);
+  if (!custom) throw new Error("カスタムコマンドの選択が不正です。");
+  return { cli: "custom", custom_name: custom.name, custom_command: custom.command };
 }
 
 function setStatus(message: string, error = false): void {
@@ -172,7 +240,7 @@ function renderJobs(jobs: ReviewJob[]): void {
     const meta = document.createElement("div");
     meta.className = "job-card-meta";
     meta.append(
-      textNode("span", "job-cli", CLI_LABELS[job.cli] ?? job.cli),
+      textNode("span", "job-cli", job.custom_name ?? CLI_LABELS[job.cli] ?? job.cli),
       textNode("span", "job-exit-code", `exit: ${job.exit_code ?? "—"}`),
     );
     if (ACTIVE_STATES.has(job.state)) {
@@ -275,13 +343,14 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
     return;
   }
 
-  const cli = selectedCli();
+  const configuration = selectedConfiguration();
   const maxParallel = Number(parallelSelect.value);
   if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 10) {
     setStatus("最大並列数は1〜10で選択してください。", true);
     return;
   }
-  if (!automatic && !window.confirm(`${openCount}件の未対応注釈を${CLI_LABELS[cli]}（最大並列${maxParallel}）へ依頼しますか？`)) return;
+  const cliLabel = configuration.custom_name ?? CLI_LABELS[configuration.cli];
+  if (!automatic && !window.confirm(`${openCount}件の未対応注釈を${cliLabel}（最大並列${maxParallel}）へ依頼しますか？`)) return;
 
   submitting = true;
   updateSubmitState();
@@ -290,7 +359,7 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
     const payload = await requestJson("/api/jobs/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cli, max_parallel: maxParallel }),
+      body: JSON.stringify({ ...configuration, max_parallel: maxParallel }),
     });
     if (typeof payload !== "object" || payload === null || !Array.isArray((payload as Partial<EnqueuePayload>).jobs)) {
       throw new Error("batch response is invalid");
@@ -336,6 +405,21 @@ form.addEventListener("submit", (event) => void submitBatch(event));
 settingsOpenButton.addEventListener("click", () => settingsDialog.showModal());
 settingsCloseButton.addEventListener("click", () => settingsDialog.close());
 cliSelect.addEventListener("change", () => window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value));
+customAddButton.addEventListener("click", () => {
+  const name = customNameInput.value.trim();
+  const command = customCommandInput.value.trim();
+  if (!name || !command) { setStatus("カスタムコマンドの表示名とコマンドを入力してください。", true); return; }
+  if (/[\0\r\n]/.test(command)) { setStatus("カスタムコマンドは1行で入力してください。", true); return; }
+  const item = { id: window.crypto.randomUUID(), name, command };
+  customCommands.push(item);
+  saveCustomCommands();
+  renderCustomCommands();
+  cliSelect.value = `custom:${item.id}`;
+  window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
+  customNameInput.value = "";
+  customCommandInput.value = "";
+  setStatus(`${name}を登録しました。`);
+});
 parallelSelect.addEventListener("change", () => window.localStorage.setItem(PARALLEL_STORAGE_KEY, parallelSelect.value));
 autoRunCheckbox.addEventListener("change", () => {
   window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, String(autoRunCheckbox.checked));
