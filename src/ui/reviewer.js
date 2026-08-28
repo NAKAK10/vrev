@@ -884,7 +884,7 @@ function frameworkSourceHint(element) {
   }
   if (doc.querySelector("[data-svelte-h]")) return { framework: "svelte", component: "", file: "" };
   const generator = doc.querySelector('meta[name="generator"]')?.content ?? "";
-  if (/wordpress/i.test(generator) || doc.body?.classList.contains("wp-site-blocks") || doc.body?.className.includes("wordpress")) {
+  if (/wordpress/i.test(generator) || doc.querySelector('link[href*="/wp-content/"], script[src*="/wp-includes/"]') || doc.body?.classList.contains("wp-site-blocks") || doc.body?.className.includes("wordpress")) {
     return { framework: "wordpress", component: doc.body?.className.split(/\s+/).slice(0, 8).join(" ") ?? "", file: "" };
   }
   return null;
