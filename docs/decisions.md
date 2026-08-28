@@ -1,5 +1,11 @@
 # Design decisions
 
+## Automatic port selection
+
+serverは`18765`を既定の開始ポートとし、`EADDRINUSE`の場合だけ次の番号を65535まで順に試す。
+`--port`は固定値ではなく探索開始値として扱う。複数projectを同時起動するときに手動でportを管理させないためである。
+同じreviewの二重起動はport探索より前にserver leaseで拒否し、別project／別targetだけが別portへ進む。
+
 ## One coordinator per batch
 
 AI一括修正は、annotationごとにjob recordを作りつつ、batch全体では1つのcoordinator

@@ -14,7 +14,7 @@ import {
   MAX_REQUEST_BODY,
   type VisualReviewServer,
 } from "../src/index.js";
-import { parseCliArguments } from "../src/cli.js";
+import { listenOnAvailablePort, parseCliArguments } from "../src/cli.js";
 
 let root: string;
 let visualReview: VisualReviewServer;
@@ -250,6 +250,23 @@ test("CLI entrypoint runs when invoked through a package-bin symlink", async () 
   assert.match(result.stderr, /usage: visual-review serve/);
 });
 
+test("server increments from an occupied port", async () => {
+  const blocker = http.createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const address = blocker.address();
+  assert.ok(address && typeof address !== "string" && address.port < 65535);
+  const candidate = http.createServer();
+  try {
+    const selected = await listenOnAvailablePort(candidate, "127.0.0.1", address.port);
+    assert.equal(selected, address.port + 1);
+  } finally {
+    await Promise.all([
+      new Promise<void>((resolve) => blocker.close(() => resolve())),
+      new Promise<void>((resolve) => candidate.close(() => resolve())),
+    ]);
+  }
+});
+
 test("CLI normalizes project root, validates POSIX target, loopback host and port", () => {
   const parsed = parseCliArguments([
     "serve", "--project-root", "project", "--target", ".code/htmls/page.html", "--host", "::1", "--port", "65535", "--allow-scripts", "--allow-ai-jobs-with-scripts", "--no-open",
@@ -261,6 +278,8 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.equal(parsed.allowScripts, true);
   assert.equal(parsed.allowAiJobsWithScripts, true);
   assert.equal(parsed.open, false);
+  const defaults = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png"], "/tmp");
+  assert.equal(defaults.port, 18765);
   assert.throws(() => assertLoopbackHost("0.0.0.0"), /host/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets\\x.png"]), /POSIX/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--port", "0"]), /port/);

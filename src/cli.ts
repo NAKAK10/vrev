@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
+import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,7 +19,7 @@ interface ServeArguments {
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve --project-root <root> --target <relative> [--host 127.0.0.1|::1] [--port 8765] [--allow-scripts] [--allow-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: visual-review serve --project-root <root> --target <relative> [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--allow-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
@@ -49,7 +50,7 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   }
   const host = values.get("--host") ?? "127.0.0.1";
   assertLoopbackHost(host);
-  const portText = values.get("--port") ?? "8765";
+  const portText = values.get("--port") ?? "18765";
   if (!/^\d+$/.test(portText)) throw new Error("port must be an integer from 1 to 65535");
   const port = Number(portText);
   if (port < 1 || port > 65535) throw new Error("port must be an integer from 1 to 65535");
@@ -169,6 +170,29 @@ export function installShutdownHandlers(close: () => Promise<void>, source: Sign
   };
 }
 
+function isAddressInUse(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+}
+
+export async function listenOnAvailablePort(server: Server, host: string, startPort: number): Promise<number> {
+  for (let port = startPort; port <= 65535; port += 1) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error): void => reject(error);
+        server.once("error", onError);
+        server.listen(port, host, () => {
+          server.removeListener("error", onError);
+          resolve();
+        });
+      });
+      return port;
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+    }
+  }
+  throw new Error(`no available port from ${startPort} to 65535`);
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv[0] === "annotation") {
     const args = parseAnnotationArguments(argv);
@@ -186,10 +210,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   });
   installShutdownHandlers(() => visualReview.close());
   try {
-    await new Promise<void>((resolve, reject) => {
-      visualReview.server.once("error", reject);
-      visualReview.server.listen(args.port, args.host, resolve);
-    });
+    await listenOnAvailablePort(visualReview.server, args.host, args.port);
   } catch (error) {
     await visualReview.close();
     throw error;
