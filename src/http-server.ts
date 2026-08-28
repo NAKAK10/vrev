@@ -1,5 +1,8 @@
-import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { BlockList } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +28,36 @@ const SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'self'",
 ].join("; ");
+
+const PUBLIC_TARGET_POLICY = [
+  "default-src 'none'",
+  "script-src 'none'",
+  "style-src 'self' https: 'unsafe-inline'",
+  "img-src 'self' https: data:",
+  "font-src 'self' https: data:",
+  "media-src 'self' https: data:",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "frame-ancestors 'self'",
+  "worker-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+const PRIVATE_ADDRESSES = new BlockList();
+for (const [address, prefix, family] of [
+  ["0.0.0.0", 8, "ipv4"], ["10.0.0.0", 8, "ipv4"], ["100.64.0.0", 10, "ipv4"],
+  ["127.0.0.0", 8, "ipv4"], ["169.254.0.0", 16, "ipv4"], ["172.16.0.0", 12, "ipv4"],
+  ["192.0.0.0", 24, "ipv4"], ["192.0.2.0", 24, "ipv4"], ["192.168.0.0", 16, "ipv4"],
+  ["198.18.0.0", 15, "ipv4"], ["198.51.100.0", 24, "ipv4"], ["203.0.113.0", 24, "ipv4"],
+  ["224.0.0.0", 4, "ipv4"], ["240.0.0.0", 4, "ipv4"],
+  ["::", 128, "ipv6"], ["::1", 128, "ipv6"],
+  ["fc00::", 7, "ipv6"], ["fe80::", 10, "ipv6"], ["ff00::", 8, "ipv6"],
+  ["2001:db8::", 32, "ipv6"],
+] as const) PRIVATE_ADDRESSES.addSubnet(address, prefix, family);
+
+const MAX_PROXY_RESPONSE = 20 * 1024 * 1024;
 
 const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -65,9 +98,9 @@ class HttpError extends Error {
   }
 }
 
-function setSecurityHeaders(response: ServerResponse): void {
+function setSecurityHeaders(response: ServerResponse, policy = SECURITY_POLICY): void {
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Content-Security-Policy", SECURITY_POLICY);
+  response.setHeader("Content-Security-Policy", policy);
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "SAMEORIGIN");
   response.setHeader("Referrer-Policy", "no-referrer");
@@ -94,15 +127,24 @@ function contentType(filePath: string): string {
   return CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
-function rewriteLiveText(content: string, contentTypeValue: string, origin: string): string {
+function rewriteLiveText(content: string, contentTypeValue: string, origin: string, publicTarget: boolean): string {
   const upstream = new URL(origin);
   const port = upstream.port ? `:${upstream.port}` : "";
-  let result = content;
-  for (const hostname of ["localhost", "127.0.0.1", "[::1]"]) {
-    result = result.replaceAll(`http://${hostname}${port}`, "/live");
+  let result = content.replaceAll(origin, "/live");
+  if (!publicTarget) {
+    for (const hostname of ["localhost", "127.0.0.1", "[::1]"]) {
+      result = result.replaceAll(`http://${hostname}${port}`, "/live");
+    }
   }
   if (contentTypeValue.includes("text/html")) {
     result = result.replace(/\b(src|href|action)=(['"])\/(?!\/|live\/)/gi, (_match, name: string, quote: string) => `${name}=${quote}/live/`);
+    if (publicTarget) {
+      result = result.replace(/<meta\b[^>]*http-equiv=(['"])refresh\1[^>]*>/gi, "");
+      result = result.replace(/(<a\b[^>]*\bhref=)(['"])(https?:\/\/[^'"]+)\2/gi, (_match, prefix: string, quote: string, value: string) => {
+        try { return new URL(value).origin === origin ? `${prefix}${quote}/live${new URL(value).pathname}${new URL(value).search}${new URL(value).hash}${quote}` : `${prefix}${quote}#${quote}`; }
+        catch { return `${prefix}${quote}#${quote}`; }
+      });
+    }
   }
   if (contentTypeValue.includes("text/css")) {
     result = result.replace(/url\((['"]?)\/(?!\/|live\/)/gi, (_match, quote: string) => `url(${quote}/live/`);
@@ -113,42 +155,89 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
   return result;
 }
 
-function proxyLiveRequest(request: IncomingMessage, response: ServerResponse, liveUrl: string, requestUrl: URL): Promise<void> {
-  const origin = new URL(liveUrl).origin;
+function mappedIpv4(address: string): string | null {
+  const tail = /^::ffff:(.+)$/i.exec(address)?.[1];
+  if (!tail) return null;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) return tail;
+  const groups = tail.split(":");
+  if (groups.length !== 2 || groups.some((group) => !/^[0-9a-f]{1,4}$/i.test(group))) return null;
+  const value = `${groups[0]!.padStart(4, "0")}${groups[1]!.padStart(4, "0")}`;
+  return [0, 2, 4, 6].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16)).join(".");
+}
+
+async function resolvePublicAddress(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
+  const addresses = await dnsLookup(hostname, { all: true, verbatim: true });
+  const blocked = ({ address, family }: { address: string; family: number }): boolean => {
+    const mapped = family === 6 ? mappedIpv4(address) : null;
+    return mapped ? PRIVATE_ADDRESSES.check(mapped, "ipv4") : PRIVATE_ADDRESSES.check(address, family === 6 ? "ipv6" : "ipv4");
+  };
+  if (addresses.length === 0 || addresses.some(blocked)) {
+    throw new HttpError(403, "public target resolved to a non-public address");
+  }
+  const selected = addresses[0]!;
+  return { address: selected.address, family: selected.family === 6 ? 6 : 4 };
+}
+
+async function proxyLiveRequest(request: IncomingMessage, response: ServerResponse, liveUrl: string, requestUrl: URL, publicTarget: boolean): Promise<void> {
+  if (requestUrl.pathname !== "/live" && !requestUrl.pathname.startsWith("/live/")) throw new HttpError(404, "file not found");
+  if (publicTarget && request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "public targets are read-only");
+  const target = new URL(liveUrl);
+  const origin = target.origin;
   const suffix = requestUrl.pathname.slice("/live".length) || "/";
-  const upstream = new URL(`${suffix}${requestUrl.search}`, origin);
-  return new Promise((resolve, reject) => {
-    const headers = { ...request.headers, host: upstream.host, "accept-encoding": "identity" };
-    delete headers.connection;
-    const outgoing = httpRequest(upstream, { method: request.method, headers }, (incoming) => {
+  const upstream = new URL(origin);
+  upstream.pathname = suffix;
+  upstream.search = requestUrl.search;
+  if (upstream.origin !== origin) throw new HttpError(400, "invalid live target path");
+  const pinned = publicTarget ? await resolvePublicAddress(upstream.hostname) : null;
+  await new Promise<void>((resolve, reject) => {
+    const headers: Record<string, string> = { host: upstream.host, "accept-encoding": "identity" };
+    for (const name of ["accept", "accept-language", "user-agent"]) {
+      const value = request.headers[name];
+      if (typeof value === "string") headers[name] = value;
+    }
+    if (!publicTarget && typeof request.headers["content-type"] === "string") headers["content-type"] = request.headers["content-type"];
+    const transport = upstream.protocol === "https:" ? httpsRequest : httpRequest;
+    const outgoing = transport(upstream, {
+      method: request.method,
+      headers,
+      lookup: pinned ? ((_hostname: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => {
+        if (options.all) callback(null, [pinned]);
+        else callback(null, pinned.address, pinned.family);
+      }) as never : undefined,
+    }, (incoming) => {
       const contentTypeValue = String(incoming.headers["content-type"] ?? "application/octet-stream");
       const textual = /text\/|javascript|json|xml|svg/i.test(contentTypeValue);
       const responseHeaders = { ...incoming.headers };
-      for (const name of ["content-length", "content-encoding", "transfer-encoding", "content-security-policy", "x-frame-options"]) delete responseHeaders[name];
+      for (const name of ["content-length", "content-encoding", "transfer-encoding", "content-security-policy", "x-frame-options", "set-cookie", "set-cookie2", "refresh"]) delete responseHeaders[name];
       const location = incoming.headers.location;
       if (location) {
         const resolved = new URL(location, upstream);
-        responseHeaders.location = resolved.origin === origin ? `/live${resolved.pathname}${resolved.search}${resolved.hash}` : location;
-      }
-      setSecurityHeaders(response);
-      if (!textual) {
-        response.writeHead(incoming.statusCode ?? 502, responseHeaders);
-        incoming.pipe(response);
-        incoming.once("end", resolve);
-        incoming.once("error", reject);
-        return;
+        if (resolved.origin !== origin) {
+          incoming.resume();
+          reject(new HttpError(502, "public target attempted a cross-origin redirect"));
+          return;
+        }
+        responseHeaders.location = `/live${resolved.pathname}${resolved.search}${resolved.hash}`;
       }
       const chunks: Buffer[] = [];
-      incoming.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      let size = 0;
+      incoming.on("data", (chunk: Buffer) => {
+        size += chunk.byteLength;
+        if (size > MAX_PROXY_RESPONSE) incoming.destroy(new Error("proxy response exceeds 20 MiB"));
+        else chunks.push(Buffer.from(chunk));
+      });
       incoming.once("error", reject);
       incoming.once("end", () => {
-        const rewritten = Buffer.from(rewriteLiveText(Buffer.concat(chunks).toString("utf8"), contentTypeValue, origin));
+        const body = Buffer.concat(chunks);
+        const rewritten = textual ? Buffer.from(rewriteLiveText(body.toString("utf8"), contentTypeValue, origin, publicTarget)) : body;
+        setSecurityHeaders(response, publicTarget ? PUBLIC_TARGET_POLICY : SECURITY_POLICY);
         responseHeaders["content-length"] = String(rewritten.byteLength);
         response.writeHead(incoming.statusCode ?? 502, responseHeaders);
-        response.end(rewritten);
+        response.end(request.method === "HEAD" ? undefined : rewritten);
         resolve();
       });
     });
+    outgoing.setTimeout(15_000, () => outgoing.destroy(new Error("proxy request timed out")));
     outgoing.once("error", reject);
     request.pipe(outgoing);
   });
@@ -277,7 +366,8 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
     }
   }
   const lease = acquireServerLease(store.path);
-  const allowScripts = options.allowScripts === true || store.target.liveUrl !== undefined;
+  const publicTarget = store.target.urlMode === "public";
+  const allowScripts = !publicTarget && (options.allowScripts === true || store.target.liveUrl !== undefined);
   const aiJobsEnabled = !allowScripts || options.allowAiJobsWithScripts === true;
   try {
     if (aiJobsEnabled) jobManager.start();
@@ -306,6 +396,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
               allow_scripts: allowScripts,
               ai_jobs_enabled: aiJobsEnabled,
               live_url: store.target.liveUrl ?? null,
+              url_mode: store.target.urlMode ?? null,
               url: store.target.liveUrl
                 ? `/live${new URL(store.target.liveUrl).pathname}${new URL(store.target.liveUrl).search}`
                 : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
@@ -337,8 +428,8 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));
-        if (store.target.liveUrl && pathname.startsWith("/live")) {
-          await proxyLiveRequest(request, response, store.target.liveUrl, url);
+        if (store.target.liveUrl && (pathname === "/live" || pathname.startsWith("/live/"))) {
+          await proxyLiveRequest(request, response, store.target.liveUrl, url, publicTarget);
           return;
         }
         if (request.method === "GET" && pathname.startsWith("/target/")) {

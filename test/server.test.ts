@@ -119,13 +119,15 @@ test("owner lease rejects a live owner, recovers stale PID, and only owner token
 
 test("proxies loopback applications and persists URL annotations", async () => {
   let alternateOrigin = "";
+  let lastRequestUrl = "";
   const upstream = http.createServer((request, response) => {
+    lastRequestUrl = request.url ?? "";
     if (request.url === "/app.js") {
       response.writeHead(200, { "Content-Type": "application/javascript" });
       response.end("fetch('/api/data');");
       return;
     }
-    response.writeHead(200, { "Content-Type": "text/html" });
+    response.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "upstream=blocked" });
     response.end(`<a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main>`);
   });
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
@@ -147,11 +149,15 @@ test("proxies loopback applications and persists URL annotations", async () => {
     assert.equal(session.target.url, "/live/");
     assert.equal(session.target.allow_scripts, true);
     assert.equal(session.target.ai_jobs_enabled, true);
-    const html = await (await fetch(`${url}/live/`)).text();
+    const liveResponse = await fetch(`${url}/live/`);
+    assert.equal(liveResponse.headers.get("set-cookie"), null);
+    const html = await liveResponse.text();
     assert.match(html, /href="\/live\/next"/);
     assert.match(html, /src="\/live\/app\.js"/);
     assert.match(html, /href="\/live\/alias"/);
     assert.equal(await (await fetch(`${url}/live/app.js`)).text(), "fetch('/live/api/data');");
+    assert.equal((await fetch(`${url}/live//example.invalid/path`)).status, 200);
+    assert.equal(lastRequestUrl, "//example.invalid/path");
     const state = await (await fetch(`${url}/api/file-state?path=${encodeURIComponent(liveUrl)}`)).json() as { sha256: string };
     assert.equal(state.sha256, session.target.sha256);
     const machinePath = ["/", "Users", "/demo/project/src/App.vue"].join("");
@@ -167,6 +173,24 @@ test("proxies loopback applications and persists URL annotations", async () => {
   } finally {
     await live.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
+test("public targets stay script-free and reject private network resolution", async () => {
+  const live = createVisualReviewServer({ projectRoot: root, target: "https://10.0.0.1/", allowScripts: true });
+  await new Promise<void>((resolve) => live.server.listen(0, "127.0.0.1", resolve));
+  const address = live.server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  try {
+    const session = await (await fetch(`${url}/api/session`)).json() as { target: { allow_scripts: boolean; url_mode: string } };
+    assert.equal(session.target.allow_scripts, false);
+    assert.equal(session.target.url_mode, "public");
+    const blocked = await fetch(`${url}/live/`);
+    assert.equal(blocked.status, 403);
+    assert.match(await blocked.text(), /non-public address/);
+  } finally {
+    await live.close();
   }
 });
 
@@ -343,7 +367,11 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.throws(() => assertLoopbackHost("0.0.0.0"), /host/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets\\x.png"]), /POSIX/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--port", "0"]), /port/);
+  const hosted = parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com/products"], "/tmp");
+  assert.equal(hosted.target, "https://example.com/products");
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback URL/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--start", "npm run dev"]), /requires a loopback URL/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--allow-scripts"]), /not available for public/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--stop", "npm run down"]), /requires --start/);
 });
 

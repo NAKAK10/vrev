@@ -38,14 +38,18 @@ test("safe stem excludes decomposed Unicode combining marks", () => {
   assert.equal(reviewDirectoryName("assets/é.png").split("--")[0], "é");
 });
 
-test("accepts loopback live URLs and rejects external or credentialed URLs", () => {
+test("accepts loopback and public HTTPS targets while rejecting unsafe URLs", () => {
   const root = repository();
   const live = resolveTarget("http://127.0.0.1:5173/dashboard?tab=one#ignored", root);
   assert.equal(live.liveUrl, "http://127.0.0.1:5173/dashboard?tab=one");
   assert.equal(live.kind, "html");
-  assert.throws(() => resolveTarget("https://example.com", root), /localhost|loopback HTTP URL/);
-  const credentialed = ["http://", "user", ":", "placeholder", "@localhost:3000"].join("");
-  assert.throws(() => resolveTarget(credentialed, root), /without credentials/);
+  assert.equal(live.urlMode, "loopback");
+  const hosted = resolveTarget("https://example.com/products?tab=one#ignored", root);
+  assert.equal(hosted.liveUrl, "https://example.com/products?tab=one");
+  assert.equal(hosted.urlMode, "public");
+  assert.throws(() => resolveTarget("http://example.com", root), /public host/);
+  const credentialed = ["https://", "user", ":", "placeholder", "@example.com"].join("");
+  assert.throws(() => resolveTarget(credentialed, root), /credentials/);
 });
 
 test("rejects absolute, traversal, hidden, sensitive, wrong-root and symlink targets", () => {

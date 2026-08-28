@@ -2,10 +2,13 @@
 
 ## Loopback live application proxy
 
-URL targetはHTTPの`localhost` / `127.0.0.1` / `::1`だけを許可し、review serverの`/live/`配下へreverse proxyする。
+HTTPの`localhost` / `127.0.0.1` / `::1` targetはreview serverの`/live/`配下へreverse proxyする。
 同一生成元に揃えることでVue、React、WordPressなどのDOMを親reviewerから選択できる。HTML/CSS/JavaScript内のroot-relative URLと
-同じportのloopback aliasを`/live/`へ書き換え、route URLをannotationの`page_path`として保存する。外部URL、credential付きURL、
-redirectの自動追跡は許可しない。live targetのsource hashはcontentではなく正規化URLのhashであり、実際の修正確認はbrowser再検証を必須とする。
+同じportのloopback aliasを`/live/`へ書き換え、route URLをannotationの`page_path`として保存する。
+
+public HTTPS targetも`/live/`へproxyするが、同一originで第三者scriptを実行するとlocal APIへアクセスできるため、script・form・cross-origin navigationを
+強制無効化したread-only static modeに限定する。DNS解決結果をpublic addressへpinし、private/reserved address、credential、cookie/authorization転送、
+cross-origin redirectを拒否する。live targetのsource hashはcontentではなく正規化URLのhashであり、実際の修正確認はbrowser再検証を必須とする。
 
 framework source hintはVue/Nuxt、React/Next、Angular、Svelte、WordPressのdevelopment runtimeから取得できる場合だけ保存する。
 absolute pathはproject-relativeな`src`、`app`、`pages`、`components`、`packages`、`wp-content`以下へ縮約し、machine固有pathをreviewへ残さない。
@@ -31,9 +34,9 @@ CLIだけを起動する。coordinatorが依存関係、編集順、検証結果
 review保存先、schema v2、schema 1 migration、status/event規則は既存review dataと互換に保つ。
 同じreview directoryを複数serverが同時所有しないよう`.server-lease.json`で起動を排他する。
 
-`--allow-scripts`は信頼済みlocal prototype専用である。対象scriptからAI processを意図せず起動する
-経路を作らないため、このmodeでは既定でjobs APIとUIのAI一括修正を無効にする。動的UIとAI修正を
-AI一括修正は通常運用を優先してCLI既定で有効とする。対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。
+`--allow-scripts`は信頼済みlocal prototype専用である。AI一括修正は通常運用を優先してCLI既定で有効とする。
+対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。
+public targetでは`--allow-scripts`を受理せず、対象scriptからlocal APIやAI processへ到達する経路を作らない。
 
 ## Coordinator sessions are CLI-owned
 

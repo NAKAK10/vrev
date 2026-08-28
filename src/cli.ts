@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
+import { normalizeTargetUrl } from "./paths.js";
 import { ReviewStore } from "./review-store.js";
 
 interface ServeArguments {
@@ -45,11 +46,13 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   const rootValue = values.get("--project-root");
   const target = values.get("--target");
   if (rootValue === undefined || target === undefined) serveUsage();
-  const liveTarget = /^https?:\/\//i.test(target);
-  if (!target.trim() || (!liveTarget && (path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")))) {
-    throw new Error("target must be a POSIX relative path or loopback HTTP URL");
+  const urlTarget = /^https?:\/\//i.test(target);
+  const targetUrl = urlTarget ? normalizeTargetUrl(target) : null;
+  if (!target.trim() || (!urlTarget && (path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")))) {
+    throw new Error("target must be a POSIX relative path, loopback HTTP URL, or public HTTPS URL");
   }
-  if (values.has("--start") && !liveTarget) throw new Error("--start requires a loopback URL target");
+  if (values.has("--start") && targetUrl?.mode !== "loopback") throw new Error("--start requires a loopback URL target");
+  if (targetUrl?.mode === "public" && allowScripts) throw new Error("--allow-scripts is not available for public targets");
   if (values.has("--stop") && !values.has("--start")) throw new Error("--stop requires --start");
   const host = values.get("--host") ?? "127.0.0.1";
   assertLoopbackHost(host);

@@ -133,3 +133,23 @@ DOM selector、表示text、routeに加え、development runtimeから取得で�
 - framework情報を取得できない一般的なHTML/JavaScriptアプリ
 
 source hintはframeworkのdevelopment runtimeに依存する補助情報です。AI coordinatorはrepository内で実在と内容を確認してから編集します。
+
+## hosting済みサイト
+
+公開またはstaging環境のHTTPS URLも、ローカルの実装repositoryと紐付けてレビューできます。
+
+```bash
+visual-review serve \
+  --project-root /path/to/local/repository \
+  --target https://staging.example.com/products
+```
+
+AIはhosting先そのものを書き換えるのではなく、`--project-root`で指定したローカルrepositoryを修正します。公開サイトからローカルAPIやAI実行機能へ干渉されないよう、public targetはread-only static modeで取得し、対象サイトのJavaScript、form、cross-origin navigationを無効化します。SSR/WordPressなどHTMLを返すサイトに対応します。client-side renderingだけで内容を生成するSPAは、localhost targetを利用してください。
+
+安全制約:
+
+- public targetはHTTPSのみ。URL内credentialは禁止
+- DNS解決先がloopback、private、link-local、予約addressの場合は拒否
+- request cookie・authorizationとresponse cookieは転送しない
+- redirectは同一origin内だけ許可
+- `--allow-scripts`、`--start`、`--stop`はpublic targetでは使用不可

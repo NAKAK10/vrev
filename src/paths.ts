@@ -22,19 +22,31 @@ export interface ResolvedTarget {
   entryPath: string;
   kind: TargetKind;
   liveUrl?: string;
+  urlMode?: "loopback" | "public";
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 
-export function normalizeLoopbackUrl(value: string): string {
+export function normalizeTargetUrl(value: string): { url: string; mode: "loopback" | "public" } {
   let url: URL;
-  try { url = new URL(value); } catch { throw new Error("target URL must be a valid loopback HTTP URL"); }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  if (url.protocol !== "http:" || !LOOPBACK_HOSTNAMES.has(hostname) || url.username || url.password) {
-    throw new Error("target URL must use HTTP on localhost, 127.0.0.1, or ::1 without credentials");
+  try { url = new URL(value); } catch { throw new Error("target URL must be a valid HTTP URL"); }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (url.username || url.password) throw new Error("target URL must not contain credentials");
+  const loopback = LOOPBACK_HOSTNAMES.has(hostname);
+  if ((loopback && url.protocol !== "http:") || (!loopback && url.protocol !== "https:")) {
+    throw new Error("target URL must use HTTP on loopback or HTTPS on a public host");
+  }
+  if (!loopback && (hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname === "metadata.google.internal")) {
+    throw new Error("public target hostname is not allowed");
   }
   url.hash = "";
-  return url.toString();
+  return { url: url.toString(), mode: loopback ? "loopback" : "public" };
+}
+
+export function normalizeLoopbackUrl(value: string): string {
+  const normalized = normalizeTargetUrl(value);
+  if (normalized.mode !== "loopback") throw new Error("target URL must use HTTP on localhost, 127.0.0.1, or ::1 without credentials");
+  return normalized.url;
 }
 
 export function resolveProjectRoot(projectRoot = process.cwd()): string {
@@ -88,8 +100,8 @@ export function resolveTarget(
 ): ResolvedTarget {
   const root = resolveProjectRoot(projectRoot);
   if (/^https?:\/\//i.test(target)) {
-    const liveUrl = normalizeLoopbackUrl(target);
-    return { projectRoot: root, absolutePath: liveUrl, entryPath: liveUrl, kind: "html", liveUrl };
+    const normalized = normalizeTargetUrl(target);
+    return { projectRoot: root, absolutePath: normalized.url, entryPath: normalized.url, kind: "html", liveUrl: normalized.url, urlMode: normalized.mode };
   }
   const parts = relativeParts(target);
   const extension = path.extname(parts.at(-1)!).toLowerCase();
