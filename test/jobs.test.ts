@@ -152,7 +152,7 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.ok(store.load().annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
 });
 
-test("treats a new AI completion message as success and normalizes addressed status", async () => {
+test("treats normal coordinator exit as success and adds a verification message when completion is missing", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
   const succeededId = annotate(store, ".code/htmls/pages/a.html", "a");
@@ -164,21 +164,68 @@ test("treats a new AI completion message as success and normalizes addressed sta
   await waitFor(() => control.pending.length === 1);
   store.addMessage(succeededId, { actor: "ai", body: "implemented and verified" });
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
-  await waitFor(() => manager.list().jobs.every(({ state }) => state === "succeeded" || state === "failed"));
+  await waitFor(() => manager.list().jobs.every(({ state }) => state === "succeeded"));
   const byAnnotation = new Map(manager.list().jobs.map((job) => [job.annotation_id, job]));
-  assert.equal(byAnnotation.get(succeededId)?.state, "succeeded");
-  assert.equal(byAnnotation.get(failedId)?.state, "failed");
-  assert.match(byAnnotation.get(failedId)?.summary ?? "", /postcondition/);
-  assert.equal(store.load().annotations.find(({ id }) => id === succeededId)?.status, "addressed");
-  let failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
-  assert.equal(failedAnnotation?.status, "failed");
-  assert.match(failedAnnotation?.thread.at(-1)?.body ?? "", /修正完了メッセージまたは状態更新/);
-
-  store.addMessage(failedId, { actor: "ai", body: "late completion message" });
-  assert.equal(manager.list().jobs.find(({ annotation_id }) => annotation_id === failedId)?.state, "succeeded");
-  failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
-  assert.equal(failedAnnotation?.status, "addressed");
+  assert.equal(byAnnotation.get(succeededId)?.summary, "succeeded: AI completion message received");
+  assert.match(byAnnotation.get(failedId)?.summary ?? "", /human verification required/);
+  const annotations = store.load().annotations;
+  assert.equal(annotations.find(({ id }) => id === succeededId)?.status, "addressed");
+  const verification = annotations.find(({ id }) => id === failedId);
+  assert.equal(verification?.status, "addressed");
+  assert.equal(verification?.thread.at(-1)?.body, "AI処理が完了しました。変更内容は人間による確認が必要です。");
   await manager.close();
+});
+
+test("keeps a human-resolved annotation archived when its coordinator later exits zero", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const annotationId = annotate(store, store.entryPath, "resolved during run");
+  const control = controlledExecutor();
+  const manager = new JobManager(store, { executor: control.executor });
+  manager.start();
+  manager.enqueue({ cli: "claude", max_parallel: 1 });
+  await waitFor(() => control.pending.length === 1);
+  store.setStatus(annotationId, { actor: "human", status: "resolved" });
+  control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
+  await waitFor(() => manager.list().jobs[0]?.state === "succeeded");
+  const annotation = store.load().annotations.find(({ id }) => id === annotationId);
+  assert.equal(annotation?.status, "resolved");
+  assert.equal(annotation?.thread.at(-1)?.body, "AI処理が完了しました。変更内容は人間による確認が必要です。");
+  await manager.close();
+});
+
+test("recovers legacy postcondition failures when a late completion message arrives", () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const annotationId = annotate(store, store.entryPath, "late");
+  store.setStatus(annotationId, { actor: "ai", status: "in_progress" });
+  store.setStatus(annotationId, { actor: "ai", status: "failed" });
+  const manager = new JobManager(store, { executor: controlledExecutor().executor });
+  const timestamp = new Date(Date.now() - 1000).toISOString();
+  manager.jobStore.update((state) => {
+    state.batches.push({ id: "legacy", max_parallel: 1, opencode_attach: null, custom_command: null });
+    state.jobs.push({ id: "legacy-postcondition", batch_id: "legacy", annotation_id: annotationId, page_path: store.entryPath, source_hash: fileSha256(store.targetPath), cli: "claude", custom_name: null, session_id: null, state: "failed", created: timestamp, started: timestamp, finished: timestamp, exit_code: 0, summary: "failed: annotation postcondition not met" });
+  });
+  store.addMessage(annotationId, { actor: "ai", body: "late completion message" });
+  assert.equal(manager.list().jobs[0]?.state, "succeeded");
+  assert.equal(store.load().annotations[0]?.status, "addressed");
+});
+
+test("recovers legacy zero-exit postcondition failures without a completion message", () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const annotationId = annotate(store, store.entryPath, "legacy no message");
+  store.setStatus(annotationId, { actor: "ai", status: "failed" });
+  const manager = new JobManager(store, { executor: controlledExecutor().executor });
+  const timestamp = new Date(Date.now() - 1000).toISOString();
+  manager.jobStore.update((state) => {
+    state.batches.push({ id: "legacy-zero", max_parallel: 1, opencode_attach: null, custom_command: null });
+    state.jobs.push({ id: "legacy-zero-job", batch_id: "legacy-zero", annotation_id: annotationId, page_path: store.entryPath, source_hash: fileSha256(store.targetPath), cli: "claude", custom_name: null, session_id: null, state: "failed", created: timestamp, started: timestamp, finished: timestamp, exit_code: 0, summary: "failed: annotation postcondition not met" });
+  });
+  assert.equal(manager.list().jobs[0]?.state, "succeeded");
+  const annotation = store.loadActive().annotations[0];
+  assert.equal(annotation?.status, "addressed");
+  assert.equal(annotation?.thread.at(-1)?.body, "AI処理が完了しました。変更内容は人間による確認が必要です。");
 });
 
 test("fails a job when its page target is deleted while the coordinator runs", async () => {

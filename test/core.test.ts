@@ -92,6 +92,15 @@ test("separates resolved annotations and moves reopened feedback back to active 
   assert.equal((JSON.parse(readFileSync(store.resolvedPath, "utf8")) as { annotations: unknown[] }).annotations.length, 0);
 });
 
+test("active reads exclude archived annotations without loading the resolved payload", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
+  store.setStatus(id, { actor: "human", status: "resolved" });
+  writeFileSync(store.resolvedPath, "{ intentionally-not-loaded", "utf8");
+  assert.deepEqual(store.loadActive().annotations, []);
+  assert.throws(() => store.load());
+});
+
 test("migrates legacy review JSON into root .vreview storage", () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   const review = store.load();

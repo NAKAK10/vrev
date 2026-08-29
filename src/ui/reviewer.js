@@ -3,7 +3,7 @@
 const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "failed", "addressed"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
 const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
-const FILTER_STORAGE_VERSION = 2;
+const FILTER_STORAGE_VERSION = 3;
 const HISTORY_PAGE_SIZE = 24;
 const replyDrafts = new Map();
 
@@ -83,8 +83,9 @@ function restoreFilters() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(FILTER_STORAGE_KEY) ?? "null");
     if (!stored || !Array.isArray(stored.statuses) || !Array.isArray(stored.kinds)) return;
-    state.filters.statuses = new Set(stored.statuses.filter((value) => value in STATUS_LABELS));
-    if (stored.version !== FILTER_STORAGE_VERSION) state.filters.statuses.add("failed");
+    state.filters.statuses = new Set(stored.statuses.filter((value) => DEFAULT_STATUS_FILTERS.includes(value)));
+    if (state.filters.statuses.size === 0) state.filters.statuses = new Set(DEFAULT_STATUS_FILTERS);
+    else if (stored.version !== FILTER_STORAGE_VERSION) state.filters.statuses.add("failed");
     state.filters.kinds = new Set(stored.kinds.filter((value) => value in KIND_LABELS));
   } catch (_error) { /* retain defaults */ }
 }
@@ -130,8 +131,8 @@ const SENSITIVE_TEXT_TAGS = new Set([...NON_VISUAL_TAGS, "input", "textarea", "s
 
 function annotations() {
   const value = state.review?.annotations;
-  if (Array.isArray(value)) return value;
-  return value && typeof value === "object" ? Object.values(value) : [];
+  const items = Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : [];
+  return items.filter((annotation) => annotation?.status !== "resolved");
 }
 
 function events() {
@@ -360,7 +361,7 @@ function setMode(mode) {
 function renderSidebar() {
   const all = annotations();
   renderFilterSummary();
-  const statusCounts = { open: 0, in_progress: 0, failed: 0, addressed: 0, resolved: 0 };
+  const statusCounts = { open: 0, in_progress: 0, failed: 0, addressed: 0 };
   for (const annotation of all) {
     const status = annotation.status || "open";
     if (status in statusCounts) statusCounts[status] += 1;
@@ -371,7 +372,6 @@ function renderSidebar() {
     countItem(`AI対応中 ${statusCounts.in_progress}`),
     countItem(`失敗 ${statusCounts.failed}`),
     countItem(`AI対応済み ${statusCounts.addressed}`),
-    countItem(`解決済み ${statusCounts.resolved}`),
   );
 
   const filtered = all.filter((annotation) => state.filters.statuses.has(annotation.status || "open") && state.filters.kinds.has(annotation.kind));
@@ -498,27 +498,21 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   const statusButton = document.createElement("button");
   statusButton.type = "button";
   statusButton.className = "status-button";
-  if (status === "resolved") {
-    statusButton.textContent = "再オープン";
+  if (status === "failed") {
+    statusButton.classList.add("retry");
+    statusButton.textContent = "再試行";
     statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
     actions.append(statusButton);
-  } else {
-    if (status === "failed") {
-      statusButton.classList.add("retry");
-      statusButton.textContent = "再試行";
-      statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
-      actions.append(statusButton);
-    }
-    const resolveButton = document.createElement("button");
-    resolveButton.type = "button";
-    resolveButton.className = `status-button ${status === "addressed" ? "resolve" : "force-resolve"}`;
-    resolveButton.textContent = status === "addressed" ? "解決にする" : "強制的に解決";
-    resolveButton.addEventListener("click", () => {
-      if (status === "addressed") void updateStatus(id, "resolved", resolveButton);
-      else openForceResolveDialog(id, status, resolveButton);
-    });
-    actions.append(resolveButton);
   }
+  const resolveButton = document.createElement("button");
+  resolveButton.type = "button";
+  resolveButton.className = `status-button ${status === "addressed" ? "resolve" : "force-resolve"}`;
+  resolveButton.textContent = status === "addressed" ? "解決にする" : "強制的に解決";
+  resolveButton.addEventListener("click", () => {
+    if (status === "addressed") void updateStatus(id, "resolved", resolveButton);
+    else openForceResolveDialog(id, status, resolveButton);
+  });
+  actions.append(resolveButton);
   card.append(actions);
   return card;
 }
@@ -1382,7 +1376,6 @@ function imageAnnotationBox(annotation) {
 function createMark(annotation, number, box) {
   const mark = document.createElement("div");
   mark.className = "review-mark";
-  mark.classList.toggle("is-resolved", annotation.status === "resolved");
   mark.classList.toggle("is-highlighted", annotationId(annotation) === state.highlightedId);
   setBoxStyle(mark, box);
   const pin = document.createElement("span");

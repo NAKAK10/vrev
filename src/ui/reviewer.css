@@ -584,11 +584,6 @@ kbd {
   background: rgb(217 52 43 / 34%);
 }
 
-.review-mark.is-resolved {
-  background: rgb(104 116 114 / 16%);
-  opacity: .58;
-}
-
 .review-mark.is-stale {
   background: rgb(218 153 34 / 24%);
 }
@@ -608,10 +603,6 @@ kbd {
   box-shadow: 0 2px 6px rgb(0 0 0 / 25%);
   font-size: 11px;
   font-weight: 800;
-}
-
-.review-mark.is-resolved .review-pin {
-  background: #687472;
 }
 
 .review-mark.is-stale .review-pin {
@@ -790,11 +781,6 @@ select {
   border-left-color: #2c78b7;
 }
 
-.annotation-card[data-status="resolved"] {
-  border-left-color: #81908d;
-  opacity: .78;
-}
-
 .card-focus {
   width: 100%;
   padding: 13px 13px 9px;
@@ -841,11 +827,6 @@ select {
 .status-label.addressed {
   color: #185f97;
   background: #eaf4fc;
-}
-
-.status-label.resolved {
-  color: #55625f;
-  background: #e9eeec;
 }
 
 .annotation-comment {

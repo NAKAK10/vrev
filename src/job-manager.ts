@@ -84,7 +84,7 @@ export class JobManager {
 
   enqueue(rawInput: Record<string, unknown>): { batch_id: string; jobs: ReviewJob[] } {
     const input = validateEnqueueInput(rawInput);
-    const review = this.reviewStore.load();
+    const review = this.reviewStore.loadActive();
     const activeIds = new Set(this.jobStore.load().jobs.filter(({ state }) => state === "queued" || state === "running").map(({ annotation_id }) => annotation_id));
     const annotations = review.annotations.filter(({ status, id }) => status === "open" && !activeIds.has(id));
     const batchId = randomUUID();
@@ -154,7 +154,7 @@ export class JobManager {
   }
   private markAnnotationFailed(annotationId: string, summary: string): void {
     try {
-      const annotation = this.reviewStore.load().annotations.find(({ id }) => id === annotationId);
+      const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
       if (!annotation || !["open", "in_progress", "addressed"].includes(annotation.status)) return;
       this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}` });
       this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
@@ -162,7 +162,7 @@ export class JobManager {
   }
   private markAnnotationAddressed(annotationId: string): void {
     try {
-      const annotation = this.reviewStore.load().annotations.find(({ id }) => id === annotationId);
+      const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
       if (annotation && ["open", "in_progress", "failed"].includes(annotation.status)) {
         this.reviewStore.setStatus(annotationId, { actor: "ai", status: "addressed" });
       }
@@ -173,31 +173,45 @@ export class JobManager {
   }
   private reconcileLateCompletionMessages(): void {
     let annotations: Annotation[];
-    try { annotations = this.reviewStore.load().annotations; } catch { return; }
+    try { annotations = this.reviewStore.loadActive().annotations; } catch { return; }
     const snapshot = this.jobStore.load();
     const latest = new Map<string, ReviewJob>();
     for (const job of snapshot.jobs) latest.set(job.annotation_id, job);
-    const completed = [...latest.values()].filter((job) => {
-      if (job.state !== "failed" || !job.summary.includes("annotation postcondition not met") || !job.started) return false;
-      const annotation = annotations.find(({ id }) => id === job.annotation_id);
-      return annotation?.thread.some((message) => this.isCompletionMessage(message, job.started!)) === true;
-    });
+    const completed = [...latest.values()].filter((job) =>
+      job.state === "failed"
+      && job.exit_code === 0
+      && job.summary.includes("annotation postcondition not met")
+      && Boolean(job.started),
+    );
     if (completed.length === 0) return;
     const ids = new Set(completed.map(({ id }) => id));
+    const completionMessageIds = new Set(completed.filter((job) => {
+      const annotation = annotations.find(({ id }) => id === job.annotation_id);
+      return annotation?.thread.some((message) => this.isCompletionMessage(message, job.started!)) === true;
+    }).map(({ id }) => id));
     this.jobStore.update((state) => {
       for (const job of state.jobs) if (ids.has(job.id) && job.state === "failed") {
         job.state = "succeeded";
-        job.summary = "succeeded: AI completion message received";
+        job.summary = completionMessageIds.has(job.id)
+          ? "succeeded: AI completion message received"
+          : "succeeded: coordinator exited normally; human verification required";
       }
     });
-    for (const job of completed) this.markAnnotationAddressed(job.annotation_id);
+    for (const job of completed) {
+      const annotation = annotations.find(({ id }) => id === job.annotation_id);
+      const hasCompletionMessage = annotation?.thread.some((message) => this.isCompletionMessage(message, job.started!)) === true;
+      if (annotation && !hasCompletionMessage) {
+        try { this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" }); } catch { /* archived or already changed */ }
+      }
+      this.markAnnotationAddressed(job.annotation_id);
+    }
   }
   private reopenInProgressAnnotation(annotationId: string): void {
     try { this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
   }
   private reconcileInProgressAnnotations(): void {
     const active = new Set(this.jobStore.load().jobs.filter(({ state }) => state === "queued" || state === "running").map(({ annotation_id }) => annotation_id));
-    for (const annotation of this.reviewStore.load().annotations) {
+    for (const annotation of this.reviewStore.loadActive().annotations) {
       if (annotation.status === "in_progress" && !active.has(annotation.id)) this.reopenInProgressAnnotation(annotation.id);
     }
   }
@@ -231,7 +245,7 @@ export class JobManager {
     if (launchable.length === 0) { queueMicrotask(() => this.schedule()); return; }
     let review;
     try {
-      review = this.reviewStore.load();
+      review = this.reviewStore.loadActive();
     } catch (error) {
       for (const job of launchable) {
         this.finishBeforeLaunch(job.id, "failed", `failed: review unavailable before coordinator launch (${this.errorMessage(error)})`, timestamp);
@@ -281,7 +295,15 @@ export class JobManager {
     const timestamp = now();
     let annotations: Annotation[] = [];
     let reviewError: unknown;
-    try { annotations = this.reviewStore.load().annotations; } catch (error) { reviewError = error; }
+    try { annotations = this.reviewStore.loadActive().annotations; } catch (error) { reviewError = error; }
+    let resolvedAnnotations: Annotation[] = [];
+    if (!reviewError && result.reason === "exit" && result.exitCode === 0 && jobIds.some((id) => {
+      const job = this.jobStore.load().jobs.find((candidate) => candidate.id === id);
+      return job && !annotations.some(({ id: annotationId }) => annotationId === job.annotation_id);
+    })) {
+      try { resolvedAnnotations = this.reviewStore.load().annotations.filter(({ status }) => status === "resolved"); } catch { /* handled as a missing annotation below */ }
+    }
+    const needsVerificationMessage = new Set<string>();
     const finalState = this.jobStore.update((state) => {
       for (const job of state.jobs) {
         if (!jobIds.includes(job.id) || job.state !== "running") continue;
@@ -299,21 +321,37 @@ export class JobManager {
           job.summary = `failed: page unavailable after coordinator exit (${this.errorMessage(error)})`;
           continue;
         }
-        const checkpoint = checkpoints.get(job.id)!;
-        const annotation = annotations.find(({ id }) => id === job.annotation_id);
-        const hasNewAiMessage = annotation?.thread.slice(checkpoint.threadLength).some((message) => this.isCompletionMessage(message, checkpoint.startedAt)) === true;
-        if (hasNewAiMessage) {
-          job.state = "succeeded"; job.summary = "succeeded: AI completion message received";
-        } else {
+        if (reviewError) {
           job.state = "failed";
-          job.summary = reviewError ? `failed: could not verify annotation (${this.errorMessage(reviewError)})` : "failed: annotation postcondition not met";
+          job.summary = `failed: could not verify annotation (${this.errorMessage(reviewError)})`;
+          continue;
+        }
+        const annotation = annotations.find(({ id }) => id === job.annotation_id) ?? resolvedAnnotations.find(({ id }) => id === job.annotation_id);
+        if (!annotation) {
+          job.state = "failed";
+          job.summary = "failed: annotation missing after coordinator exit";
+          continue;
+        }
+        const checkpoint = checkpoints.get(job.id)!;
+        const hasNewAiMessage = annotation.thread.slice(checkpoint.threadLength).some((message) => this.isCompletionMessage(message, checkpoint.startedAt));
+        job.state = "succeeded";
+        if (hasNewAiMessage) job.summary = "succeeded: AI completion message received";
+        else {
+          job.summary = "succeeded: coordinator exited normally; human verification required";
+          needsVerificationMessage.add(job.id);
         }
       }
     });
     for (const job of finalState.jobs) {
       if (!jobIds.includes(job.id)) continue;
-      if (job.state === "succeeded") this.markAnnotationAddressed(job.annotation_id);
-      else if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
+      if (job.state === "succeeded") {
+        if (needsVerificationMessage.has(job.id)) {
+          try {
+            this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" });
+          } catch { /* annotation already changed or review unavailable */ }
+        }
+        this.markAnnotationAddressed(job.annotation_id);
+      } else if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
       else this.markAnnotationFailed(job.annotation_id, job.summary);
     }
     this.schedule();

@@ -151,6 +151,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
     assert.equal(session.target.ai_jobs_enabled, true);
     const liveResponse = await fetch(`${url}/live/`);
     assert.equal(liveResponse.headers.get("set-cookie"), null);
+    assert.equal(liveResponse.headers.get("clear-site-data"), '"cache"');
     const html = await liveResponse.text();
     assert.match(html, /<base href="\/live\/">/);
     assert.match(html, /href="\/live\/next"/);
@@ -281,6 +282,25 @@ test("supports file-state and annotation/message/status APIs through ReviewStore
   const messaged = await messageResponse.json() as { revision: number };
   assert.equal(messageResponse.status, 200);
   assert.equal(messaged.revision, created.revision + 3);
+
+  const resolvedResponse = await fetch(`${baseUrl}/api/annotations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "resolved", actor: "human" }),
+  });
+  const resolved = await resolvedResponse.json() as { annotations: Array<{ id: string }> };
+  assert.equal(resolved.annotations.some((annotation) => annotation.id === id), false);
+  const session = await (await fetch(`${baseUrl}/api/session`)).json() as { review: { annotations: Array<{ id: string }> } };
+  assert.equal(session.review.annotations.some((annotation) => annotation.id === id), false);
+  assert.equal((JSON.parse(readFileSync(visualReview.store.resolvedPath, "utf8")) as { annotations: Array<{ id: string }> }).annotations.some((annotation) => annotation.id === id), true);
+
+  const reopenedResponse = await fetch(`${baseUrl}/api/annotations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "open", actor: "human" }),
+  });
+  const reopened = await reopenedResponse.json() as { annotations: Array<{ id: string; status: string }> };
+  assert.equal(reopened.annotations.find((annotation) => annotation.id === id)?.status, "open");
 });
 
 test("rejects traversal, hidden, secret and review-data paths", async () => {
@@ -405,7 +425,7 @@ test("session target hash matches the target file", async () => {
   assert.equal(session.target.sha256, fileSha256(path.join(root, ".code/htmls/pages/index.html")));
 });
 
-test("exposes batch, list, and cancel job APIs without treating exit zero as success", async () => {
+test("exposes batch, list, and cancel job APIs and treats exit zero as success", async () => {
   const batchResponse = await fetch(`${baseUrl}/api/jobs/batch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -417,11 +437,11 @@ test("exposes batch, list, and cancel job APIs without treating exit zero as suc
   assert.ok(batch.jobs.length > 0);
   for (let index = 0; index < 50; index += 1) {
     const state = await (await fetch(`${baseUrl}/api/jobs`)).json() as { jobs: Array<{ id: string; state: string }> };
-    if (state.jobs.find(({ id }) => id === batch.jobs[0]!.id)?.state === "failed") break;
+    if (state.jobs.find(({ id }) => id === batch.jobs[0]!.id)?.state === "succeeded") break;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   const state = await (await fetch(`${baseUrl}/api/jobs`)).json() as { jobs: Array<{ id: string; state: string }> };
-  assert.equal(state.jobs.find(({ id }) => id === batch.jobs[0]!.id)?.state, "failed");
+  assert.equal(state.jobs.find(({ id }) => id === batch.jobs[0]!.id)?.state, "succeeded");
   const cancelMissing = await fetch(`${baseUrl}/api/jobs/missing/cancel`, { method: "POST" });
   assert.equal(cancelMissing.status, 404);
 });

@@ -257,6 +257,19 @@ export class ReviewStore {
 
   load(): Review { return withFileLock(this.path, () => this.loadUnlocked()); }
 
+  loadActive(): Review {
+    return withFileLock(this.path, () => {
+      if (existsSync(this.transactionPath) || !existsSync(this.path)) {
+        return this.splitReview(this.loadUnlocked(), false);
+      }
+      const active = this.parseReview(this.path);
+      if (active.annotations.some(({ status }) => status === "resolved")) {
+        return this.splitReview(this.loadUnlocked(), false);
+      }
+      return this.splitReview(active, false);
+    });
+  }
+
   private pagePath(value: unknown): { entryPath: string; absolutePath: string } {
     const pagePath = nonblank(value, "page_path");
     if (this.target.liveUrl) {

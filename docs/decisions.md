@@ -40,11 +40,11 @@ built-in adapterはOpenCode・Claude・Codex・GitHub Copilot・Piを提供す�
 shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした実行ファイルとargvを直接spawnする。promptの渡し忘れを防ぐため`{prompt}`を正確に1回必須とする。
 登録前に隔離した一時directoryで応答tokenとtoolによるmarker作成を検証し、単なる終了code 0ではagentic commandとして承認しない。probe時間も保存し、15秒以上なら遅いcommandとして警告する。command文字列をreview JSONやGit管理対象へ保存しない。queue復元に必要なruntime job-stateだけはGit ignore済み領域へ保持する。
 注釈の状態・種類filterも注釈欄右上のmenuから開くmodalへ移し、checkbox badgeによる複数選択とする。fresh browserの既定値は
-`open`・`in_progress`・`failed`・`addressed`および全種類で、`resolved`は明示的に選択した場合だけ表示する。選択はlocalStorageへ保持する。
+`open`・`in_progress`・`failed`・`addressed`および全種類で、`resolved`は通常sessionへ送らずfilter対象にも含めない。選択はlocalStorageへ保持する。
 
 小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが指摘へ直接必要な最小限の共有編集を1回で行う。特定PCのtool名へ依存せず、利用可能なbrowser確認手段による検証をpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
-jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinatorが正常終了しbatch開始後のAI完了messageを追加していれば、AI側のstatus更新が漏れてもjob成功として`addressed`へ補正する。postcondition失敗後に遅れて完了messageが届いた場合も成功へ回復する。失敗・起動前skip時は理由message付きの`failed`、cancel時は`open`へ戻し、
+jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinatorが終了code 0で正常終了した実行中jobは、AI側のmessage/status更新が漏れても成功として`addressed`へ補正する。完了messageがない場合は処理完了とhuman verificationが必要なことを示す中立messageを追加する。非zero終了、timeout、spawn失敗、page unavailable、起動前source conflictは失敗またはskipのまま保持する。旧job-stateに残るpostcondition失敗へ遅れて完了messageが届いた場合も互換性のため成功へ回復する。失敗・起動前skip時は理由message付きの`failed`、cancel時は`open`へ戻し、
 server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。humanは全active statusから`resolved`へ強制変更できるが、通常flowの`addressed`以外では誤操作を避ける確認dialogを必須とする。
 
 ## Compatibility and trust boundary
@@ -85,8 +85,7 @@ child pathを`.vreview/settings.json`へrepository相対pathで登録する。�
 manifest・route・source hintからprimary projectとshared scopeを調査して`context.json`を更新する。
 
 active annotation（`open`・`in_progress`・`failed`・`addressed`）は`review.json`、humanが解決したannotationは`resolved.json`へ分離する。
-APIは両方をmergeして従来どおり1つのreviewとして返し、再open時はactive JSONへ戻す。annotation orderとglobal revisionを両ファイルへ持たせ、
-status移動後もUI順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
+通常sessionとjob managerはactive-only readを使い、解決済みpayloadをpolling・card・overlay・件数へ入れない。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
 
 ## External projects
 

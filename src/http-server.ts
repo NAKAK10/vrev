@@ -258,6 +258,7 @@ async function proxyLiveRequest(request: IncomingMessage, response: ServerRespon
         const body = Buffer.concat(chunks);
         const rewritten = textual ? Buffer.from(rewriteLiveText(body.toString("utf8"), contentTypeValue, origin, publicTarget)) : body;
         setSecurityHeaders(response, publicTarget ? PUBLIC_TARGET_POLICY : LOOPBACK_TARGET_POLICY);
+        if (!publicTarget && contentTypeValue.includes("text/html")) responseHeaders["clear-site-data"] = '"cache"';
         responseHeaders["content-length"] = String(rewritten.byteLength);
         response.writeHead(incoming.statusCode ?? 502, responseHeaders);
         response.end(request.method === "HEAD" ? undefined : rewritten);
@@ -430,7 +431,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 ? `/live${new URL(store.target.liveUrl).pathname}${new URL(store.target.liveUrl).search}`
                 : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
             },
-            review: store.load(),
+            review: store.loadActive(),
           });
         }
         if (request.method === "GET" && pathname === "/api/file-state") {
@@ -474,18 +475,18 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           return serveFile(response, resolvePublicFile(store.target.projectRoot, `assets/${decodePath(pathname.slice(8))}`));
         }
         if (request.method === "POST" && pathname === "/api/annotations") {
-          const review = store.createAnnotation(await readJson(request) as unknown as CreateAnnotationInput);
-          return sendJson(response, 200, review);
+          store.createAnnotation(await readJson(request) as unknown as CreateAnnotationInput);
+          return sendJson(response, 200, store.loadActive());
         }
         const messageId = request.method === "POST" ? annotationId(pathname, "/messages") : undefined;
         if (messageId !== undefined) {
-          const review = store.addMessage(messageId, await readJson(request) as unknown as AddMessageInput);
-          return sendJson(response, 200, review);
+          store.addMessage(messageId, await readJson(request) as unknown as AddMessageInput);
+          return sendJson(response, 200, store.loadActive());
         }
         const statusId = request.method === "PATCH" ? annotationId(pathname) : undefined;
         if (statusId !== undefined) {
-          const review = store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
-          return sendJson(response, 200, review);
+          store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
+          return sendJson(response, 200, store.loadActive());
         }
         if (store.target.liveUrl && !publicTarget) {
           const fallbackUrl = new URL(url.href);

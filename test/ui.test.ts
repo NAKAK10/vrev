@@ -91,7 +91,13 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /source_hint/);
   assert.match(reviewerSource, /in_progress: "AI対応中"/);
   assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "failed", "addressed"\]/);
-  assert.match(reviewerSource, /FILTER_STORAGE_VERSION = 2/);
+  assert.doesNotMatch(sourceHtml, /name="annotation-status" value="resolved"/);
+  assert.doesNotMatch(reviewerSource, /countItem\(`解決済み/);
+  assert.doesNotMatch(reviewerSource, /statusButton\.textContent = "再オープン"/);
+  assert.doesNotMatch(reviewerSource, /is-resolved/);
+  assert.match(reviewerSource, /annotation\?\.status !== "resolved"/);
+  assert.match(reviewerSource, /FILTER_STORAGE_VERSION = 3/);
+  assert.match(reviewerSource, /statuses\.size === 0[^]*new Set\(DEFAULT_STATUS_FILTERS\)/);
   assert.match(reviewerSource, /stored\.version !== FILTER_STORAGE_VERSION[^]*statuses\.add\("failed"\)/);
   assert.match(reviewerSource, /failed: "失敗"/);
   assert.match(reviewerSource, /countItem\(`失敗 \$\{statusCounts\.failed\}`\)/);
