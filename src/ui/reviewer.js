@@ -238,7 +238,12 @@ async function request(url, options = {}) {
 }
 
 function applyReview(payload) {
-  state.review = payload?.review ?? payload ?? { annotations: [], events: [] };
+  const nextReview = payload?.review ?? payload ?? { annotations: [], events: [] };
+  if (nextReview.revision !== undefined && nextReview.revision === state.review?.revision) {
+    state.review = nextReview;
+    return;
+  }
+  state.review = nextReview;
   renderSidebar();
   renderOverlay();
   renderHashWarning();
@@ -358,13 +363,30 @@ function renderSidebar() {
 
   const filtered = all.filter((annotation) => state.filters.statuses.has(annotation.status || "open") && state.filters.kinds.has(annotation.kind));
 
-  elements.annotationList.replaceChildren();
-  const fragment = document.createDocumentFragment();
+  const existingCards = new Map(
+    [...elements.annotationList.querySelectorAll(":scope > .annotation-card")]
+      .map((card) => [card.dataset.annotationId, card]),
+  );
+  let cursor = elements.annotationList.firstElementChild;
   filtered.forEach((annotation) => {
+    const id = annotationId(annotation);
     const number = all.indexOf(annotation) + 1;
-    fragment.append(createAnnotationCard(annotation, number));
+    const renderKey = annotationCardRenderKey(annotation, number);
+    let card = existingCards.get(id);
+    existingCards.delete(id);
+    if (!card || card.dataset.renderKey !== renderKey) {
+      const replacement = createAnnotationCard(annotation, number, renderKey);
+      if (card) {
+        const wasCursor = card === cursor;
+        card.replaceWith(replacement);
+        if (wasCursor) cursor = replacement;
+      }
+      card = replacement;
+    }
+    if (card === cursor) cursor = cursor.nextElementSibling;
+    else elements.annotationList.insertBefore(card, cursor);
   });
-  elements.annotationList.append(fragment);
+  existingCards.forEach((card) => card.remove());
   elements.annotationEmpty.hidden = filtered.length > 0;
   elements.annotationEmpty.textContent = all.length ? "条件に一致する注釈はありません。" : "注釈はまだありません。";
   renderHistory();
@@ -376,13 +398,32 @@ function countItem(text) {
   return span;
 }
 
-function createAnnotationCard(annotation, number) {
+function annotationCardRenderKey(annotation, number) {
+  const messages = Array.isArray(annotation.messages)
+    ? annotation.messages
+    : Array.isArray(annotation.thread)
+      ? annotation.thread
+      : [];
+  return JSON.stringify([
+    number,
+    annotation.status,
+    annotation.updated_at,
+    annotation.comment,
+    annotation.page_path,
+    annotation.kind,
+    annotationWarning(annotation),
+    messages.map((message) => [message.id, message.actor, message.at, message.body]),
+  ]);
+}
+
+function createAnnotationCard(annotation, number, renderKey = annotationCardRenderKey(annotation, number)) {
   const id = annotationId(annotation);
   const status = annotation.status || "open";
   const card = document.createElement("article");
   card.className = "annotation-card";
   card.dataset.status = status;
   card.dataset.annotationId = id;
+  card.dataset.renderKey = renderKey;
 
   const focusButton = document.createElement("button");
   focusButton.type = "button";

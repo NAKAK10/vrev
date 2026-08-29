@@ -122,6 +122,15 @@ test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   assert.match(reviewerSource, /resizeObserver\.observe\(elements\.frame\)/);
 });
 
+test("sidebar polling skips unchanged reviews and reconciles annotation cards by key", () => {
+  assert.match(reviewerSource, /nextReview\.revision === state\.review\?\.revision/);
+  assert.match(reviewerSource, /function annotationCardRenderKey\(annotation, number\)/);
+  assert.match(reviewerSource, /card\.dataset\.renderKey !== renderKey/);
+  assert.match(reviewerSource, /card\.replaceWith\(replacement\)/);
+  assert.match(reviewerSource, /annotationList\.insertBefore\(card, cursor\)/);
+  assert.doesNotMatch(reviewerSource, /annotationList\.replaceChildren\(\)/);
+});
+
 test("reply text survives polling and sidebar rerenders", () => {
   assert.match(reviewerSource, /const replyDrafts = new Map\(\)/);
   assert.match(reviewerSource, /input\.value = replyDrafts\.get\(id\) \?\? ""/);
