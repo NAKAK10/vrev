@@ -3,6 +3,7 @@
 const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "addressed"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
 const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
+const HISTORY_PAGE_SIZE = 24;
 const replyDrafts = new Map();
 
 const state = {
@@ -20,6 +21,8 @@ const state = {
   revealedContexts: new Set(),
   currentFileState: null,
   fileStateRequestId: 0,
+  historyRenderLimit: HISTORY_PAGE_SIZE,
+  historySignature: "",
 };
 
 const elements = {
@@ -50,6 +53,7 @@ const elements = {
   historyToggle: document.querySelector("#history-toggle"),
   historyCount: document.querySelector("#history-count"),
   historyList: document.querySelector("#history-list"),
+  historyLoadMore: document.querySelector("#history-load-more"),
   dialog: document.querySelector("#comment-dialog"),
   commentForm: document.querySelector("#comment-form"),
   dialogTitle: document.querySelector("#dialog-title"),
@@ -582,8 +586,9 @@ async function updateStatus(id, status, button) {
 }
 
 function annotationWarning(annotation) {
+  if ((annotation.status ?? "open") !== "open") return "";
   if (isAnnotationStale(annotation)) {
-    return "対象が注釈作成後に更新されています。位置と内容を確認してください。";
+    return "参考：注釈作成後に対象が更新されています。必要な場合だけ位置を確認してください。";
   }
   if (annotation.kind === "dom" && pathsMatch(annotation.page_path, currentPagePath())) {
     try {
@@ -598,7 +603,8 @@ function annotationWarning(annotation) {
 function isAnnotationStale(annotation) {
   const fileState = state.currentFileState;
   return Boolean(
-    fileState?.sha256
+    (annotation.status ?? "open") === "open"
+    && fileState?.sha256
     && annotation.source_hash
     && pathsMatch(annotation.page_path, fileState.path)
     && annotation.source_hash !== fileState.sha256,
@@ -609,16 +615,34 @@ function renderHashWarning() {
   const stale = annotations().filter(isAnnotationStale);
   elements.hashWarning.hidden = stale.length === 0;
   elements.hashWarning.textContent = stale.length
-    ? `注意：${stale.length}件の注釈は、現在とは異なるバージョンの対象に作成されています。位置を再確認してください。`
+    ? `参考：未対応の注釈${stale.length}件は作成後に対象が更新されています。必要な場合だけ位置を確認してください。`
     : "";
 }
 
+function sortedHistoryEvents() {
+  return [...events()].sort((left, right) => (
+    eventTime(right) - eventTime(left)
+    || Number(right.revision ?? 0) - Number(left.revision ?? 0)
+  ));
+}
+
 function renderHistory() {
-  const sorted = [...events()].sort((left, right) => eventTime(left) - eventTime(right));
+  const sorted = sortedHistoryEvents();
+  const signature = `${sorted.length}:${sorted[0]?.id ?? ""}:${sorted[0]?.revision ?? ""}`;
+  if (signature !== state.historySignature) {
+    state.historySignature = signature;
+    state.historyRenderLimit = HISTORY_PAGE_SIZE;
+  }
   elements.historyCount.textContent = String(sorted.length);
-  elements.historyList.replaceChildren();
+  if (elements.historyList.hidden) {
+    elements.historyList.replaceChildren();
+    elements.historyLoadMore.hidden = true;
+    return;
+  }
+
+  const visible = sorted.slice(0, state.historyRenderLimit);
   const fragment = document.createDocumentFragment();
-  for (const event of sorted) {
+  for (const event of visible) {
     const item = document.createElement("li");
     const description = document.createElement("span");
     description.textContent = describeEvent(event);
@@ -629,7 +653,15 @@ function renderHistory() {
     item.append(description, time);
     fragment.append(item);
   }
-  elements.historyList.append(fragment);
+  elements.historyList.replaceChildren(fragment);
+  const remaining = sorted.length - visible.length;
+  elements.historyLoadMore.hidden = remaining <= 0;
+  elements.historyLoadMore.textContent = `さらに${Math.min(HISTORY_PAGE_SIZE, remaining)}件読み込む`;
+}
+
+function loadMoreHistory() {
+  state.historyRenderLimit += HISTORY_PAGE_SIZE;
+  renderHistory();
 }
 
 function eventTime(event) {
@@ -1561,7 +1593,16 @@ elements.historyToggle.addEventListener("click", () => {
   const expanded = elements.historyToggle.getAttribute("aria-expanded") !== "true";
   elements.historyToggle.setAttribute("aria-expanded", String(expanded));
   elements.historyList.hidden = !expanded;
+  if (expanded) state.historyRenderLimit = HISTORY_PAGE_SIZE;
+  renderHistory();
 });
+elements.historyLoadMore.addEventListener("click", loadMoreHistory);
+if ("IntersectionObserver" in window) {
+  const historyObserver = new IntersectionObserver((entries) => {
+    if (entries.some(({ isIntersecting }) => isIntersecting) && !elements.historyLoadMore.hidden) loadMoreHistory();
+  }, { rootMargin: "160px" });
+  historyObserver.observe(elements.historyLoadMore);
+}
 elements.commentForm.addEventListener("submit", (event) => {
   event.preventDefault();
   saveAnnotation();

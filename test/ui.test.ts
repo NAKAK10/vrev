@@ -122,6 +122,23 @@ test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   assert.match(reviewerSource, /resizeObserver\.observe\(elements\.frame\)/);
 });
 
+test("stale-source hints are low-priority and limited to open annotations", () => {
+  assert.match(reviewerSource, /\(annotation\.status \?\? "open"\) !== "open"\) return ""/);
+  assert.match(reviewerSource, /\(annotation\.status \?\? "open"\) === "open"[^]*annotation\.source_hash !== fileState\.sha256/);
+  assert.match(reviewerSource, /参考：未対応の注釈\$\{stale\.length\}件/);
+  assert.doesNotMatch(reviewerSource, /注意：.*異なるバージョン/);
+});
+
+test("history is newest-first and lazy-renders 24 events at a time", () => {
+  assert.match(sourceHtml, /id="history-load-more"/);
+  assert.match(reviewerSource, /HISTORY_PAGE_SIZE = 24/);
+  assert.match(reviewerSource, /eventTime\(right\) - eventTime\(left\)/);
+  assert.match(reviewerSource, /sorted\.slice\(0, state\.historyRenderLimit\)/);
+  assert.match(reviewerSource, /historyRenderLimit \+= HISTORY_PAGE_SIZE/);
+  assert.match(reviewerSource, /new IntersectionObserver/);
+  assert.match(reviewerSource, /historyList\.hidden[^]*historyList\.replaceChildren\(\)/);
+});
+
 test("sidebar polling skips unchanged reviews and reconciles annotation cards by key", () => {
   assert.match(reviewerSource, /nextReview\.revision === state\.review\?\.revision/);
   assert.match(reviewerSource, /function annotationCardRenderKey\(annotation, number\)/);
