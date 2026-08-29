@@ -88,9 +88,15 @@ let customCommands = loadCustomCommands();
 renderCustomCommands();
 const storedCli = window.localStorage.getItem(CLI_STORAGE_KEY);
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
+const selectedUnverifiedCustom = storedCli?.startsWith("custom:") === true
+  && customCommands.some(({ id, verified }) => !verified && storedCli === `custom:${id}`);
 if (storedCli !== null && (isCli(storedCli) || customCommands.some(({ id, verified }) => verified && storedCli === `custom:${id}`))) cliSelect.value = storedCli;
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
-autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
+autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true" && !selectedUnverifiedCustom;
+if (selectedUnverifiedCustom) {
+  window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, "false");
+  setCustomStatus("既存のカスタムコマンドは再テストが必要です。安全のため自動実行を無効にしました。", true);
+}
 form.hidden = autoRunCheckbox.checked;
 
 function isCli(value: string): value is ReviewCli {

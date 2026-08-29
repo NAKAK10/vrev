@@ -60,6 +60,8 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /\/api\/jobs\/custom-command\/test/);
   assert.match(jobsSource, /command\.match\(\/\\\{prompt\\\}\/g/);
   assert.match(jobsSource, /verified: item\.verified === true/);
+  assert.match(jobsSource, /selectedUnverifiedCustom/);
+  assert.match(jobsSource, /安全のため自動実行を無効にしました/);
   assert.match(sourceHtml, /id="custom-command-status"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(jobsSource, /setCustomStatus\(`登録できません/);
   assert.match(sourceHtml, /テストして登録/);
