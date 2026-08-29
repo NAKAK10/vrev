@@ -51,6 +51,9 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /target\?\.ai_jobs_enabled/);
   assert.match(jobsSource, /target\?\.allow_scripts !== true/);
   assert.match(jobsSource, /visual-review:annotation-created/);
+  assert.match(jobsSource, /visual-review:annotation-reopened/);
+  assert.match(reviewerSource, /visual-review:annotation-reopened[^]*reason: "human-reply"/);
+  assert.match(reviewerSource, /visual-review:annotation-reopened[^]*reason: "manual-reopen"/);
   assert.match(jobsSource, /enqueueOpenAnnotations\(true\)/);
   assert.match(jobsSource, /visual-review:auto-run/);
   assert.match(jobsSource, /settingsDialog\.showModal\(\)/);

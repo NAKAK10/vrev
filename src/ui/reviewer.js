@@ -561,6 +561,7 @@ function createReplyForm(id, previousStatus) {
       applyReview(review);
       const updated = annotations().find((annotation) => annotationId(annotation) === id);
       const reopened = previousStatus !== "open" && updated?.status === "open";
+      if (reopened) window.dispatchEvent(new CustomEvent("visual-review:annotation-reopened", { detail: { annotationId: id, reason: "human-reply" } }));
       showToast(reopened ? "返信を追加し、再対応のため未対応に戻しました。" : "返信を追加しました。AIの対応を待ちます。");
     } catch (error) {
       showToast(`返信に失敗しました：${error.message}`, true);
@@ -578,6 +579,7 @@ async function updateStatus(id, status, button) {
       body: JSON.stringify({ status, actor: "human" }),
     });
     applyReview(review);
+    if (status === "open") window.dispatchEvent(new CustomEvent("visual-review:annotation-reopened", { detail: { annotationId: id, reason: "manual-reopen" } }));
     showToast(status === "resolved" ? "注釈を解決済みにしました。" : "注釈を再オープンしました。");
   } catch (error) {
     showToast(`状態の更新に失敗しました：${error.message}`, true);

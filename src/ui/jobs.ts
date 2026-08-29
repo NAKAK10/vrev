@@ -432,6 +432,7 @@ autoRunCheckbox.addEventListener("change", () => {
   setStatus(autoRunCheckbox.checked ? "自動実行を有効にしました。次に保存した注釈からAI修正を開始します。" : "自動実行を無効にしました。");
 });
 window.addEventListener("visual-review:annotation-created", scheduleAutoRun);
+window.addEventListener("visual-review:annotation-reopened", scheduleAutoRun);
 window.addEventListener("focus", () => void Promise.all([refreshSession(), refreshJobs()]));
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) void Promise.all([refreshSession(), refreshJobs()]);
