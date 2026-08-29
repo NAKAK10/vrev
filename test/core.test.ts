@@ -116,6 +116,16 @@ test("recovers an interrupted active/resolved split transaction", () => {
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
 });
 
+test("refreshes the annotation source hash after an AI fix", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const review = store.createAnnotation(payload(store));
+  const id = review.annotations[0]!.id;
+  store.setStatus(id, { actor: "ai", status: "in_progress" });
+  writeFileSync(store.targetPath, "<h1>AI fixed</h1>", "utf8");
+  const addressed = store.setStatus(id, { actor: "ai", status: "addressed" });
+  assert.equal(addressed.annotations[0]!.source_hash, fileSha256(store.targetPath));
+});
+
 test("rejects a symlinked review storage root", () => {
   const root = repository();
   const outside = mkdtempSync(path.join(os.tmpdir(), "visual-review-outside-"));

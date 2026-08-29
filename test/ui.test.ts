@@ -125,11 +125,10 @@ test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   assert.match(reviewerSource, /resizeObserver\.observe\(elements\.frame\)/);
 });
 
-test("stale-source hints are low-priority and limited to open annotations", () => {
-  assert.match(reviewerSource, /\(annotation\.status \?\? "open"\) !== "open"\) return ""/);
-  assert.match(reviewerSource, /\(annotation\.status \?\? "open"\) === "open"[^]*annotation\.source_hash !== fileState\.sha256/);
-  assert.match(reviewerSource, /参考：未対応の注釈\$\{stale\.length\}件/);
-  assert.doesNotMatch(reviewerSource, /注意：.*異なるバージョン/);
+test("source hashes stay internal instead of showing version-change warnings", () => {
+  assert.match(reviewerSource, /function renderHashWarning\(\) \{[^}]*hashWarning\.hidden = true;[^}]*textContent = "";/s);
+  assert.doesNotMatch(reviewerSource, /注釈作成後に対象が更新|異なるバージョン/);
+  assert.doesNotMatch(reviewerSource, /classList\.toggle\("is-stale", isAnnotationStale/);
 });
 
 test("history is newest-first and lazy-renders 24 events at a time", () => {

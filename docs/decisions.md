@@ -13,6 +13,12 @@ cross-origin redirectを拒否する。live targetのsource hashはcontentでは
 framework source hintはVue/Nuxt、React/Next、Angular、Svelte、WordPressのdevelopment runtimeから取得できる場合だけ保存する。
 absolute pathはproject-relativeな`src`、`app`、`pages`、`components`、`packages`、`wp-content`以下へ縮約し、machine固有pathをreviewへ残さない。
 
+## Source hash checkpoints
+
+review directory名のpath hashはtarget pathから安定した保存先IDを作るためだけに使う。annotationの`source_hash`はfile targetでは対象HTML/imageそのもののbyte列、live targetでは正規化route URLのSHA-256であり、CSSなど依存resource一式のvisual fingerprintではない。annotation作成時のhash差を恒久的な警告には使わない。
+
+AI jobをqueueへ入れる時点で現在のhashをjob checkpointとして取り直し、coordinator起動直前に再比較する。これにより過去のannotationを現在のsourceへ適用できる一方、queue後の同時変更だけを停止できる。AIが`addressed`へ変更した時点でannotationの`source_hash`も修正後sourceへ更新する。
+
 ## Automatic port selection
 
 serverは`18765`を既定の開始ポートとし、`EADDRINUSE`の場合だけ次の番号を65535まで順に試す。

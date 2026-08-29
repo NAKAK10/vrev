@@ -589,9 +589,6 @@ async function updateStatus(id, status, button) {
 
 function annotationWarning(annotation) {
   if ((annotation.status ?? "open") !== "open") return "";
-  if (isAnnotationStale(annotation)) {
-    return "参考：注釈作成後に対象が更新されています。必要な場合だけ位置を確認してください。";
-  }
   if (annotation.kind === "dom" && pathsMatch(annotation.page_path, currentPagePath())) {
     try {
       if (!resolveAnchor(annotation.anchor)) return "対象ノードを現在のページで特定できません。";
@@ -602,23 +599,9 @@ function annotationWarning(annotation) {
   return "";
 }
 
-function isAnnotationStale(annotation) {
-  const fileState = state.currentFileState;
-  return Boolean(
-    (annotation.status ?? "open") === "open"
-    && fileState?.sha256
-    && annotation.source_hash
-    && pathsMatch(annotation.page_path, fileState.path)
-    && annotation.source_hash !== fileState.sha256,
-  );
-}
-
 function renderHashWarning() {
-  const stale = annotations().filter(isAnnotationStale);
-  elements.hashWarning.hidden = stale.length === 0;
-  elements.hashWarning.textContent = stale.length
-    ? `参考：未対応の注釈${stale.length}件は作成後に対象が更新されています。必要な場合だけ位置を確認してください。`
-    : "";
+  elements.hashWarning.hidden = true;
+  elements.hashWarning.textContent = "";
 }
 
 function sortedHistoryEvents() {
@@ -1380,7 +1363,6 @@ function createMark(annotation, number, box) {
   mark.className = "review-mark";
   mark.classList.toggle("is-resolved", annotation.status === "resolved");
   mark.classList.toggle("is-highlighted", annotationId(annotation) === state.highlightedId);
-  mark.classList.toggle("is-stale", isAnnotationStale(annotation));
   setBoxStyle(mark, box);
   const pin = document.createElement("span");
   pin.className = "review-pin";

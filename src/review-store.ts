@@ -363,6 +363,7 @@ export class ReviewStore {
       const timestamp = now();
       annotation.status = payload.status;
       annotation.updated_at = timestamp;
+      if (payload.status === "addressed") annotation.source_hash = this.sourceHash(annotation.page_path);
       this.addEvent(review, "status_changed", annotationId, statusActor, timestamp, { from: previous, to: payload.status });
       this.writeUnlocked(review);
       return review;

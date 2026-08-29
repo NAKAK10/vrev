@@ -214,7 +214,7 @@ test("checks external hashes immediately before launch and contains missing targ
   writeFileSync(path.join(root, ".code/htmls/pages/b.html"), "<h1>B external 2</h1>");
   const next = manager.enqueue({ cli: "opencode", max_parallel: 1 });
   assert.ok([missingId, blocker].some((id) => next.jobs.some((job) => job.annotation_id === id)));
-  // Enqueue catches the stale blocker; removing A is caught as a launch-time per-job failure.
+  // Enqueue refreshes both checkpoints; removing A is caught as a launch-time per-job failure.
   unlinkSync(path.join(root, ".code/htmls/pages/a.html"));
   await waitFor(() => manager.list().jobs.find(({ annotation_id }) => annotation_id === missingId)?.state === "failed");
   await manager.close();
@@ -253,7 +253,7 @@ test("cancels queued jobs individually, running coordinator as a batch, and reco
   await restarted.close();
 });
 
-test("marks source mismatch as skipped at enqueue time", () => {
+test("refreshes an old annotation hash when enqueueing against the current source", () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
   annotate(store, store.entryPath, "stale");
@@ -261,7 +261,8 @@ test("marks source mismatch as skipped at enqueue time", () => {
   const manager = new JobManager(store, { executor: controlledExecutor().executor });
   manager.start();
   const result = manager.enqueue({ cli: "opencode", max_parallel: 1 });
-  assert.equal(result.jobs[0]?.state, "skipped");
+  assert.equal(result.jobs[0]?.state, "queued");
+  assert.equal(result.jobs[0]?.source_hash, fileSha256(store.targetPath));
 });
 
 test("contains deleted, renamed, and unreadable targets as failed annotation jobs", async () => {

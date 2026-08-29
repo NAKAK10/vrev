@@ -88,12 +88,13 @@ export class JobManager {
     const jobs = annotations.map((annotation): ReviewJob => {
       let state: ReviewJob["state"] = "queued";
       let summary = "queued";
+      let sourceHash = annotation.source_hash;
       try {
-        if (this.pageHash(annotation) !== annotation.source_hash) { state = "skipped"; summary = "skipped: source changed before enqueue"; }
+        sourceHash = this.pageHash(annotation);
       } catch (error) {
         state = "failed"; summary = `failed: page unavailable before enqueue (${this.errorMessage(error)})`;
       }
-      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: annotation.source_hash, cli: input.cli, custom_name: input.custom_name, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
+      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: sourceHash, cli: input.cli, custom_name: input.custom_name, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
     });
     if (jobs.length > 0) {
       this.jobStore.update((state) => {
