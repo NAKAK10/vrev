@@ -140,6 +140,8 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.match(prompt, /Chrome DevTools MCP/);
   assert.match(prompt, /組み合わせごとに1回/);
   assert.match(prompt, /全annotationを最後まで保留しない/);
+  assert.match(prompt, /git add、commit、push、stash、resetは禁止/);
+  assert.match(prompt, /一時fileをrepository内へ作らずstdin/);
   assert.equal(manager.enqueue({ cli: "claude", max_parallel: 4 }).jobs.length, 0);
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();
