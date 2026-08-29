@@ -4,7 +4,7 @@ This repository is intended to become public. Never commit credentials, tokens, 
 
 ## Local-only data
 
-Review files are written into the repository being reviewed, not this tool repository. Do not copy `.code/visual-reviews/` from customer or private projects into this repository.
+Review files are written below the reviewed repository root's `.vreview/`, not this tool repository. Do not copy `.vreview/` from customer or private projects into this repository. Workspace settings and context use repository-relative paths only; runtime job/lease/lock files are ignored by `.vreview/.gitignore`.
 
 Live targets accept plain HTTP on `localhost`, `127.0.0.1`, or `::1`. Public targets require HTTPS and run in script-free, read-only static mode. URL credentials, private/reserved DNS destinations, cross-origin redirects, and cookie or authorization forwarding are rejected. Framework source hints are reduced to repository-like relative paths before persistence.
 

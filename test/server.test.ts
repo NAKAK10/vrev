@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -345,17 +345,29 @@ test("server increments from an occupied port", async () => {
 });
 
 test("CLI normalizes project root, validates POSIX target, loopback host and port", () => {
+  const cliRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-cli-"));
+  mkdirSync(path.join(cliRoot, "project"));
   const parsed = parseCliArguments([
     "serve", "--project-root", "project", "--target", ".code/htmls/page.html", "--host", "::1", "--port", "65535", "--allow-scripts", "--allow-ai-jobs-with-scripts", "--no-open",
-  ], "/tmp");
-  assert.equal(parsed.projectRoot, "/tmp/project");
+  ], cliRoot);
+  assert.equal(parsed.projectRoot, realpathSync(path.join(cliRoot, "project")));
+  assert.equal(parsed.projectDirectory, realpathSync(path.join(cliRoot, "project")));
   assert.equal(parsed.target, ".code/htmls/page.html");
   assert.equal(parsed.host, "::1");
   assert.equal(parsed.port, 65535);
   assert.equal(parsed.allowScripts, true);
   assert.equal(parsed.allowAiJobsWithScripts, true);
   assert.equal(parsed.open, false);
-  const defaults = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png"], "/tmp");
+  const defaults = parseCliArguments(["serve", "--target", "assets/x.png"], cliRoot);
+  assert.equal(defaults.projectRoot, realpathSync(cliRoot));
+  const monorepo = mkdtempSync(path.join(os.tmpdir(), "visual-review-cli-monorepo-"));
+  mkdirSync(path.join(monorepo, ".git"));
+  const appDirectory = path.join(monorepo, "apps/web");
+  mkdirSync(appDirectory, { recursive: true });
+  const nested = parseCliArguments(["serve", "--target", ".code/htmls/page.html"], appDirectory);
+  assert.equal(nested.projectRoot, realpathSync(monorepo));
+  assert.equal(nested.projectDirectory, realpathSync(appDirectory));
+  assert.equal(nested.target, "apps/web/.code/htmls/page.html");
   assert.equal(defaults.port, 18765);
   assert.equal(defaults.allowAiJobsWithScripts, true);
   const optedOut = parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--no-ai-jobs-with-scripts"], "/tmp");

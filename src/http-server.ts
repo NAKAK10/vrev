@@ -6,7 +6,9 @@ import { BlockList } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { fileSha256 } from "./file-utils.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
+import { resolveTarget } from "./paths.js";
 import { ReviewStore } from "./review-store.js";
 import { acquireServerLease, type ServerLease } from "./server-lease.js";
 import type { AddMessageInput, CreateAnnotationInput, SetStatusInput } from "./types.js";
@@ -77,6 +79,7 @@ const SENSITIVE_PREFIXES = ["credential", "secret"];
 
 export interface VisualReviewServerOptions {
   projectRoot: string;
+  projectDirectory?: string;
   target: string;
   allowScripts?: boolean;
   allowAiJobsWithScripts?: boolean;
@@ -271,10 +274,12 @@ function publicParts(relativePath: string): string[] {
   if (parts.some((part) => !part || part === "." || part === "..")) {
     throw new HttpError(404, "file not found");
   }
-  const prefixLength = parts[0] === "assets" ? 1 : parts[0] === ".code" && parts[1] === "htmls" ? 2 : 0;
-  if (prefixLength === 0 || parts.length === prefixLength) {
-    throw new HttpError(404, "file not found");
-  }
+  const htmlMarker = parts.findIndex((part, index) => part === ".code" && parts[index + 1] === "htmls");
+  const assetMarker = parts.findIndex((part) => part === "assets");
+  const prefixLength = htmlMarker >= 0 ? htmlMarker + 2 : assetMarker >= 0 ? assetMarker + 1 : 0;
+  if (prefixLength === 0 || parts.length === prefixLength) throw new HttpError(404, "file not found");
+  const projectParts = parts.slice(0, htmlMarker >= 0 ? htmlMarker : assetMarker);
+  if (projectParts.some((part) => part.startsWith(".") || SENSITIVE_PREFIXES.some((prefix) => part.toLowerCase().startsWith(prefix)))) throw new HttpError(404, "file not found");
   if (
     parts.slice(prefixLength).some(
       (part) => part.startsWith(".") || SENSITIVE_PREFIXES.some((prefix) => part.toLowerCase().startsWith(prefix)),
@@ -357,7 +362,7 @@ export function assertLoopbackHost(host: string): void {
 }
 
 export function createVisualReviewServer(options: VisualReviewServerOptions): VisualReviewServer {
-  const store = new ReviewStore(options.target, { projectRoot: options.projectRoot });
+  const store = new ReviewStore(options.target, { projectRoot: options.projectRoot, ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}) });
   const jobManager = new JobManager(store, options.jobManager);
   const uiRoot = defaultUiRoot();
   for (const name of ["index.html", "reviewer.css", "reviewer.js", "jobs.js"]) {
@@ -412,10 +417,10 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             if (store.target.liveUrl) {
               return sendJson(response, 200, { path: pagePath, sha256: store.sourceHash(pagePath) });
             }
-            const page = new ReviewStore(pagePath, { projectRoot: store.target.projectRoot });
-            if (store.target.kind === "image" && page.targetPath !== store.targetPath) throw new Error("outside session");
-            if (store.target.kind === "html" && page.target.kind !== "html") throw new Error("outside session");
-            return sendJson(response, 200, { path: page.entryPath, sha256: page.sourceHash() });
+            const page = resolveTarget(pagePath, store.target.projectRoot);
+            if (store.target.kind === "image" && page.absolutePath !== store.targetPath) throw new Error("outside session");
+            if (store.target.kind === "html" && page.kind !== "html") throw new Error("outside session");
+            return sendJson(response, 200, { path: page.entryPath, sha256: fileSha256(page.absolutePath) });
           } catch {
             throw new HttpError(400, "path is outside the active session");
           }

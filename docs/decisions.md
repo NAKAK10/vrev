@@ -69,7 +69,17 @@ annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI co
 遷移を使い、見つからない場合だけvisibility属性を復元する。特定prototypeのmodal IDは保存・
 ハードコードせず、反対に常時表示が正しい画面にも影響させない。
 
+## Workspace storage and monorepos
+
+review dataは最寄りのGit root（Git管理外では実行directory）の`.vreview/`へ集約する。`--project-root`は省略可能で、
+通常は実行directoryをproject contextとして使う。monorepo childから起動した場合はworkspace rootをAIのworking directoryとし、
+child pathを`.vreview/settings.json`へrepository相対pathで登録する。基本的なroot検出は決定的に行い、初回AI coordinatorは同じ実行内で
+manifest・route・source hintからprimary projectとshared scopeを調査して`context.json`を更新する。
+
+active annotation（`open`・`in_progress`・`addressed`）は`review.json`、humanが解決したannotationは`resolved.json`へ分離する。
+APIは両方をmergeして従来どおり1つのreviewとして返し、再open時はactive JSONへ戻す。annotation orderとglobal revisionを両ファイルへ持たせ、
+status移動後もUI順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
+
 ## External projects
 
-build済みCLIに`--project-root`を明示し、targetをそのrootからのPOSIX相対pathで渡す設計と
-した。packageを対象projectへ複製せず、同じschemaと安全なpath規則を再利用できる。
+別repositoryを対象にする場合だけ`--project-root`を明示する。packageを対象projectへ複製せず、同じschemaと安全なpath規則を再利用できる。

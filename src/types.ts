@@ -100,6 +100,7 @@ export interface Review {
     sha256: string;
   };
   annotations: Annotation[];
+  annotation_order?: string[];
   events: ReviewEvent[];
 }
 

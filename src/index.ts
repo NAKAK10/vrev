@@ -7,3 +7,4 @@ export * from "./paths.js";
 export * from "./review-store.js";
 export * from "./server-lease.js";
 export * from "./types.js";
+export * from "./workspace-settings.js";

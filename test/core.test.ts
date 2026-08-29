@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -25,7 +25,8 @@ test("uses deterministic destination and stable JSON format", () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: root });
   assert.equal(reviewDirectoryName(store.entryPath), "index--d324f44dd58b");
   store.load();
-  assert.match(store.path, /\.code\/visual-reviews\/index--d324f44dd58b\/review\.json$/);
+  assert.match(store.path, /\.vreview\/reviews\/index--d324f44dd58b\/review\.json$/);
+  assert.match(store.resolvedPath, /\.vreview\/reviews\/index--d324f44dd58b\/resolved\.json$/);
   const text = readFileSync(store.path, "utf8");
   assert.ok(text.includes("日本語") === false);
   assert.ok(text.endsWith("\n"));
@@ -63,10 +64,62 @@ test("rejects absolute, traversal, hidden, sensitive, wrong-root and symlink tar
   assert.equal(resolveTarget("assets/image.png", root).kind, "image");
 });
 
+test("stores workspace settings centrally for a monorepo project", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-monorepo-"));
+  mkdirSync(path.join(root, ".git"));
+  const project = path.join(root, "apps/web");
+  mkdirSync(path.join(project, ".code/htmls"), { recursive: true });
+  writeFileSync(path.join(project, ".code/htmls/index.html"), "<h1>Web</h1>");
+  const store = new ReviewStore("apps/web/.code/htmls/index.html", { projectRoot: root, projectDirectory: project });
+  store.load();
+  const settings = JSON.parse(readFileSync(path.join(root, ".vreview/settings.json"), "utf8")) as { workspace: { monorepo: boolean }; projects: Array<{ path: string; reviews: Array<{ review_path: string }> }> };
+  assert.equal(settings.workspace.monorepo, true);
+  assert.equal(settings.projects[0]?.path, "apps/web");
+  assert.match(settings.projects[0]?.reviews[0]?.review_path ?? "", /^\.vreview\/reviews\/.*\/review\.json$/);
+});
+
+test("separates resolved annotations and moves reopened feedback back to active JSON", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  let review = store.createAnnotation(payload(store));
+  const id = review.annotations[0]!.id;
+  store.setStatus(id, { actor: "ai", status: "addressed" });
+  store.setStatus(id, { actor: "human", status: "resolved" });
+  assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 0);
+  assert.equal((JSON.parse(readFileSync(store.resolvedPath, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
+  review = store.addMessage(id, { actor: "human", body: "再対応" });
+  assert.equal(review.annotations[0]?.status, "open");
+  assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
+  assert.equal((JSON.parse(readFileSync(store.resolvedPath, "utf8")) as { annotations: unknown[] }).annotations.length, 0);
+});
+
+test("migrates legacy review JSON into root .vreview storage", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const review = store.load();
+  unlinkSync(store.path);
+  unlinkSync(store.resolvedPath);
+  atomicWriteJson(store.legacyPath, review);
+  const migrated = store.load();
+  assert.equal(migrated.review_id, review.review_id);
+  assert.equal(existsSync(store.legacyPath), false);
+  assert.equal(existsSync(store.path), true);
+  assert.equal(existsSync(store.resolvedPath), true);
+});
+
+test("recovers an interrupted active/resolved split transaction", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const expected = store.createAnnotation(payload(store));
+  atomicWriteJson(store.transactionPath, expected);
+  atomicWriteJson(store.path, { ...expected, annotations: [], events: [] });
+  const recovered = store.load();
+  assert.equal(recovered.annotations.length, 1);
+  assert.equal(existsSync(store.transactionPath), false);
+  assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
+});
+
 test("rejects a symlinked review storage root", () => {
   const root = repository();
   const outside = mkdtempSync(path.join(os.tmpdir(), "visual-review-outside-"));
-  symlinkSync(outside, path.join(root, ".code/visual-reviews"));
+  symlinkSync(outside, path.join(root, ".vreview"));
   assert.throws(
     () => new ReviewStore("assets/image.png", { projectRoot: root }),
     /storage path.*symbolic links/,

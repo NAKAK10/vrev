@@ -45,29 +45,35 @@ npm link
 assets/**/*.{png,jpg,jpeg,gif,webp,svg}
 ```
 
-レビュー結果は対象リポジトリ内へ保存されます。
+レビュー情報はrepository rootの`.vreview/`へ集約します。解決済みannotationは別JSONへ移動します。
 
 ```text
-.code/visual-reviews/<safe-stem>--<path-hash>/review.json
+.vreview/
+├── settings.json
+├── .gitignore
+└── reviews/<safe-stem>--<path-hash>/
+    ├── review.json       # 未対応・AI対応中・AI対応済み
+    ├── resolved.json     # 解決済み
+    ├── context.json      # 初回AIによるproject/monorepo探索結果
+    └── job-state.json    # Git管理対象外
 ```
 
-`review.json`はGit管理対象です。`job-state.json`、`.server-lease.json`、runtime lockはGit管理しません。
+`settings.json`がmonorepo内のprojectとreview参照をrepository相対pathで管理します。`review.json`、`resolved.json`、`context.json`、`settings.json`はGit管理対象です。runtime stateは`.vreview/.gitignore`で除外します。旧`.code/visual-reviews/.../review.json`は対象を最初に開いたとき自動移行します。
 
 ## 起動
 
 ```bash
-visual-review serve \
-  --project-root /absolute/path/to/project \
-  --target .code/htmls/example/index.html
+cd /absolute/path/to/project
+visual-review serve --target .code/htmls/example/index.html
 ```
 
 画像の場合:
 
 ```bash
-visual-review serve \
-  --project-root /absolute/path/to/project \
-  --target assets/example.png
+visual-review serve --target assets/example.png
 ```
+
+`--project-root`省略時は実行directoryをprojectとして扱い、最寄りのGit rootをworkspace/storage rootとして自動検出します。monorepoのchild projectから実行した場合もrootの`.vreview/settings.json`へ集約し、child project pathを登録します。Git管理外では実行directory自身がrootです。明示的な`--project-root`は別directoryを対象にするときだけ使用します。
 
 既定の開始ポートは `18765` です。使用中の場合は `18766`、`18767`…の順に空きポートを自動選択します。`--port`を指定した場合も、その番号を起点に自動インクリメントします。ブラウザを自動で開かない場合は `--no-open` を追加します。
 
@@ -77,7 +83,6 @@ visual-review serve \
 
 ```bash
 visual-review serve \
-  --project-root /absolute/path/to/project \
   --target .code/htmls/example/index.html \
   --allow-scripts
 ```
@@ -121,16 +126,15 @@ npm run build
 起動済みの開発サーバーを確認する場合:
 
 ```bash
-visual-review serve \
-  --project-root /path/to/repository \
-  --target http://127.0.0.1:5173
+cd /path/to/repository
+visual-review serve --target http://127.0.0.1:5173
 ```
 
 開発サーバーも同時に起動する場合:
 
 ```bash
+cd /path/to/repository
 visual-review serve \
-  --project-root /path/to/repository \
   --target http://127.0.0.1:5173 \
   --start "npm run dev"
 ```
@@ -155,12 +159,11 @@ source hintはframeworkのdevelopment runtimeに依存する補助情報です�
 公開またはstaging環境のHTTPS URLも、ローカルの実装repositoryと紐付けてレビューできます。
 
 ```bash
-visual-review serve \
-  --project-root /path/to/local/repository \
-  --target https://staging.example.com/products
+cd /path/to/local/repository
+visual-review serve --target https://staging.example.com/products
 ```
 
-AIはhosting先そのものを書き換えるのではなく、`--project-root`で指定したローカルrepositoryを修正します。公開サイトからローカルAPIやAI実行機能へ干渉されないよう、public targetはread-only static modeで取得し、対象サイトのJavaScript、form、cross-origin navigationを無効化します。SSR/WordPressなどHTMLを返すサイトに対応します。client-side renderingだけで内容を生成するSPAは、localhost targetを利用してください。
+AIはhosting先そのものを書き換えるのではなく、自動検出したローカルworkspaceを修正します。公開サイトからローカルAPIやAI実行機能へ干渉されないよう、public targetはread-only static modeで取得し、対象サイトのJavaScript、form、cross-origin navigationを無効化します。SSR/WordPressなどHTMLを返すサイトに対応します。client-side renderingだけで内容を生成するSPAは、localhost targetを利用してください。
 
 安全制約:
 

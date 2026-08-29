@@ -49,6 +49,16 @@ export function normalizeLoopbackUrl(value: string): string {
   return normalized.url;
 }
 
+export function findWorkspaceRoot(start = process.cwd()): string {
+  let current = realpathSync(path.resolve(start));
+  while (true) {
+    if (existsSync(path.join(current, ".git"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return realpathSync(path.resolve(start));
+    current = parent;
+  }
+}
+
 export function resolveProjectRoot(projectRoot = process.cwd()): string {
   if (!path.isAbsolute(projectRoot)) {
     throw new Error("projectRoot must be absolute");
@@ -112,11 +122,14 @@ export function resolveTarget(
       : (() => {
           throw new Error("unsupported target extension");
         })();
-  const expectedPrefix = kind === "html" ? [".code", "htmls"] : ["assets"];
-  if (!expectedPrefix.every((part, index) => parts[index] === part)) {
-    throw new Error("target is outside its configured public root");
-  }
-  const publicParts = parts.slice(expectedPrefix.length);
+  const markerIndex = kind === "html"
+    ? parts.findIndex((part, index) => part === ".code" && parts[index + 1] === "htmls")
+    : parts.findIndex((part) => part === "assets");
+  if (markerIndex < 0) throw new Error("target is outside its configured public root");
+  const prefixLength = markerIndex + (kind === "html" ? 2 : 1);
+  const projectParts = parts.slice(0, markerIndex);
+  assertPublicParts(projectParts);
+  const publicParts = parts.slice(prefixLength);
   if (publicParts.length === 0) {
     throw new Error("target must name a file below its public root");
   }
@@ -143,14 +156,7 @@ export function reviewDirectoryName(entryPath: string): string {
   return `${safeStem}--${digest.slice(0, 12)}`;
 }
 
-export function reviewFilePath(target: ResolvedTarget): string {
-  const result = path.join(
-    target.projectRoot,
-    ".code",
-    "visual-reviews",
-    reviewDirectoryName(target.entryPath),
-    "review.json",
-  );
+function assertReviewStoragePath(target: ResolvedTarget, result: string): string {
   let current = target.projectRoot;
   for (const part of path.relative(target.projectRoot, result).split(path.sep)) {
     current = path.join(current, part);
@@ -159,4 +165,16 @@ export function reviewFilePath(target: ResolvedTarget): string {
     }
   }
   return result;
+}
+
+export function reviewFilePath(target: ResolvedTarget): string {
+  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vreview", "reviews", reviewDirectoryName(target.entryPath), "review.json"));
+}
+
+export function resolvedReviewFilePath(target: ResolvedTarget): string {
+  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vreview", "reviews", reviewDirectoryName(target.entryPath), "resolved.json"));
+}
+
+export function legacyReviewFilePath(target: ResolvedTarget): string {
+  return path.join(target.projectRoot, ".code", "visual-reviews", reviewDirectoryName(target.entryPath), "review.json");
 }

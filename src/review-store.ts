@@ -1,13 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
 import {
+  legacyReviewFilePath,
   resolveTarget,
+  resolvedReviewFilePath,
   reviewFilePath,
   type ResolvedTarget,
 } from "./paths.js";
+import { registerWorkspaceReview } from "./workspace-settings.js";
 import type {
   Actor,
   AddMessageInput,
@@ -145,15 +148,25 @@ function actor(value: unknown): Actor {
   return result as Actor;
 }
 
-export interface ReviewStoreOptions { projectRoot?: string }
+export interface ReviewStoreOptions { projectRoot?: string; projectDirectory?: string }
 
 export class ReviewStore {
   readonly target: ResolvedTarget;
   readonly path: string;
+  readonly resolvedPath: string;
+  readonly legacyPath: string;
+  readonly transactionPath: string;
 
   constructor(target: string, options: ReviewStoreOptions = {}) {
     this.target = resolveTarget(target, options.projectRoot);
     this.path = reviewFilePath(this.target);
+    this.resolvedPath = resolvedReviewFilePath(this.target);
+    this.legacyPath = legacyReviewFilePath(this.target);
+    this.transactionPath = path.join(path.dirname(this.path), ".transaction.json");
+    for (const candidate of [this.legacyPath, this.transactionPath]) {
+      if (existsSync(candidate) && lstatSync(candidate).isSymbolicLink()) throw new Error("review storage files must not be symbolic links");
+    }
+    registerWorkspaceReview(this.target, options.projectDirectory ?? this.target.projectRoot, this.path, this.resolvedPath);
   }
 
   get entryPath(): string { return this.target.entryPath; }
@@ -167,21 +180,16 @@ export class ReviewStore {
       page.hash = "";
       return createHash("sha256").update(`live-url:${page.toString()}`, "utf8").digest("hex");
     }
-    return fileSha256(new ReviewStore(pagePath, { projectRoot: this.target.projectRoot }).targetPath);
+    return fileSha256(resolveTarget(pagePath, this.target.projectRoot).absolutePath);
   }
 
   private newReview(): Review {
     const timestamp = now();
-    return { schema_version: 2, review_id: randomUUID(), revision: 0, created_at: timestamp, updated_at: timestamp, target: { entry_path: this.entryPath, kind: this.target.kind, sha256: this.sourceHash() }, annotations: [], events: [] };
+    return { schema_version: 2, review_id: randomUUID(), revision: 0, created_at: timestamp, updated_at: timestamp, target: { entry_path: this.entryPath, kind: this.target.kind, sha256: this.sourceHash() }, annotations: [], annotation_order: [], events: [] };
   }
 
-  private loadUnlocked(): Review {
-    if (!existsSync(this.path)) {
-      const review = this.newReview();
-      atomicWriteJson(this.path, review);
-      return review;
-    }
-    const loaded = record(readJson(this.path), "review file must contain a JSON object");
+  private parseReview(filePath: string): Review {
+    const loaded = record(readJson(filePath), "review file must contain a JSON object");
     if (loaded.schema_version === 1) {
       if (Array.isArray(loaded.annotations)) for (const item of loaded.annotations) if (typeof item === "object" && item !== null && !Array.isArray(item)) {
         const annotation = item as UnknownRecord;
@@ -189,10 +197,62 @@ export class ReviewStore {
       }
       loaded.schema_version = 2;
       loaded.migrated_at = now();
-      atomicWriteJson(this.path, loaded);
     }
-    if (loaded.schema_version !== 2) throw new Error("unsupported review schema version");
+    if (loaded.schema_version !== 2 || !Array.isArray(loaded.annotations) || !Array.isArray(loaded.events)) throw new Error("unsupported review schema version");
     return loaded as unknown as Review;
+  }
+
+  private splitReview(review: Review, resolved: boolean): Review {
+    const annotations = review.annotations.filter(({ status }) => (status === "resolved") === resolved);
+    const ids = new Set(annotations.map(({ id }) => id));
+    return { ...structuredClone(review), annotations, annotation_order: review.annotations.map(({ id }) => id), events: review.events.filter(({ annotation_id }) => ids.has(annotation_id)) };
+  }
+
+  private writeSplitFiles(review: Review): void {
+    atomicWriteJson(this.path, this.splitReview(review, false));
+    atomicWriteJson(this.resolvedPath, this.splitReview(review, true));
+  }
+
+  private writeUnlocked(review: Review): void {
+    atomicWriteJson(this.transactionPath, review);
+    this.writeSplitFiles(review);
+    unlinkSync(this.transactionPath);
+  }
+
+  private loadUnlocked(): Review {
+    if (existsSync(this.transactionPath)) {
+      const pending = this.parseReview(this.transactionPath);
+      this.writeSplitFiles(pending);
+      unlinkSync(this.transactionPath);
+      return pending;
+    }
+    if (!existsSync(this.path)) {
+      if (existsSync(this.legacyPath)) {
+        const migrated = this.parseReview(this.legacyPath);
+        this.writeUnlocked(migrated);
+        unlinkSync(this.legacyPath);
+        return migrated;
+      }
+      const review = this.newReview();
+      this.writeUnlocked(review);
+      return review;
+    }
+    const active = this.parseReview(this.path);
+    const resolved = existsSync(this.resolvedPath) ? this.parseReview(this.resolvedPath) : this.splitReview(active, true);
+    const combinedAnnotations = [...active.annotations.filter(({ status }) => status !== "resolved"), ...resolved.annotations.filter(({ status }) => status === "resolved")];
+    const order = active.annotation_order ?? (active.annotations.some(({ status }) => status === "resolved") ? active.annotations.map(({ id }) => id) : resolved.annotation_order) ?? combinedAnnotations.map(({ id }) => id);
+    const orderIndex = new Map(order.map((id, index) => [id, index]));
+    const eventIds = new Set<string>();
+    const merged: Review = {
+      ...active,
+      revision: Math.max(active.revision, resolved.revision),
+      updated_at: active.updated_at >= resolved.updated_at ? active.updated_at : resolved.updated_at,
+      annotations: combinedAnnotations.sort((left, right) => (orderIndex.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(right.id) ?? Number.MAX_SAFE_INTEGER)),
+      annotation_order: order,
+      events: [...active.events, ...resolved.events].filter(({ id }) => !eventIds.has(id) && Boolean(eventIds.add(id))).sort((left, right) => left.revision - right.revision),
+    };
+    if (!existsSync(this.resolvedPath) || active.annotations.some(({ status }) => status === "resolved")) this.writeUnlocked(merged);
+    return merged;
   }
 
   load(): Review { return withFileLock(this.path, () => this.loadUnlocked()); }
@@ -260,7 +320,7 @@ export class ReviewStore {
       const annotation = { id: annotationId, kind: payload.kind, page_path: page.entryPath, comment, anchor, actor: annotationActor, status: "open" as const, source_hash: payload.source_hash, created_at: timestamp, updated_at: timestamp, thread: [message] };
       review.annotations.push(annotation);
       this.addEvent(review, "annotation_created", annotationId, annotationActor, timestamp, { kind: payload.kind, page_path: page.entryPath });
-      atomicWriteJson(this.path, review);
+      this.writeUnlocked(review);
       return review;
     });
   }
@@ -281,7 +341,7 @@ export class ReviewStore {
         annotation.status = "open";
         this.addEvent(review, "status_changed", annotationId, messageActor, timestamp, { from: previous, to: "open" });
       }
-      atomicWriteJson(this.path, review);
+      this.writeUnlocked(review);
       return review;
     });
   }
@@ -304,7 +364,7 @@ export class ReviewStore {
       annotation.status = payload.status;
       annotation.updated_at = timestamp;
       this.addEvent(review, "status_changed", annotationId, statusActor, timestamp, { from: previous, to: payload.status });
-      atomicWriteJson(this.path, review);
+      this.writeUnlocked(review);
       return review;
     });
   }

@@ -6,11 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
-import { normalizeTargetUrl } from "./paths.js";
+import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
 import { ReviewStore } from "./review-store.js";
 
 interface ServeArguments {
   projectRoot: string;
+  projectDirectory: string;
   target: string;
   host: string;
   port: number;
@@ -22,7 +23,7 @@ interface ServeArguments {
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve --project-root <root> --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: visual-review serve [--project-root <root>] --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
@@ -43,9 +44,13 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
     values.set(argument, value);
     index += 1;
   }
-  const rootValue = values.get("--project-root");
-  const target = values.get("--target");
-  if (rootValue === undefined || target === undefined) serveUsage();
+  const rootValue = values.get("--project-root") ?? ".";
+  const rawTarget = values.get("--target");
+  if (rawTarget === undefined) serveUsage();
+  const projectDirectory = realpathSync(path.resolve(cwd, rootValue));
+  const projectRoot = findWorkspaceRoot(projectDirectory);
+  const projectPath = path.relative(projectRoot, projectDirectory).split(path.sep).join("/");
+  const target = !/^https?:\/\//i.test(rawTarget) && projectPath && projectPath !== "." ? `${projectPath}/${rawTarget}` : rawTarget;
   const urlTarget = /^https?:\/\//i.test(target);
   const targetUrl = urlTarget ? normalizeTargetUrl(target) : null;
   if (!target.trim() || (!urlTarget && (path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")))) {
@@ -61,7 +66,8 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   const port = Number(portText);
   if (port < 1 || port > 65535) throw new Error("port must be an integer from 1 to 65535");
   return {
-    projectRoot: path.resolve(cwd, rootValue),
+    projectRoot,
+    projectDirectory,
     target,
     host,
     port,
@@ -243,7 +249,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   const args = parseCliArguments(argv);
   const startedProcess = args.startCommand === null ? null : spawn(args.startCommand, {
-    cwd: args.projectRoot,
+    cwd: args.projectDirectory,
     shell: true,
     stdio: "inherit",
     detached: process.platform !== "win32",
@@ -253,27 +259,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       await waitForLiveTarget(args.target, startedProcess);
     } catch (error) {
       stopStartedProcess(startedProcess);
-      await runLifecycleCommand(args.stopCommand, args.projectRoot);
+      await runLifecycleCommand(args.stopCommand, args.projectDirectory);
       throw error;
     }
   }
   const visualReview = createVisualReviewServer({
     projectRoot: args.projectRoot,
     target: args.target,
+    projectDirectory: args.projectDirectory,
     allowScripts: args.allowScripts,
     allowAiJobsWithScripts: args.allowAiJobsWithScripts,
   });
   installShutdownHandlers(async () => {
     await visualReview.close();
     stopStartedProcess(startedProcess);
-    await runLifecycleCommand(args.stopCommand, args.projectRoot);
+    await runLifecycleCommand(args.stopCommand, args.projectDirectory);
   });
   try {
     await listenOnAvailablePort(visualReview.server, args.host, args.port);
   } catch (error) {
     await visualReview.close();
     stopStartedProcess(startedProcess);
-    await runLifecycleCommand(args.stopCommand, args.projectRoot);
+    await runLifecycleCommand(args.stopCommand, args.projectDirectory);
     throw error;
   }
   const address = visualReview.server.address();
