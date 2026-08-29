@@ -90,6 +90,14 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /new Set\(elements\.statusFilterInputs/);
 });
 
+test("custom command settings stay within the dialog with long commands", () => {
+  const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
+  assert.match(css, /\.ai-settings-dialog\s*\{[^}]*overflow-x:\s*hidden;/s);
+  assert.match(css, /\.custom-command-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto auto;/s);
+  assert.match(css, /\.custom-command-row > div[^}]*min-width:\s*0;/s);
+  assert.match(css, /\.custom-command-row code[^}]*max-width:\s*100%;/s);
+});
+
 test("active mode controls remain readable while hovered", () => {
   const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
   assert.match(css, /\.mode-button\.is-active:hover:not\(:disabled\)[^{]*\{[^}]*color:\s*white;[^}]*background:\s*var\(--ink\);/s);
