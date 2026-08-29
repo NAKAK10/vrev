@@ -122,6 +122,14 @@ test("HTML viewport can switch between desktop, tablet, and mobile", () => {
   assert.match(reviewerSource, /resizeObserver\.observe\(elements\.frame\)/);
 });
 
+test("reply text survives polling and sidebar rerenders", () => {
+  assert.match(reviewerSource, /const replyDrafts = new Map\(\)/);
+  assert.match(reviewerSource, /input\.value = replyDrafts\.get\(id\) \?\? ""/);
+  assert.match(reviewerSource, /replyDrafts\.set\(id, input\.value\)/);
+  assert.match(reviewerSource, /document\.activeElement\?\.classList\.contains\("reply-input"\)/);
+  assert.match(reviewerSource, /replyDrafts\.delete\(id\);\s*applyReview\(review\)/s);
+});
+
 test("annotation focus restores hidden interactive context before highlighting", () => {
   assert.match(reviewerSource, /function dismissUnrelatedTransientContexts\(node\)/);
   assert.match(reviewerSource, /function revealAnchorContext\(node\)/);

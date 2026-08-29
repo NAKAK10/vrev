@@ -3,6 +3,7 @@
 const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "addressed"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
 const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
+const replyDrafts = new Map();
 
 const state = {
   session: null,
@@ -491,6 +492,11 @@ function createReplyForm(id, previousStatus) {
   input.required = true;
   input.setAttribute("aria-label", "返信内容");
   input.placeholder = "返信を入力";
+  input.value = replyDrafts.get(id) ?? "";
+  input.addEventListener("input", () => {
+    if (input.value) replyDrafts.set(id, input.value);
+    else replyDrafts.delete(id);
+  });
   const button = document.createElement("button");
   button.className = "reply-button";
   button.type = "submit";
@@ -506,6 +512,7 @@ function createReplyForm(id, previousStatus) {
         method: "POST",
         body: JSON.stringify({ body, actor: "human" }),
       });
+      replyDrafts.delete(id);
       applyReview(review);
       const updated = annotations().find((annotation) => annotationId(annotation) === id);
       const reopened = previousStatus !== "open" && updated?.status === "open";
@@ -1496,6 +1503,7 @@ elements.modeButtons.forEach((button) => button.addEventListener("click", () => 
 elements.viewportButtons.forEach((button) => button.addEventListener("click", () => setViewport(button.dataset.viewport)));
 elements.refreshButton.addEventListener("click", () => loadSession({ reloadTarget: true }));
 window.addEventListener("visual-review:session-refreshed", (event) => {
+  if (document.activeElement?.classList.contains("reply-input")) return;
   if (event instanceof CustomEvent && event.detail?.review) applyReview(event.detail);
 });
 elements.filterOpenButton.addEventListener("click", () => elements.filterDialog.showModal());
