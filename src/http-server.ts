@@ -435,8 +435,8 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         if (request.method === "POST" && pathname === "/api/jobs/custom-command/test") {
           const input = await readJson(request);
           if (typeof input.command !== "string") throw new HttpError(400, "command must be a string");
-          await testCustomCommand(input.command);
-          return sendJson(response, 200, { ok: true });
+          const probe = await testCustomCommand(input.command);
+          return sendJson(response, 200, { ok: true, duration_ms: probe.durationMs });
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));

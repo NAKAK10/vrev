@@ -30,6 +30,7 @@ interface CustomCommand {
   name: string;
   command: string;
   verified: boolean;
+  probe_ms?: number;
 }
 
 interface EnqueuePayload {
@@ -109,7 +110,13 @@ function loadCustomCommands(): CustomCommand[] {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is Omit<CustomCommand, "verified"> & { verified?: boolean } => typeof item === "object" && item !== null
       && typeof (item as CustomCommand).id === "string" && typeof (item as CustomCommand).name === "string" && typeof (item as CustomCommand).command === "string")
-      .map((item) => ({ ...item, verified: item.verified === true }));
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        command: item.command,
+        verified: item.verified === true,
+        ...(typeof item.probe_ms === "number" && Number.isFinite(item.probe_ms) ? { probe_ms: item.probe_ms } : {}),
+      }));
   } catch { return []; }
 }
 
@@ -136,18 +143,23 @@ async function verifyCustomCommand(item: CustomCommand, button: HTMLButtonElemen
   button.disabled = true;
   setCustomStatus(`${item.name}の応答とtool利用をテストしています（最大45秒）…`);
   try {
-    await requestJson("/api/jobs/custom-command/test", {
+    const probe = await requestJson("/api/jobs/custom-command/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ command: item.command }),
     });
+    const durationMs = typeof probe === "object" && probe !== null && typeof (probe as { duration_ms?: unknown }).duration_ms === "number"
+      ? (probe as { duration_ms: number }).duration_ms : 0;
     item.verified = true;
+    item.probe_ms = durationMs;
     if (!customCommands.some(({ id }) => id === item.id)) customCommands.push(item);
     saveCustomCommands();
     renderCustomCommands();
     cliSelect.value = `custom:${item.id}`;
     window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
-    setCustomStatus(`${item.name}の応答とtool利用を確認し、登録しました。`);
+    setCustomStatus(durationMs >= 15_000
+      ? `${item.name}を登録しました。test応答に${Math.ceil(durationMs / 1000)}秒かかったため、実際の修正も遅くなる可能性があります。`
+      : `${item.name}の応答とtool利用を確認し、登録しました。`);
   } catch (error) {
     item.verified = false;
     if (customCommands.some(({ id }) => id === item.id)) {
@@ -178,7 +190,9 @@ function renderCustomCommands(): void {
     text.append(name, command);
     const status = document.createElement("span");
     status.className = "custom-command-status";
-    status.textContent = item.verified ? "テスト済み" : "未テスト";
+    status.textContent = item.verified
+      ? `テスト済み${item.probe_ms ? `（${Math.ceil(item.probe_ms / 1000)}秒）` : ""}`
+      : "未テスト";
     text.append(status);
     const test = document.createElement("button");
     test.type = "button";

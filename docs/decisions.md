@@ -32,9 +32,11 @@ CLIだけを起動する。coordinatorが依存関係、編集順、検証結果
 CLI・最大並列数・自動実行は通常画面を圧迫しないよう、AI欄右上のmenuから開くsettings modalへ集約する。
 built-in adapterはOpenCode・Claude・Codex・GitHub Copilot・Piを提供する。カスタムコマンドはbrowser localStorageへ複数登録できるが、
 shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした実行ファイルとargvを直接spawnする。promptの渡し忘れを防ぐため`{prompt}`を正確に1回必須とする。
-登録前に隔離した一時directoryで応答tokenとtoolによるmarker作成を検証し、単なる終了code 0ではagentic commandとして承認しない。command文字列をreview JSONやGit管理対象へ保存しない。queue復元に必要なruntime job-stateだけはGit ignore済み領域へ保持する。
+登録前に隔離した一時directoryで応答tokenとtoolによるmarker作成を検証し、単なる終了code 0ではagentic commandとして承認しない。probe時間も保存し、15秒以上なら遅いcommandとして警告する。command文字列をreview JSONやGit管理対象へ保存しない。queue復元に必要なruntime job-stateだけはGit ignore済み領域へ保持する。
 注釈の状態・種類filterも注釈欄右上のmenuから開くmodalへ移し、checkbox badgeによる複数選択とする。fresh browserの既定値は
 `open`・`in_progress`・`addressed`および全種類で、`resolved`は明示的に選択した場合だけ表示する。選択はlocalStorageへ保持する。
+
+小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが共有編集を1回で行う。Chrome DevTools MCP検証はpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
 jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinator成功時は`addressed`、失敗・cancel・起動前skip時は`open`へ戻し、
 server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。

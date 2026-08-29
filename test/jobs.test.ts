@@ -108,7 +108,8 @@ test("custom command capability test requires both a response and tool use", asy
     writeFileSync(path.join(spec.cwd, ".visual-review-command-test"), "VISUAL_REVIEW_OK", "utf8");
     return { result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }), cancel: () => undefined };
   };
-  await testCustomCommand("runner {prompt}", respondingExecutor);
+  const probe = await testCustomCommand("runner {prompt}", respondingExecutor);
+  assert.ok(probe.durationMs >= 0);
 
   const textOnlyExecutor: CommandExecutor = () => ({
     result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }),
@@ -135,8 +136,10 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.doesNotMatch(prompt, /SECRET COMMENT/);
   assert.match(prompt, /最大4個のread-only subagent/);
   assert.match(prompt, /subagentはファイル変更禁止/);
-  assert.match(prompt, /親coordinatorだけが修正を順次適用・検証/);
-  assert.match(prompt, /利用できないCLIでは親が順次処理/);
+  assert.match(prompt, /5件以下.*subagentを使わず/);
+  assert.match(prompt, /Chrome DevTools MCP/);
+  assert.match(prompt, /組み合わせごとに1回/);
+  assert.match(prompt, /全annotationを最後まで保留しない/);
   assert.equal(manager.enqueue({ cli: "claude", max_parallel: 4 }).jobs.length, 0);
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();

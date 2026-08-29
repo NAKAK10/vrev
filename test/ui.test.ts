@@ -58,6 +58,8 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /visual-review:custom-commands/);
   assert.match(jobsSource, /custom_name: custom\.name, custom_command: custom\.command/);
   assert.match(jobsSource, /\/api\/jobs\/custom-command\/test/);
+  assert.match(jobsSource, /duration_ms/);
+  assert.match(jobsSource, /実際の修正も遅くなる可能性があります/);
   assert.match(jobsSource, /command\.match\(\/\\\{prompt\\\}\/g/);
   assert.match(jobsSource, /verified: item\.verified === true/);
   assert.match(jobsSource, /selectedUnverifiedCustom/);

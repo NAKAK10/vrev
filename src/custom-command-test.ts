@@ -7,8 +7,9 @@ import { createSpawnExecutor, parseCustomCommand, type CommandExecutor } from ".
 const PROBE_MARKER = ".visual-review-command-test";
 const PROBE_TOKEN = "VISUAL_REVIEW_OK";
 
-export async function testCustomCommand(command: string, executor?: CommandExecutor): Promise<void> {
+export async function testCustomCommand(command: string, executor?: CommandExecutor): Promise<{ durationMs: number }> {
   const directory = mkdtempSync(path.join(os.tmpdir(), "visual-review-command-test-"));
+  const startedAt = Date.now();
   const prompt = `This is a capability test. In the current working directory, create a file named ${PROBE_MARKER} containing exactly ${PROBE_TOKEN} using your file or shell tools. Then reply exactly ${PROBE_TOKEN}. Do not read or modify anything outside the current working directory.`;
   try {
     const parsed = parseCustomCommand(command, prompt);
@@ -27,6 +28,7 @@ export async function testCustomCommand(command: string, executor?: CommandExecu
     if (marker !== PROBE_TOKEN || !result.output?.includes(PROBE_TOKEN)) {
       throw new Error("応答はありましたが、AI修正に必要なtoolによるファイル操作を確認できませんでした");
     }
+    return { durationMs: Date.now() - startedAt };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
