@@ -116,6 +116,16 @@ test("recovers an interrupted active/resolved split transaction", () => {
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
 });
 
+test("human feedback reopens a failed annotation", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
+  store.setStatus(id, { actor: "ai", status: "in_progress" });
+  store.addMessage(id, { actor: "ai", body: "AI修正に失敗しました。" });
+  store.setStatus(id, { actor: "ai", status: "failed" });
+  const reopened = store.addMessage(id, { actor: "human", body: "もう一度お願いします" });
+  assert.equal(reopened.annotations[0]!.status, "open");
+});
+
 test("refreshes the annotation source hash after an AI fix", () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   const review = store.createAnnotation(payload(store));

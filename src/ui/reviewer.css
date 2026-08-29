@@ -781,6 +781,11 @@ select {
   border-left-color: #d18a16;
 }
 
+.annotation-card[data-status="failed"] {
+  border-left-color: #b42318;
+  background: #fffafa;
+}
+
 .annotation-card[data-status="addressed"] {
   border-left-color: #2c78b7;
 }
@@ -826,6 +831,11 @@ select {
 .status-label.in_progress {
   color: #7a4b00;
   background: #fff0c7;
+}
+
+.status-label.failed {
+  color: #9a241f;
+  background: #ffe1de;
 }
 
 .status-label.addressed {
@@ -926,6 +936,12 @@ select {
   display: flex;
   gap: 6px;
   padding: 0 13px 13px;
+}
+
+.status-button.retry {
+  color: white;
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
 }
 
 .status-button.resolve {

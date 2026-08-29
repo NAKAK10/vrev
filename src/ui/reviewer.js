@@ -1,8 +1,9 @@
 "use strict";
 
-const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "addressed"];
+const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "failed", "addressed"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
 const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
+const FILTER_STORAGE_VERSION = 2;
 const HISTORY_PAGE_SIZE = 24;
 const replyDrafts = new Map();
 
@@ -67,6 +68,7 @@ const elements = {
 const STATUS_LABELS = {
   open: "未対応",
   in_progress: "AI対応中",
+  failed: "失敗",
   addressed: "AI対応済み",
   resolved: "解決済み",
 };
@@ -77,6 +79,7 @@ function restoreFilters() {
     const stored = JSON.parse(window.localStorage.getItem(FILTER_STORAGE_KEY) ?? "null");
     if (!stored || !Array.isArray(stored.statuses) || !Array.isArray(stored.kinds)) return;
     state.filters.statuses = new Set(stored.statuses.filter((value) => value in STATUS_LABELS));
+    if (stored.version !== FILTER_STORAGE_VERSION) state.filters.statuses.add("failed");
     state.filters.kinds = new Set(stored.kinds.filter((value) => value in KIND_LABELS));
   } catch (_error) { /* retain defaults */ }
 }
@@ -87,7 +90,7 @@ function syncFilterControls() {
 }
 
 function persistFilters() {
-  window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ statuses: [...state.filters.statuses], kinds: [...state.filters.kinds] }));
+  window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ version: FILTER_STORAGE_VERSION, statuses: [...state.filters.statuses], kinds: [...state.filters.kinds] }));
 }
 
 function renderFilterSummary() {
@@ -352,7 +355,7 @@ function setMode(mode) {
 function renderSidebar() {
   const all = annotations();
   renderFilterSummary();
-  const statusCounts = { open: 0, in_progress: 0, addressed: 0, resolved: 0 };
+  const statusCounts = { open: 0, in_progress: 0, failed: 0, addressed: 0, resolved: 0 };
   for (const annotation of all) {
     const status = annotation.status || "open";
     if (status in statusCounts) statusCounts[status] += 1;
@@ -361,6 +364,7 @@ function renderSidebar() {
   elements.statusCounts.replaceChildren(
     countItem(`未対応 ${statusCounts.open}`),
     countItem(`AI対応中 ${statusCounts.in_progress}`),
+    countItem(`失敗 ${statusCounts.failed}`),
     countItem(`AI対応済み ${statusCounts.addressed}`),
     countItem(`解決済み ${statusCounts.resolved}`),
   );
@@ -497,6 +501,10 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
     statusButton.classList.add("waiting");
     statusButton.textContent = "AIが修正中";
     statusButton.disabled = true;
+  } else if (status === "failed") {
+    statusButton.classList.add("retry");
+    statusButton.textContent = "再試行";
+    statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
   } else if (status === "addressed") {
     statusButton.classList.add("resolve");
     statusButton.textContent = "解決にする";

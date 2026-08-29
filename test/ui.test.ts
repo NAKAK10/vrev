@@ -26,6 +26,7 @@ test("AI batch controls and compiled script are present", () => {
   assert.match(sourceHtml, /<option value="pi">Pi<\/option>/);
   assert.match(sourceHtml, /id="custom-command-add"/);
   assert.match(sourceHtml, /name="annotation-status" value="in_progress" checked/);
+  assert.match(sourceHtml, /name="annotation-status" value="failed" checked/);
   assert.match(sourceHtml, /name="annotation-kind" value="dom" checked/);
   assert.match(sourceHtml, /name="annotation-kind" value="region" checked/);
   assert.match(sourceHtml, /<script type="module" src="jobs\.js"><\/script>/);
@@ -89,7 +90,12 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /__reactFiber\$/);
   assert.match(reviewerSource, /source_hint/);
   assert.match(reviewerSource, /in_progress: "AI対応中"/);
-  assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "addressed"\]/);
+  assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "failed", "addressed"\]/);
+  assert.match(reviewerSource, /FILTER_STORAGE_VERSION = 2/);
+  assert.match(reviewerSource, /stored\.version !== FILTER_STORAGE_VERSION[^]*statuses\.add\("failed"\)/);
+  assert.match(reviewerSource, /failed: "失敗"/);
+  assert.match(reviewerSource, /countItem\(`失敗 \$\{statusCounts\.failed\}`\)/);
+  assert.match(reviewerSource, /status === "failed"[^]*statusButton\.textContent = "再試行"/);
   assert.match(reviewerSource, /DEFAULT_KIND_FILTERS = \["dom", "region"\]/);
   assert.match(reviewerSource, /filterDialog\.showModal\(\)/);
   assert.match(reviewerSource, /new Set\(elements\.statusFilterInputs/);

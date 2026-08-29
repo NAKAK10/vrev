@@ -148,7 +148,8 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();
   assert.equal(enqueued.jobs.length, 3);
-  assert.ok(store.load().annotations.every(({ status }) => status === "open"));
+  assert.ok(store.load().annotations.every(({ status }) => status === "failed"));
+  assert.ok(store.load().annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
 });
 
 test("requires addressed plus a new AI message for each successful job", async () => {
@@ -170,7 +171,9 @@ test("requires addressed plus a new AI message for each successful job", async (
   assert.equal(byAnnotation.get(failedId)?.state, "failed");
   assert.match(byAnnotation.get(failedId)?.summary ?? "", /postcondition/);
   assert.equal(store.load().annotations.find(({ id }) => id === succeededId)?.status, "addressed");
-  assert.equal(store.load().annotations.find(({ id }) => id === failedId)?.status, "open");
+  const failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
+  assert.equal(failedAnnotation?.status, "failed");
+  assert.match(failedAnnotation?.thread.at(-1)?.body ?? "", /修正完了メッセージまたは状態更新/);
   await manager.close();
 });
 
@@ -189,6 +192,9 @@ test("fails a job when its page target is deleted while the coordinator runs", a
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
   await waitFor(() => manager.list().jobs[0]?.state === "failed");
   assert.match(manager.list().jobs[0]?.summary ?? "", /page unavailable after coordinator exit/);
+  const failed = store.load().annotations.find(({ id }) => id === annotationId);
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.thread.at(-1)?.body ?? "", /対象ページを確認できなかった/);
   await manager.close();
 });
 

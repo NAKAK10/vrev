@@ -8,7 +8,7 @@ export type JsonValue =
 
 export type Actor = "human" | "ai";
 export type AnnotationKind = "dom" | "region";
-export type AnnotationStatus = "open" | "in_progress" | "addressed" | "resolved";
+export type AnnotationStatus = "open" | "in_progress" | "failed" | "addressed" | "resolved";
 export type TargetKind = "html" | "image";
 
 export interface NumericBox {

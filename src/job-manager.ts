@@ -101,7 +101,10 @@ export class JobManager {
         state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach, custom_command: input.custom_command });
         state.jobs.push(...jobs);
       });
-      for (const job of jobs) if (job.state === "queued") this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
+      for (const job of jobs) {
+        if (job.state === "queued") this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
+        else if (job.state === "failed" || job.state === "skipped") this.markAnnotationFailed(job.annotation_id, job.summary);
+      }
     }
     this.schedule();
     return { batch_id: batchId, jobs };
@@ -132,6 +135,27 @@ export class JobManager {
   }
 
   private errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private failureDescription(summary: string): string {
+    if (summary.includes("postcondition not met")) return "AIコマンドは終了しましたが、修正完了メッセージまたは状態更新を確認できませんでした。";
+    if (summary.includes("timed out")) return "AI処理がタイムアウトしました。";
+    if (summary.includes("output exceeded")) return "AIコマンドの出力上限を超えました。";
+    if (summary.includes("could not start") || summary.includes("spawn")) return "AIコマンドを起動できませんでした。";
+    if (summary.includes("source changed")) return "AI開始前に対象ページが更新されたため、安全のため処理を停止しました。";
+    if (summary.includes("page unavailable")) return "対象ページを確認できなかったため、AI修正を完了できませんでした。";
+    if (summary.includes("review unavailable")) return "reviewデータを読み込めなかったため、AI修正を完了できませんでした。";
+    if (summary.includes("annotation missing")) return "対象の注釈が見つからなかったため、AI修正を完了できませんでした。";
+    const exit = summary.match(/coordinator exit ([^ )]+)/)?.[1];
+    if (exit) return `AIコマンドが終了コード${exit}で失敗しました。`;
+    return "AI修正を完了できませんでした。";
+  }
+  private markAnnotationFailed(annotationId: string, summary: string): void {
+    try {
+      const annotation = this.reviewStore.load().annotations.find(({ id }) => id === annotationId);
+      if (!annotation || !["open", "in_progress", "addressed"].includes(annotation.status)) return;
+      this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}` });
+      this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
+    } catch { /* annotation already changed or review unavailable */ }
+  }
   private reopenInProgressAnnotation(annotationId: string): void {
     try { this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
   }
@@ -213,7 +237,7 @@ export class JobManager {
       if (job?.state === "queued") { job.state = stateValue; job.finished = timestamp; job.summary = summary; }
     });
     const job = state.jobs.find((candidate) => candidate.id === id);
-    if (job) this.reopenInProgressAnnotation(job.annotation_id);
+    if (job) this.markAnnotationFailed(job.annotation_id, job.summary);
   }
 
   private finishBatch(batchId: string, result: CommandResult, jobIds: string[], checkpoints: Map<string, Checkpoint>): void {
@@ -251,7 +275,9 @@ export class JobManager {
       }
     });
     for (const job of finalState.jobs) {
-      if (jobIds.includes(job.id) && job.state !== "succeeded") this.reopenInProgressAnnotation(job.annotation_id);
+      if (!jobIds.includes(job.id) || job.state === "succeeded") continue;
+      if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
+      else this.markAnnotationFailed(job.annotation_id, job.summary);
     }
     this.schedule();
   }
