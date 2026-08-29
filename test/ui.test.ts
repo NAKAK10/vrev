@@ -96,6 +96,10 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /failed: "失敗"/);
   assert.match(reviewerSource, /countItem\(`失敗 \$\{statusCounts\.failed\}`\)/);
   assert.match(reviewerSource, /status === "failed"[^]*statusButton\.textContent = "再試行"/);
+  assert.match(sourceHtml, /id="force-resolve-dialog"/);
+  assert.match(sourceHtml, /AI対応済みではない状態.*強制的に解決|強制的に解決する/);
+  assert.match(reviewerSource, /status === "addressed" \? "解決にする" : "強制的に解決"/);
+  assert.match(reviewerSource, /if \(status === "addressed"\) void updateStatus[^]*else openForceResolveDialog/);
   assert.match(reviewerSource, /DEFAULT_KIND_FILTERS = \["dom", "region"\]/);
   assert.match(reviewerSource, /filterDialog\.showModal\(\)/);
   assert.match(reviewerSource, /new Set\(elements\.statusFilterInputs/);

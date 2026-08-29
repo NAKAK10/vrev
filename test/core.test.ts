@@ -116,6 +116,18 @@ test("recovers an interrupted active/resolved split transaction", () => {
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
 });
 
+test("human can force-resolve an annotation from every active status", () => {
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
+  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
+  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
+  store.setStatus(id, { actor: "human", status: "open" });
+  store.setStatus(id, { actor: "ai", status: "in_progress" });
+  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
+  store.setStatus(id, { actor: "human", status: "open" });
+  store.setStatus(id, { actor: "ai", status: "failed" });
+  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
+});
+
 test("human feedback reopens a failed annotation", () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   const id = store.createAnnotation(payload(store)).annotations[0]!.id;

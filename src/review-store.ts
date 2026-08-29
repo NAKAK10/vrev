@@ -357,8 +357,9 @@ export class ReviewStore {
       const allowed = (statusActor === "ai" && previous === "open" && (payload.status === "in_progress" || payload.status === "failed" || payload.status === "addressed"))
         || (statusActor === "ai" && previous === "in_progress" && (payload.status === "failed" || payload.status === "addressed" || payload.status === "open"))
         || (statusActor === "ai" && previous === "addressed" && payload.status === "failed")
-        || (statusActor === "human" && previous === "in_progress" && payload.status === "open")
-        || (statusActor === "human" && previous === "failed" && payload.status === "open")
+        || (statusActor === "human" && previous === "open" && payload.status === "resolved")
+        || (statusActor === "human" && previous === "in_progress" && (payload.status === "open" || payload.status === "resolved"))
+        || (statusActor === "human" && previous === "failed" && (payload.status === "open" || payload.status === "resolved"))
         || (statusActor === "human" && previous === "addressed" && (payload.status === "resolved" || payload.status === "open"))
         || (statusActor === "human" && previous === "resolved" && payload.status === "open");
       if (!allowed) throw new Error(`invalid ${statusActor} status transition: ${previous} -> ${payload.status}`);

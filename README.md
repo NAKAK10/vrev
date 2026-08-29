@@ -101,7 +101,7 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 
 注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。
 
-注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理し、AI jobが失敗・skipした場合は`failed`（失敗）へ移します。失敗理由はannotation threadへAI messageとして表示します。キャンセル・server再起動による中断は`open`へ戻します。失敗カードの「再試行」または人間の返信で`open`へ戻り、自動実行が有効なら再度queueへ登録します。`resolved`へ変更できるのは人間だけです。
+注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理し、AI jobが失敗・skipした場合は`failed`（失敗）へ移します。失敗理由はannotation threadへAI messageとして表示します。キャンセル・server再起動による中断は`open`へ戻します。失敗カードの「再試行」または人間の返信で`open`へ戻り、自動実行が有効なら再度queueへ登録します。`resolved`へ変更できるのは人間だけです。人間はどのactive statusからでも解決済みにでき、`addressed`以外では確認dialogを経由します。
 
 カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。能力testに15秒以上かかった場合は、実際の修正も遅くなる可能性を表示します。AI batchは5件以下または同一file中心ならsubagentを起動せず、指摘に直接必要な最小限の編集へ絞ります。visual検証は実行環境で利用可能なbrowser確認手段を使い、pageとviewportの組み合わせごとに1回へ集約します。
 

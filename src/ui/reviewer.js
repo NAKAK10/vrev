@@ -24,6 +24,7 @@ const state = {
   fileStateRequestId: 0,
   historyRenderLimit: HISTORY_PAGE_SIZE,
   historySignature: "",
+  forceResolve: null,
 };
 
 const elements = {
@@ -55,6 +56,10 @@ const elements = {
   historyCount: document.querySelector("#history-count"),
   historyList: document.querySelector("#history-list"),
   historyLoadMore: document.querySelector("#history-load-more"),
+  forceResolveDialog: document.querySelector("#force-resolve-dialog"),
+  forceResolveForm: document.querySelector("#force-resolve-form"),
+  forceResolveMessage: document.querySelector("#force-resolve-message"),
+  forceResolveCancelButtons: [...document.querySelectorAll("[data-force-resolve-cancel]")],
   dialog: document.querySelector("#comment-dialog"),
   commentForm: document.querySelector("#comment-form"),
   dialogTitle: document.querySelector("#dialog-title"),
@@ -493,30 +498,27 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   const statusButton = document.createElement("button");
   statusButton.type = "button";
   statusButton.className = "status-button";
-  if (status === "open") {
-    statusButton.classList.add("waiting");
-    statusButton.textContent = "AI対応待ち";
-    statusButton.disabled = true;
-  } else if (status === "in_progress") {
-    statusButton.classList.add("waiting");
-    statusButton.textContent = "AIが修正中";
-    statusButton.disabled = true;
-  } else if (status === "failed") {
-    statusButton.classList.add("retry");
-    statusButton.textContent = "再試行";
-    statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
-  } else if (status === "addressed") {
-    statusButton.classList.add("resolve");
-    statusButton.textContent = "解決にする";
-    statusButton.addEventListener("click", () => updateStatus(id, "resolved", statusButton));
-  } else if (status === "resolved") {
+  if (status === "resolved") {
     statusButton.textContent = "再オープン";
     statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
+    actions.append(statusButton);
   } else {
-    statusButton.textContent = "状態を確認中";
-    statusButton.disabled = true;
+    if (status === "failed") {
+      statusButton.classList.add("retry");
+      statusButton.textContent = "再試行";
+      statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
+      actions.append(statusButton);
+    }
+    const resolveButton = document.createElement("button");
+    resolveButton.type = "button";
+    resolveButton.className = `status-button ${status === "addressed" ? "resolve" : "force-resolve"}`;
+    resolveButton.textContent = status === "addressed" ? "解決にする" : "強制的に解決";
+    resolveButton.addEventListener("click", () => {
+      if (status === "addressed") void updateStatus(id, "resolved", resolveButton);
+      else openForceResolveDialog(id, status, resolveButton);
+    });
+    actions.append(resolveButton);
   }
-  actions.append(statusButton);
   card.append(actions);
   return card;
 }
@@ -577,6 +579,17 @@ function createReplyForm(id, previousStatus) {
     }
   });
   return form;
+}
+
+function openForceResolveDialog(id, status, button) {
+  state.forceResolve = { id, button };
+  elements.forceResolveMessage.textContent = `現在の状態は「${STATUS_LABELS[status] ?? status}」です。AI対応済みではないため、確認が必要です。`;
+  elements.forceResolveDialog.showModal();
+}
+
+function cancelForceResolve() {
+  state.forceResolve = null;
+  elements.forceResolveDialog.close();
 }
 
 async function updateStatus(id, status, button) {
@@ -1595,6 +1608,19 @@ if ("IntersectionObserver" in window) {
   }, { rootMargin: "160px" });
   historyObserver.observe(elements.historyLoadMore);
 }
+elements.forceResolveForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const pending = state.forceResolve;
+  if (!pending) return;
+  state.forceResolve = null;
+  elements.forceResolveDialog.close();
+  void updateStatus(pending.id, "resolved", pending.button);
+});
+elements.forceResolveCancelButtons.forEach((button) => button.addEventListener("click", cancelForceResolve));
+elements.forceResolveDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelForceResolve();
+});
 elements.commentForm.addEventListener("submit", (event) => {
   event.preventDefault();
   saveAnnotation();

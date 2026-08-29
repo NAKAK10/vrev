@@ -185,6 +185,24 @@
       </form>
     </dialog>
 
+    <dialog id="force-resolve-dialog" class="comment-dialog confirmation-dialog">
+      <form id="force-resolve-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">FORCE RESOLVE</span>
+            <h2>この注釈を解決済みにしますか？</h2>
+          </div>
+          <button class="dialog-close" type="button" data-force-resolve-cancel aria-label="閉じる">×</button>
+        </div>
+        <p id="force-resolve-message" class="selection-summary"></p>
+        <p class="confirmation-note">AIの処理結果にかかわらず、人間の判断で解決済みに変更します。</p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-force-resolve-cancel>キャンセル</button>
+          <button id="force-resolve-submit" class="danger-button" type="submit">強制的に解決する</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="comment-dialog" class="comment-dialog">
       <form id="comment-form" method="dialog">
         <div class="dialog-heading">
