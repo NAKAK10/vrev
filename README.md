@@ -103,7 +103,7 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 
 注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。job失敗・キャンセル時は`in_progress`から`open`へ戻ります。`resolved`へ変更できるのは人間だけです。
 
-カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。能力testに15秒以上かかった場合は、実際の修正も遅くなる可能性を表示します。AI batchは5件以下または同一file中心ならsubagentを起動せず、共有編集を一度にまとめ、Chrome DevTools MCP検証もpageとviewportの組み合わせごとに1回へ集約します。
+カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。能力testに15秒以上かかった場合は、実際の修正も遅くなる可能性を表示します。AI batchは5件以下または同一file中心ならsubagentを起動せず、指摘に直接必要な最小限の編集へ絞ります。visual検証は実行環境で利用可能なbrowser確認手段を使い、pageとviewportの組み合わせごとに1回へ集約します。
 
 ```text
 ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}

@@ -575,28 +575,22 @@ kbd {
 
 .review-mark {
   position: absolute;
-  border: 2px solid var(--accent);
+  border: 0;
   border-radius: 3px;
-  background: rgb(217 52 43 / 8%);
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 75%);
+  background: rgb(217 52 43 / 22%);
 }
 
 .review-mark.is-highlighted {
-  border-width: 3px;
-  background: rgb(217 52 43 / 19%);
-  box-shadow: 0 0 0 4px rgb(217 52 43 / 16%);
+  background: rgb(217 52 43 / 34%);
 }
 
 .review-mark.is-resolved {
-  border-color: #7d8987;
-  background: rgb(104 116 114 / 7%);
+  background: rgb(104 116 114 / 16%);
   opacity: .58;
 }
 
 .review-mark.is-stale {
-  border-style: dashed;
-  border-color: var(--warning);
-  background: rgb(218 153 34 / 12%);
+  background: rgb(218 153 34 / 24%);
 }
 
 .review-pin {
@@ -633,8 +627,8 @@ kbd {
 }
 
 .draft-region {
-  border-color: var(--accent);
-  background: rgb(217 52 43 / 12%);
+  border-color: transparent;
+  background: rgb(217 52 43 / 24%);
 }
 
 .stage-help-row {

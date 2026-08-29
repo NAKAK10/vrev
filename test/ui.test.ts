@@ -100,6 +100,13 @@ test("custom command settings stay within the dialog with long commands", () => 
   assert.match(css, /\.custom-command-row code[^}]*max-width:\s*100%;/s);
 });
 
+test("annotation marks use translucent fills instead of red outlines", () => {
+  const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
+  assert.match(css, /\.review-mark\s*\{[^}]*border:\s*0;[^}]*background:\s*rgb\(217 52 43 \/ 22%\);/s);
+  assert.match(css, /\.review-mark\.is-highlighted\s*\{[^}]*background:\s*rgb\(217 52 43 \/ 34%\);/s);
+  assert.match(css, /\.draft-region\s*\{[^}]*border-color:\s*transparent;[^}]*background:\s*rgb\(217 52 43 \/ 24%\);/s);
+});
+
 test("active mode controls remain readable while hovered", () => {
   const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
   assert.match(css, /\.mode-button\.is-active:hover:not\(:disabled\)[^{]*\{[^}]*color:\s*white;[^}]*background:\s*var\(--ink\);/s);

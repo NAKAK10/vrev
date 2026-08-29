@@ -137,8 +137,10 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.match(prompt, /最大4個のread-only subagent/);
   assert.match(prompt, /subagentはファイル変更禁止/);
   assert.match(prompt, /5件以下.*subagentを使わず/);
-  assert.match(prompt, /Chrome DevTools MCP/);
-  assert.match(prompt, /組み合わせごとに1回/);
+  assert.match(prompt, /利用可能なbrowser確認手段/);
+  assert.match(prompt, /組み合わせごとに1回だけvisual検証/);
+  assert.match(prompt, /直接必要な最小限/);
+  assert.doesNotMatch(prompt, /Mobile MCP|Chrome DevTools MCP/);
   assert.match(prompt, /全annotationを最後まで保留しない/);
   assert.match(prompt, /git add、commit、push、stash、resetは禁止/);
   assert.match(prompt, /一時fileをrepository内へ作らずstdin/);

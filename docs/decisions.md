@@ -36,7 +36,7 @@ shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした�
 注釈の状態・種類filterも注釈欄右上のmenuから開くmodalへ移し、checkbox badgeによる複数選択とする。fresh browserの既定値は
 `open`・`in_progress`・`addressed`および全種類で、`resolved`は明示的に選択した場合だけ表示する。選択はlocalStorageへ保持する。
 
-小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが共有編集を1回で行う。Chrome DevTools MCP検証はpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
+小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが指摘へ直接必要な最小限の共有編集を1回で行う。特定PCのtool名へ依存せず、利用可能なbrowser確認手段による検証をpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
 jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinator成功時は`addressed`、失敗・cancel・起動前skip時は`open`へ戻し、
 server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。
