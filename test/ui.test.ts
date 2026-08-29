@@ -18,7 +18,6 @@ test("AI batch controls and compiled script are present", () => {
     "ai-auto-run",
     "ai-open-count",
     "ai-batch-submit",
-    "ai-job-panel",
   ]) {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
@@ -33,11 +32,12 @@ test("AI batch controls and compiled script are present", () => {
   assert.ok(existsSync(path.join(packageRoot, "dist/src/ui/jobs.js")));
 });
 
-test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
+test("jobs UI keeps annotation cards synchronized without rendering internal job cards", () => {
   assert.match(jobsSource, /requestJson\("\/api\/session"/);
   assert.match(jobsSource, /requestJson\("\/api\/jobs"/);
   assert.match(jobsSource, /requestJson\("\/api\/jobs\/batch"/);
-  assert.match(jobsSource, /\/api\/jobs\/\$\{encodeURIComponent\(id\)\}\/cancel/);
+  assert.doesNotMatch(sourceHtml, /ai-job-panel|job-card/);
+  assert.doesNotMatch(jobsSource, /job-card|job-annotation-id|job-summary/);
   assert.doesNotMatch(jobsSource, /innerHTML|insertAdjacentHTML|outerHTML/);
   assert.match(jobsSource, /\.textContent\s*=/);
   assert.match(jobsSource, /statusElement = document\.createElement\("p"\)/);
@@ -45,7 +45,9 @@ test("jobs UI uses the job APIs without unsafe HTML rendering", () => {
   assert.match(jobsSource, /window\.addEventListener\("focus".*refreshJobs/);
   assert.match(jobsSource, /setTimeout\(\(\) => void refreshJobs\(\), 5000\)/);
   assert.match(jobsSource, /成功.*失敗.*キャンセル.*スキップ/);
-  assert.match(jobsSource, /running.*batch coordinator全体/s);
+  assert.match(jobsSource, /visual-review:session-refreshed/);
+  assert.match(reviewerSource, /visual-review:session-refreshed/);
+  assert.match(reviewerSource, /applyReview\(event\.detail\)/);
   assert.match(jobsSource, /target\?\.ai_jobs_enabled/);
   assert.match(jobsSource, /target\?\.allow_scripts !== true/);
   assert.match(jobsSource, /visual-review:annotation-created/);

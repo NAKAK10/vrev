@@ -1495,6 +1495,9 @@ function isTypingTarget(target) {
 elements.modeButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 elements.viewportButtons.forEach((button) => button.addEventListener("click", () => setViewport(button.dataset.viewport)));
 elements.refreshButton.addEventListener("click", () => loadSession({ reloadTarget: true }));
+window.addEventListener("visual-review:session-refreshed", (event) => {
+  if (event instanceof CustomEvent && event.detail?.review) applyReview(event.detail);
+});
 elements.filterOpenButton.addEventListener("click", () => elements.filterDialog.showModal());
 elements.filterCloseButton.addEventListener("click", () => elements.filterDialog.close());
 for (const input of [...elements.statusFilterInputs, ...elements.kindFilterInputs]) input.addEventListener("change", updateFiltersFromControls);

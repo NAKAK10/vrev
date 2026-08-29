@@ -66,7 +66,6 @@ const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
 const submitButton = element("#ai-batch-submit", HTMLButtonElement);
 const openCountElement = element("#ai-open-count", HTMLSpanElement);
-const jobPanel = element("#ai-job-panel", HTMLDivElement);
 let statusElement: HTMLParagraphElement | null = null;
 
 let openCount = 0;
@@ -163,7 +162,7 @@ function setStatus(message: string, error = false): void {
     statusElement.className = "ai-job-status";
     statusElement.setAttribute("role", "status");
     statusElement.setAttribute("aria-live", "polite");
-    jobPanel.before(statusElement);
+    form.before(statusElement);
   }
   statusElement.textContent = message;
   statusElement.classList.toggle("is-error", error);
@@ -209,66 +208,12 @@ function parseJobs(payload: unknown): ReviewJob[] {
   return (payload as JobListPayload).jobs;
 }
 
-function formatTime(value: string | null): string {
-  if (value === null) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("ja-JP");
-}
-
-function textNode(tag: keyof HTMLElementTagNameMap, className: string, value: string): HTMLElement {
-  const node = document.createElement(tag);
-  node.className = className;
-  node.textContent = value;
-  return node;
-}
-
-function renderJobs(jobs: ReviewJob[]): void {
-  const cards = [...jobs].reverse().map((job) => {
-    const card = document.createElement("article");
-    card.className = "job-card";
-
-    const heading = document.createElement("div");
-    heading.className = "job-card-heading";
-    heading.append(
-      textNode("span", "job-annotation-id", `#${job.annotation_id.slice(0, 8)}`),
-      textNode("span", "job-state", job.state),
-    );
-    const state = heading.lastElementChild;
-    if (state instanceof HTMLElement) state.dataset.state = job.state;
-
-    const summary = textNode("p", "job-summary", job.summary || "—");
-    const meta = document.createElement("div");
-    meta.className = "job-card-meta";
-    meta.append(
-      textNode("span", "job-cli", job.custom_name ?? CLI_LABELS[job.cli] ?? job.cli),
-      textNode("span", "job-exit-code", `exit: ${job.exit_code ?? "—"}`),
-    );
-    if (ACTIVE_STATES.has(job.state)) {
-      const cancel = document.createElement("button");
-      cancel.type = "button";
-      cancel.className = "job-cancel";
-      cancel.textContent = "キャンセル";
-      cancel.addEventListener("click", () => void cancelJob(job.id, cancel));
-      meta.append(cancel);
-    }
-
-    const times = document.createElement("div");
-    times.className = "job-card-times";
-    times.append(
-      textNode("span", "job-started", `開始: ${formatTime(job.started)}`),
-      textNode("span", "job-finished", `終了: ${formatTime(job.finished)}`),
-    );
-    card.append(heading, summary, meta, times);
-    return card;
-  });
-  jobPanel.replaceChildren(...cards);
-}
-
 async function refreshSession(reportError = false): Promise<void> {
   try {
     const payload = await requestJson("/api/session");
     openCount = sessionOpenCount(payload);
     aiJobsEnabled = sessionAllowsAiJobs(payload);
+    window.dispatchEvent(new CustomEvent("visual-review:session-refreshed", { detail: payload }));
     openCountElement.textContent = String(openCount);
     if (!aiJobsEnabled) setStatus("対象スクリプト有効時のAI修正には、server起動時の明示許可が必要です。", true);
     updateSubmitState();
@@ -304,7 +249,6 @@ async function refreshJobs(): Promise<void> {
   const previouslyActive = new Set(activeBatchIds);
   try {
     const jobs = parseJobs(await requestJson("/api/jobs"));
-    renderJobs(jobs);
     hasActiveJobs = jobs.some((job) => ACTIVE_STATES.has(job.state));
     activeBatchIds = new Set(jobs.filter((job) => ACTIVE_STATES.has(job.state)).map((job) => job.batch_id));
     updateSubmitState();
@@ -318,20 +262,6 @@ async function refreshJobs(): Promise<void> {
     setStatus(`ジョブ状態を取得できません：${error instanceof Error ? error.message : String(error)}`, true);
   } finally {
     scheduleJobsPoll();
-  }
-}
-
-async function cancelJob(id: string, button: HTMLButtonElement): Promise<void> {
-  const state = button.closest(".job-card")?.querySelector<HTMLElement>(".job-state")?.dataset.state;
-  if (state === "running" && !window.confirm("実行中ジョブのキャンセルは同じbatch coordinator全体を停止し、batch内の実行中ジョブをすべてキャンセルします。続行しますか？")) return;
-  button.disabled = true;
-  try {
-    await requestJson(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" });
-    setStatus(state === "running" ? "batch coordinator全体のキャンセルを要求しました。" : "このqueuedジョブをキャンセルしました。");
-    await refreshJobs();
-  } catch (error) {
-    button.disabled = false;
-    setStatus(`キャンセルできません：${error instanceof Error ? error.message : String(error)}`, true);
   }
 }
 
@@ -365,11 +295,10 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
       throw new Error("batch response is invalid");
     }
     const jobs = (payload as EnqueuePayload).jobs;
-    renderJobs(jobs);
     hasActiveJobs = hasActiveJobs || jobs.some((job) => ACTIVE_STATES.has(job.state));
     for (const job of jobs) if (ACTIVE_STATES.has(job.state)) activeBatchIds.add(job.batch_id);
     setStatus(jobs.length === 0 ? "新しく登録できるジョブはありませんでした。" : `${jobs.length}件のジョブを${automatic ? "自動" : ""}登録しました。`);
-    if (!hasActiveJobs) await refreshSession(true);
+    await refreshSession(true);
   } catch (error) {
     setStatus(`AI修正を依頼できません：${error instanceof Error ? error.message : String(error)}`, true);
   } finally {
