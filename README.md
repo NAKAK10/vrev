@@ -103,7 +103,7 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 
 注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。job失敗・キャンセル時は`in_progress`から`open`へ戻ります。`resolved`へ変更できるのは人間だけです。
 
-カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。`{prompt}`を書いた引数へ依頼文を挿入し、省略時は最後の引数に追加します。
+カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。
 
 ```text
 ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}

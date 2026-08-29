@@ -57,6 +57,13 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /form\.hidden = autoRunCheckbox\.checked/);
   assert.match(jobsSource, /visual-review:custom-commands/);
   assert.match(jobsSource, /custom_name: custom\.name, custom_command: custom\.command/);
+  assert.match(jobsSource, /\/api\/jobs\/custom-command\/test/);
+  assert.match(jobsSource, /command\.match\(\/\\\{prompt\\\}\/g/);
+  assert.match(jobsSource, /verified: item\.verified === true/);
+  assert.match(sourceHtml, /id="custom-command-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(jobsSource, /setCustomStatus\(`登録できません/);
+  assert.match(sourceHtml, /テストして登録/);
+  assert.match(sourceHtml, /\{prompt\}.*必ず1回/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-attach-url["']/);

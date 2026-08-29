@@ -201,7 +201,7 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
     const address = trusted.server.address();
     assert.ok(address && typeof address !== "string");
     const url = `http://127.0.0.1:${address.port}`;
-    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["POST", "/api/jobs/anything/cancel"]] as const) {
+    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["POST", "/api/jobs/custom-command/test"], ["POST", "/api/jobs/anything/cancel"]] as const) {
       const response = await fetch(`${url}${route}`, { method });
       assert.equal(response.status, 403, `${method} ${route}`);
     }
@@ -228,6 +228,13 @@ test("trusted script mode enables jobs only with explicit AI consent", async () 
     assert.equal(session.target.allow_scripts, true);
     assert.equal(session.target.ai_jobs_enabled, true);
     assert.equal((await fetch(`${url}/api/jobs`)).status, 200);
+    const invalidProbe = await fetch(`${url}/api/jobs/custom-command/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "runner without-placeholder" }),
+    });
+    assert.equal(invalidProbe.status, 400);
+    assert.match(await invalidProbe.text(), /include.*prompt.*exactly once/);
   } finally {
     await trusted.close();
   }

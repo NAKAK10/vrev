@@ -296,6 +296,19 @@ h1 {
   padding: 7px 11px;
 }
 
+.custom-command-feedback {
+  min-height: 17px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.custom-command-feedback.is-error {
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
 .custom-command-list {
   display: grid;
   gap: 6px;
@@ -328,15 +341,28 @@ h1 {
   white-space: nowrap;
 }
 
+.custom-command-status {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.custom-command-test,
 .custom-command-remove {
   flex: none;
   padding: 5px 8px;
-  border: 1px solid #e2b5b1;
+  border: 1px solid var(--line);
   border-radius: 7px;
-  color: #8f2a24;
   background: white;
   font-size: 11px;
   font-weight: 750;
+}
+
+.custom-command-remove {
+  border-color: #e2b5b1;
+  color: #8f2a24;
 }
 
 .ai-batch-submit {
@@ -344,7 +370,8 @@ h1 {
 }
 
 .ai-batch-submit:disabled,
-.job-cancel:disabled {
+.custom-command-test:disabled,
+#custom-command-add:disabled {
   cursor: not-allowed;
   opacity: .5;
 }

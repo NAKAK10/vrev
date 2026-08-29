@@ -29,6 +29,7 @@ interface CustomCommand {
   id: string;
   name: string;
   command: string;
+  verified: boolean;
 }
 
 interface EnqueuePayload {
@@ -61,6 +62,7 @@ const customOptions = element("#ai-custom-options", HTMLOptGroupElement);
 const customNameInput = element("#custom-command-name", HTMLInputElement);
 const customCommandInput = element("#custom-command-value", HTMLInputElement);
 const customAddButton = element("#custom-command-add", HTMLButtonElement);
+const customStatusElement = element("#custom-command-status", HTMLParagraphElement);
 const customCommandList = element("#custom-command-list", HTMLDivElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
@@ -86,7 +88,7 @@ let customCommands = loadCustomCommands();
 renderCustomCommands();
 const storedCli = window.localStorage.getItem(CLI_STORAGE_KEY);
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
-if (storedCli !== null && (isCli(storedCli) || customCommands.some(({ id }) => storedCli === `custom:${id}`))) cliSelect.value = storedCli;
+if (storedCli !== null && (isCli(storedCli) || customCommands.some(({ id, verified }) => verified && storedCli === `custom:${id}`))) cliSelect.value = storedCli;
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
 autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
 form.hidden = autoRunCheckbox.checked;
@@ -99,8 +101,9 @@ function loadCustomCommands(): CustomCommand[] {
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(CUSTOM_COMMANDS_STORAGE_KEY) ?? "[]");
     if (!Array.isArray(value)) return [];
-    return value.filter((item): item is CustomCommand => typeof item === "object" && item !== null
-      && typeof (item as CustomCommand).id === "string" && typeof (item as CustomCommand).name === "string" && typeof (item as CustomCommand).command === "string");
+    return value.filter((item): item is Omit<CustomCommand, "verified"> & { verified?: boolean } => typeof item === "object" && item !== null
+      && typeof (item as CustomCommand).id === "string" && typeof (item as CustomCommand).name === "string" && typeof (item as CustomCommand).command === "string")
+      .map((item) => ({ ...item, verified: item.verified === true }));
   } catch { return []; }
 }
 
@@ -108,8 +111,51 @@ function saveCustomCommands(): void {
   window.localStorage.setItem(CUSTOM_COMMANDS_STORAGE_KEY, JSON.stringify(customCommands));
 }
 
+function validateCustomCommandTemplate(command: string): void {
+  if ((command.match(/\{prompt\}/g) ?? []).length !== 1) throw new Error("コマンドには{prompt}を1回だけ記述してください。");
+}
+
+function setCustomStatus(message: string, error = false): void {
+  customStatusElement.textContent = message;
+  customStatusElement.classList.toggle("is-error", error);
+}
+
+async function verifyCustomCommand(item: CustomCommand, button: HTMLButtonElement): Promise<void> {
+  try {
+    validateCustomCommandTemplate(item.command);
+  } catch (error) {
+    setCustomStatus(error instanceof Error ? error.message : String(error), true);
+    return;
+  }
+  button.disabled = true;
+  setCustomStatus(`${item.name}の応答とtool利用をテストしています（最大45秒）…`);
+  try {
+    await requestJson("/api/jobs/custom-command/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: item.command }),
+    });
+    item.verified = true;
+    if (!customCommands.some(({ id }) => id === item.id)) customCommands.push(item);
+    saveCustomCommands();
+    renderCustomCommands();
+    cliSelect.value = `custom:${item.id}`;
+    window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
+    setCustomStatus(`${item.name}の応答とtool利用を確認し、登録しました。`);
+  } catch (error) {
+    item.verified = false;
+    if (customCommands.some(({ id }) => id === item.id)) {
+      saveCustomCommands();
+      renderCustomCommands();
+    }
+    setCustomStatus(`登録できません：${error instanceof Error ? error.message : String(error)}`, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderCustomCommands(): void {
-  customOptions.replaceChildren(...customCommands.map((item) => {
+  customOptions.replaceChildren(...customCommands.filter(({ verified }) => verified).map((item) => {
     const option = document.createElement("option");
     option.value = `custom:${item.id}`;
     option.textContent = item.name;
@@ -124,6 +170,15 @@ function renderCustomCommands(): void {
     const command = document.createElement("code");
     command.textContent = item.command;
     text.append(name, command);
+    const status = document.createElement("span");
+    status.className = "custom-command-status";
+    status.textContent = item.verified ? "テスト済み" : "未テスト";
+    text.append(status);
+    const test = document.createElement("button");
+    test.type = "button";
+    test.className = "custom-command-test";
+    test.textContent = item.verified ? "再テスト" : "テスト";
+    test.addEventListener("click", () => void verifyCustomCommand(item, test));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "custom-command-remove";
@@ -137,7 +192,7 @@ function renderCustomCommands(): void {
       saveCustomCommands();
       renderCustomCommands();
     });
-    row.append(text, remove);
+    row.append(text, test, remove);
     return row;
   }));
 }
@@ -146,7 +201,7 @@ function selectedConfiguration(): { cli: ReviewCli; custom_name?: string; custom
   if (isCli(cliSelect.value)) return { cli: cliSelect.value };
   const id = cliSelect.value.startsWith("custom:") ? cliSelect.value.slice(7) : "";
   const custom = customCommands.find((item) => item.id === id);
-  if (!custom) throw new Error("カスタムコマンドの選択が不正です。");
+  if (!custom?.verified) throw new Error("カスタムコマンドは登録前にテストしてください。");
   return { cli: "custom", custom_name: custom.name, custom_command: custom.command };
 }
 
@@ -337,17 +392,18 @@ cliSelect.addEventListener("change", () => window.localStorage.setItem(CLI_STORA
 customAddButton.addEventListener("click", () => {
   const name = customNameInput.value.trim();
   const command = customCommandInput.value.trim();
-  if (!name || !command) { setStatus("カスタムコマンドの表示名とコマンドを入力してください。", true); return; }
-  if (/[\0\r\n]/.test(command)) { setStatus("カスタムコマンドは1行で入力してください。", true); return; }
-  const item = { id: window.crypto.randomUUID(), name, command };
-  customCommands.push(item);
-  saveCustomCommands();
-  renderCustomCommands();
-  cliSelect.value = `custom:${item.id}`;
-  window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
-  customNameInput.value = "";
-  customCommandInput.value = "";
-  setStatus(`${name}を登録しました。`);
+  if (!name || !command) { setCustomStatus("表示名とコマンドを入力してください。", true); return; }
+  if (/[\0\r\n]/.test(command)) { setCustomStatus("カスタムコマンドは1行で入力してください。", true); return; }
+  try { validateCustomCommandTemplate(command); } catch (error) {
+    setCustomStatus(error instanceof Error ? error.message : String(error), true);
+    return;
+  }
+  const item = { id: window.crypto.randomUUID(), name, command, verified: false };
+  void verifyCustomCommand(item, customAddButton).then(() => {
+    if (!item.verified) return;
+    customNameInput.value = "";
+    customCommandInput.value = "";
+  });
 });
 parallelSelect.addEventListener("change", () => window.localStorage.setItem(PARALLEL_STORAGE_KEY, parallelSelect.value));
 autoRunCheckbox.addEventListener("change", () => {

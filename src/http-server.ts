@@ -6,6 +6,7 @@ import { BlockList } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { testCustomCommand } from "./custom-command-test.js";
 import { fileSha256 } from "./file-utils.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { resolveTarget } from "./paths.js";
@@ -385,7 +386,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
       try {
         const url = new URL(request.url ?? "/", "http://localhost");
         const pathname = url.pathname;
-        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
+        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname === "/api/jobs/custom-command/test" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
           throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, "index.html"));
@@ -430,6 +431,12 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         if (request.method === "POST" && pathname === "/api/jobs/batch") {
           return sendJson(response, 200, jobManager.enqueue(await readJson(request)));
+        }
+        if (request.method === "POST" && pathname === "/api/jobs/custom-command/test") {
+          const input = await readJson(request);
+          if (typeof input.command !== "string") throw new HttpError(400, "command must be a string");
+          await testCustomCommand(input.command);
+          return sendJson(response, 200, { ok: true });
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));

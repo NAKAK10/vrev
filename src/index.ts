@@ -1,4 +1,5 @@
 export * from "./adapters.js";
+export * from "./custom-command-test.js";
 export * from "./file-utils.js";
 export * from "./http-server.js";
 export * from "./job-manager.js";

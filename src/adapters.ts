@@ -16,6 +16,7 @@ export interface CommandSpec {
 export interface CommandResult {
   exitCode: number | null;
   reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error";
+  output?: string;
 }
 
 export interface RunningCommand {
@@ -58,6 +59,7 @@ export function parseCustomCommand(value: string, prompt: string): { command: st
   if (escaped || quote !== null) throw new Error("custom command contains an unfinished escape or quote");
   if (current) parts.push(current);
   if (parts.length === 0) throw new Error("custom command must include an executable");
+  if ((value.match(/\{prompt\}/g) ?? []).length !== 1) throw new Error("custom command must include {prompt} exactly once");
   const command = parts.shift()!;
   let replaced = false;
   const args = parts.map((part) => {
@@ -65,7 +67,6 @@ export function parseCustomCommand(value: string, prompt: string): { command: st
     replaced = true;
     return part.replaceAll("{prompt}", prompt);
   });
-  if (!replaced) args.push(prompt);
   return { command, args };
 }
 
@@ -116,6 +117,7 @@ export function createSpawnExecutor(options: SpawnExecutorOptions = {}): Command
     let requestedReason: CommandResult["reason"] | undefined;
     let settled = false;
     let outputBytes = 0;
+    const outputChunks: string[] = [];
     let killTimer: NodeJS.Timeout | undefined;
     let timeoutTimer: NodeJS.Timeout | undefined;
     let resolveResult!: (result: CommandResult) => void;
@@ -126,7 +128,7 @@ export function createSpawnExecutor(options: SpawnExecutorOptions = {}): Command
       settled = true;
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       if (killTimer !== undefined) clearTimeout(killTimer);
-      resolveResult(value);
+      resolveResult({ ...value, output: outputChunks.join("") });
     };
     const terminate = (reason: CommandResult["reason"]): void => {
       if (settled || requestedReason !== undefined) return;
@@ -161,6 +163,7 @@ export function createSpawnExecutor(options: SpawnExecutorOptions = {}): Command
       return { result, cancel: () => undefined };
     }
     const countOutput = (chunk: Buffer | string): void => {
+      outputChunks.push(chunk.toString());
       outputBytes += Buffer.byteLength(chunk);
       if (outputBytes > outputLimit) terminate("output-limit");
     };

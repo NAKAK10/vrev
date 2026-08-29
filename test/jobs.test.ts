@@ -15,6 +15,7 @@ import {
   JobStore,
   parseCustomCommand,
   ReviewStore,
+  testCustomCommand,
   type CommandExecutor,
   type CommandResult,
   type CommandSpec,
@@ -96,8 +97,24 @@ test("builds fixed argv for all adapters without annotation comments", () => {
   const custom = buildCommand({ ...base, cli: "custom", sessionId: null, customCommand: "ollama launch claude --model model -- {prompt}" });
   assert.equal(custom.command, "ollama");
   assert.deepEqual(custom.args, ["launch", "claude", "--model", "model", "--", "fixed prompt"]);
-  assert.deepEqual(parseCustomCommand("runner --flag", "prompt"), { command: "runner", args: ["--flag", "prompt"] });
+  assert.deepEqual(parseCustomCommand("runner --flag {prompt}", "prompt"), { command: "runner", args: ["--flag", "prompt"] });
+  assert.throws(() => parseCustomCommand("runner --flag", "prompt"), /include \{prompt\} exactly once/);
+  assert.throws(() => parseCustomCommand("runner {prompt} {prompt}", "prompt"), /include \{prompt\} exactly once/);
   assert.throws(() => parseCustomCommand("runner 'unfinished", "prompt"), /unfinished/);
+});
+
+test("custom command capability test requires both a response and tool use", async () => {
+  const respondingExecutor: CommandExecutor = (spec) => {
+    writeFileSync(path.join(spec.cwd, ".visual-review-command-test"), "VISUAL_REVIEW_OK", "utf8");
+    return { result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }), cancel: () => undefined };
+  };
+  await testCustomCommand("runner {prompt}", respondingExecutor);
+
+  const textOnlyExecutor: CommandExecutor = () => ({
+    result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }),
+    cancel: () => undefined,
+  });
+  await assert.rejects(testCustomCommand("runner {prompt}", textOnlyExecutor), /toolによるファイル操作/);
 });
 
 test("runs one coordinator process per batch with IDs-only prompt and max subagent limit", async () => {
