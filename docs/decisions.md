@@ -44,7 +44,7 @@ shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした�
 
 小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが指摘へ直接必要な最小限の共有編集を1回で行う。特定PCのtool名へ依存せず、利用可能なbrowser確認手段による検証をpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
-jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinator成功時は`addressed`、失敗・起動前skip時は理由message付きの`failed`、cancel時は`open`へ戻し、
+jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinatorが正常終了しbatch開始後のAI完了messageを追加していれば、AI側のstatus更新が漏れてもjob成功として`addressed`へ補正する。postcondition失敗後に遅れて完了messageが届いた場合も成功へ回復する。失敗・起動前skip時は理由message付きの`failed`、cancel時は`open`へ戻し、
 server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。humanは全active statusから`resolved`へ強制変更できるが、通常flowの`addressed`以外では誤操作を避ける確認dialogを必須とする。
 
 ## Compatibility and trust boundary
@@ -53,7 +53,7 @@ review保存先、schema v2、schema 1 migration、status/event規則は既存re
 同じreview directoryを複数serverが同時所有しないよう`.server-lease.json`で起動を排他する。
 
 `--allow-scripts`は信頼済みlocal prototype専用である。AI一括修正は通常運用を優先してCLI既定で有効とする。
-対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。
+対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。loopback proxyは`/live/` baseを注入し、JavaScript全体の文字列置換ではなくmodule import・network URL・location bridgeだけを変換する。これによりSPA route文字列や正規表現を壊さず、root-relative assetは未知route fallbackでupstreamへ転送する。loopback targetは信頼済みappとして外部style・font・API・WebSocketを許可するが、public targetの厳格なCSPは緩和しない。
 public targetでは`--allow-scripts`を受理せず、対象scriptからlocal APIやAI processへ到達する経路を作らない。
 
 ## Coordinator sessions are CLI-owned

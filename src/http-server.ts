@@ -32,6 +32,21 @@ const SECURITY_POLICY = [
   "form-action 'self'",
 ].join("; ");
 
+const LOOPBACK_TARGET_POLICY = [
+  "default-src 'self' data: blob: http: https: ws: wss:",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+  "style-src 'self' 'unsafe-inline' https:",
+  "img-src 'self' data: blob: http: https:",
+  "font-src 'self' data: https:",
+  "media-src 'self' data: blob: http: https:",
+  "connect-src 'self' http: https: ws: wss:",
+  "frame-src 'self' http: https:",
+  "frame-ancestors 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self' http: https:",
+].join("; ");
+
 const PUBLIC_TARGET_POLICY = [
   "default-src 'none'",
   "script-src 'none'",
@@ -141,6 +156,10 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
     }
   }
   if (contentTypeValue.includes("text/html")) {
+    if (!publicTarget && !/<base\b/i.test(result)) {
+      const bridge = `<base href="/live/"><script>window.__visualReviewUrl=(value)=>{const url=new URL(value,window.location.href);if(url.origin===window.location.origin&&!url.pathname.startsWith('/live'))url.pathname='/live'+(url.pathname.startsWith('/')?url.pathname:'/'+url.pathname);return url.href}</script>`;
+      result = result.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${bridge}`);
+    }
     result = result.replace(/\b(src|href|action)=(['"])\/(?!\/|live\/)/gi, (_match, name: string, quote: string) => `${name}=${quote}/live/`);
     if (publicTarget) {
       result = result.replace(/<meta\b[^>]*http-equiv=(['"])refresh\1[^>]*>/gi, "");
@@ -154,7 +173,11 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
     result = result.replace(/url\((['"]?)\/(?!\/|live\/)/gi, (_match, quote: string) => `url(${quote}/live/`);
   }
   if (contentTypeValue.includes("javascript")) {
-    result = result.replace(/(['"`])\/(?!\/|live\/)/g, "$1/live/");
+    result = result.replace(/(\b(?:from|import)\s*(?:\(\s*)?)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
+    result = result.replace(/(\b(?:fetch|EventSource|Worker|SharedWorker|URL)\s*\(\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
+    result = result.replaceAll("window.location.pathname", `(window.location.pathname.replace(/^\\/live(?=\\/|$)/, "") || "/")`);
+    result = result.replace(/window\.location\.(replace|assign)\(([^()\n;]+)\)/g, "window.location.$1(window.__visualReviewUrl($2))");
+    result = result.replace(/((?:window\.)?location\.href\s*=\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
   }
   return result;
 }
@@ -234,7 +257,7 @@ async function proxyLiveRequest(request: IncomingMessage, response: ServerRespon
       incoming.once("end", () => {
         const body = Buffer.concat(chunks);
         const rewritten = textual ? Buffer.from(rewriteLiveText(body.toString("utf8"), contentTypeValue, origin, publicTarget)) : body;
-        setSecurityHeaders(response, publicTarget ? PUBLIC_TARGET_POLICY : SECURITY_POLICY);
+        setSecurityHeaders(response, publicTarget ? PUBLIC_TARGET_POLICY : LOOPBACK_TARGET_POLICY);
         responseHeaders["content-length"] = String(rewritten.byteLength);
         response.writeHead(incoming.statusCode ?? 502, responseHeaders);
         response.end(request.method === "HEAD" ? undefined : rewritten);
@@ -463,6 +486,12 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         if (statusId !== undefined) {
           const review = store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
           return sendJson(response, 200, review);
+        }
+        if (store.target.liveUrl && !publicTarget) {
+          const fallbackUrl = new URL(url.href);
+          fallbackUrl.pathname = `/live${pathname}`;
+          await proxyLiveRequest(request, response, store.target.liveUrl, fallbackUrl, false);
+          return;
         }
         throw new HttpError(404, "route not found");
       } catch (error) {

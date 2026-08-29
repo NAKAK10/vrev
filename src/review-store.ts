@@ -356,6 +356,7 @@ export class ReviewStore {
       if (previous === payload.status) return review;
       const allowed = (statusActor === "ai" && previous === "open" && (payload.status === "in_progress" || payload.status === "failed" || payload.status === "addressed"))
         || (statusActor === "ai" && previous === "in_progress" && (payload.status === "failed" || payload.status === "addressed" || payload.status === "open"))
+        || (statusActor === "ai" && previous === "failed" && payload.status === "addressed")
         || (statusActor === "ai" && previous === "addressed" && payload.status === "failed")
         || (statusActor === "human" && previous === "open" && payload.status === "resolved")
         || (statusActor === "human" && previous === "in_progress" && (payload.status === "open" || payload.status === "resolved"))

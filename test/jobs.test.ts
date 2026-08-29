@@ -152,7 +152,7 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.ok(store.load().annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
 });
 
-test("requires addressed plus a new AI message for each successful job", async () => {
+test("treats a new AI completion message as success and normalizes addressed status", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
   const succeededId = annotate(store, ".code/htmls/pages/a.html", "a");
@@ -163,7 +163,6 @@ test("requires addressed plus a new AI message for each successful job", async (
   manager.enqueue({ cli: "claude", max_parallel: 2, session_id: "shared" });
   await waitFor(() => control.pending.length === 1);
   store.addMessage(succeededId, { actor: "ai", body: "implemented and verified" });
-  store.setStatus(succeededId, { actor: "ai", status: "addressed" });
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
   await waitFor(() => manager.list().jobs.every(({ state }) => state === "succeeded" || state === "failed"));
   const byAnnotation = new Map(manager.list().jobs.map((job) => [job.annotation_id, job]));
@@ -171,9 +170,14 @@ test("requires addressed plus a new AI message for each successful job", async (
   assert.equal(byAnnotation.get(failedId)?.state, "failed");
   assert.match(byAnnotation.get(failedId)?.summary ?? "", /postcondition/);
   assert.equal(store.load().annotations.find(({ id }) => id === succeededId)?.status, "addressed");
-  const failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
+  let failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
   assert.equal(failedAnnotation?.status, "failed");
   assert.match(failedAnnotation?.thread.at(-1)?.body ?? "", /修正完了メッセージまたは状態更新/);
+
+  store.addMessage(failedId, { actor: "ai", body: "late completion message" });
+  assert.equal(manager.list().jobs.find(({ annotation_id }) => annotation_id === failedId)?.state, "succeeded");
+  failedAnnotation = store.load().annotations.find(({ id }) => id === failedId);
+  assert.equal(failedAnnotation?.status, "addressed");
   await manager.close();
 });
 

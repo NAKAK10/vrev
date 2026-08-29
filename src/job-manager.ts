@@ -51,7 +51,7 @@ export function buildBatchPrompt(reviewPath: string, annotationIds: string[], ma
   return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\ncontext file: ${contextPath}\n${ids}\n\n完了速度を優先し、関連fileを一度だけ読み、同じfileへの指摘はまとめて1回で編集してください。annotationが5件以下、または同じfileに集中している場合はsubagentを使わず親coordinatorが直接処理してください。それ以外の場合のみ最大${maxParallel}個のread-only subagentで異なるfileの調査を並列化できます。subagentはファイル変更禁止で、親coordinatorだけが編集します。context fileのdiscovery_statusがcompletedならworkspace再調査は禁止です。pendingの場合だけmanifest、target route、source hintからprimary_projectとrelated_scopesを最小限調査し、repository相対pathでcompletedへ更新してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintはrepository内で実在確認してください。編集後は実行環境で利用可能なbrowser確認手段を使い、同じpage_pathとviewport_modeの組み合わせごとに1回だけvisual検証してください。指摘へ直接必要な最小限のsource確認・編集・検証だけを行い、広範な回帰調査、無関係なfile探索、同じpageの重複screenshotは禁止です。既存の未commit変更を保持し、対象scope以外を編集しないでください。git add、commit、push、stash、resetは禁止です。message受け渡し用の一時fileをrepository内へ作らずstdinを使ってください。各annotationの検証が済んだ直後、追加調査より先にAI message追加とaddressed変更を実行してください。全annotationを最後まで保留しないでください。\n${cli} add-message --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --actor ai --body-stdin\n${cli} set-status --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --status addressed`;
 }
 
-interface Checkpoint { threadLength: number; updatedAt: string; startedAt: string }
+interface Checkpoint { threadLength: number; startedAt: string }
 interface RunningBatch { command: RunningCommand; jobIds: string[]; checkpoints: Map<string, Checkpoint> }
 export interface JobManagerOptions { executor?: CommandExecutor }
 
@@ -72,11 +72,15 @@ export class JobManager {
   start(): void {
     if (!this.stopped) return;
     this.jobStore.recoverRunning();
+    this.reconcileLateCompletionMessages();
     this.reconcileInProgressAnnotations();
     this.stopped = false;
     this.schedule();
   }
-  list(): ReviewJobState { return this.jobStore.load(); }
+  list(): ReviewJobState {
+    this.reconcileLateCompletionMessages();
+    return this.jobStore.load();
+  }
 
   enqueue(rawInput: Record<string, unknown>): { batch_id: string; jobs: ReviewJob[] } {
     const input = validateEnqueueInput(rawInput);
@@ -156,6 +160,38 @@ export class JobManager {
       this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
     } catch { /* annotation already changed or review unavailable */ }
   }
+  private markAnnotationAddressed(annotationId: string): void {
+    try {
+      const annotation = this.reviewStore.load().annotations.find(({ id }) => id === annotationId);
+      if (annotation && ["open", "in_progress", "failed"].includes(annotation.status)) {
+        this.reviewStore.setStatus(annotationId, { actor: "ai", status: "addressed" });
+      }
+    } catch { /* annotation already changed or review unavailable */ }
+  }
+  private isCompletionMessage(message: Annotation["thread"][number], startedAt: string): boolean {
+    return message.actor === "ai" && message.at >= startedAt && !message.body.startsWith("AI修正に失敗しました。");
+  }
+  private reconcileLateCompletionMessages(): void {
+    let annotations: Annotation[];
+    try { annotations = this.reviewStore.load().annotations; } catch { return; }
+    const snapshot = this.jobStore.load();
+    const latest = new Map<string, ReviewJob>();
+    for (const job of snapshot.jobs) latest.set(job.annotation_id, job);
+    const completed = [...latest.values()].filter((job) => {
+      if (job.state !== "failed" || !job.summary.includes("annotation postcondition not met") || !job.started) return false;
+      const annotation = annotations.find(({ id }) => id === job.annotation_id);
+      return annotation?.thread.some((message) => this.isCompletionMessage(message, job.started!)) === true;
+    });
+    if (completed.length === 0) return;
+    const ids = new Set(completed.map(({ id }) => id));
+    this.jobStore.update((state) => {
+      for (const job of state.jobs) if (ids.has(job.id) && job.state === "failed") {
+        job.state = "succeeded";
+        job.summary = "succeeded: AI completion message received";
+      }
+    });
+    for (const job of completed) this.markAnnotationAddressed(job.annotation_id);
+  }
   private reopenInProgressAnnotation(annotationId: string): void {
     try { this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
   }
@@ -208,7 +244,7 @@ export class JobManager {
       const annotation = review.annotations.find(({ id }) => id === job.annotation_id);
       if (!annotation) {
         this.finishBeforeLaunch(job.id, "failed", "failed: annotation missing before coordinator launch", timestamp);
-      } else checkpoints.set(job.id, { threadLength: annotation.thread.length, updatedAt: annotation.updated_at, startedAt: timestamp });
+      } else checkpoints.set(job.id, { threadLength: annotation.thread.length, startedAt: timestamp });
     }
     const claimIds = new Set(checkpoints.keys());
     if (claimIds.size === 0) { queueMicrotask(() => this.schedule()); return; }
@@ -265,9 +301,9 @@ export class JobManager {
         }
         const checkpoint = checkpoints.get(job.id)!;
         const annotation = annotations.find(({ id }) => id === job.annotation_id);
-        const hasNewAiMessage = annotation?.thread.slice(checkpoint.threadLength).some((message) => message.actor === "ai" && message.at >= checkpoint.startedAt) === true;
-        if (annotation?.status === "addressed" && annotation.updated_at !== checkpoint.updatedAt && hasNewAiMessage) {
-          job.state = "succeeded"; job.summary = "succeeded: addressed with a new AI message";
+        const hasNewAiMessage = annotation?.thread.slice(checkpoint.threadLength).some((message) => this.isCompletionMessage(message, checkpoint.startedAt)) === true;
+        if (hasNewAiMessage) {
+          job.state = "succeeded"; job.summary = "succeeded: AI completion message received";
         } else {
           job.state = "failed";
           job.summary = reviewError ? `failed: could not verify annotation (${this.errorMessage(reviewError)})` : "failed: annotation postcondition not met";
@@ -275,8 +311,9 @@ export class JobManager {
       }
     });
     for (const job of finalState.jobs) {
-      if (!jobIds.includes(job.id) || job.state === "succeeded") continue;
-      if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
+      if (!jobIds.includes(job.id)) continue;
+      if (job.state === "succeeded") this.markAnnotationAddressed(job.annotation_id);
+      else if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
       else this.markAnnotationFailed(job.annotation_id, job.summary);
     }
     this.schedule();

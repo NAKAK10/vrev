@@ -124,11 +124,11 @@ test("proxies loopback applications and persists URL annotations", async () => {
     lastRequestUrl = request.url ?? "";
     if (request.url === "/app.js") {
       response.writeHead(200, { "Content-Type": "application/javascript" });
-      response.end("fetch('/api/data');");
+      response.end(`import "/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(route);\nfetch('/api/data');`);
       return;
     }
     response.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "upstream=blocked" });
-    response.end(`<a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main>`);
+    response.end(`<html><head></head><body><a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main></body></html>`);
   });
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   const upstreamAddress = upstream.address();
@@ -152,12 +152,18 @@ test("proxies loopback applications and persists URL annotations", async () => {
     const liveResponse = await fetch(`${url}/live/`);
     assert.equal(liveResponse.headers.get("set-cookie"), null);
     const html = await liveResponse.text();
+    assert.match(html, /<base href="\/live\/">/);
     assert.match(html, /href="\/live\/next"/);
     assert.match(html, /src="\/live\/app\.js"/);
     assert.match(html, /href="\/live\/alias"/);
-    assert.equal(await (await fetch(`${url}/live/app.js`)).text(), "fetch('/live/api/data');");
+    assert.equal(
+      await (await fetch(`${url}/live/app.js`)).text(),
+      `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = (window.location.pathname.replace(/^\\/live(?=\\/|$)/, "") || "/");\nwindow.location.replace(window.__visualReviewUrl(route));\nfetch('/live/api/data');`,
+    );
     assert.equal((await fetch(`${url}/live//example.invalid/path`)).status, 200);
     assert.equal(lastRequestUrl, "//example.invalid/path");
+    assert.equal((await fetch(`${url}/root-asset.png`)).status, 200);
+    assert.equal(lastRequestUrl, "/root-asset.png");
     const state = await (await fetch(`${url}/api/file-state?path=${encodeURIComponent(liveUrl)}`)).json() as { sha256: string };
     assert.equal(state.sha256, session.target.sha256);
     const machinePath = ["/", "Users", "/demo/project/src/App.vue"].join("");
