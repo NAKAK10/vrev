@@ -1675,9 +1675,6 @@ async function createGitHubIssueFromDraft() {
       body: JSON.stringify(draft),
     });
     state.currentIssueDraft = null;
-    state.filters.statuses.add("resolved");
-    syncFilterControls();
-    persistFilters();
     elements.githubIssueDialog.close();
     applyReview(result.review);
     showToast(`GitHub Issueを作成し、解決済みへ記録しました：${result.url}`);

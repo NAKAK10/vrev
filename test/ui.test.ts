@@ -123,13 +123,12 @@ test("rough feedback becomes an editable AI draft before GitHub Issue creation",
   assert.match(reviewerSource, /elements\.githubIssueTitle\.value = item\.draft\.title/);
   assert.match(reviewerSource, /request\("\/api\/issues"/);
   assert.match(reviewerSource, /annotation_id: state\.currentIssueDraft\.annotationId/);
-  assert.match(reviewerSource, /state\.filters\.statuses\.add\("resolved"\)/);
   assert.match(reviewerSource, /if \(state\.issueCreateInFlight \|\| !state\.currentIssueDraft\) return/);
   assert.match(reviewerSource, /state\.issueDraftQueue\.some\(\(\{ annotationId: queuedId \}\) => queuedId === id\)/);
   assert.match(reviewerSource, /elements\.githubIssueCancelButtons\.forEach\(\(button\) => \{ button\.disabled = true; \}\)/);
   const createIssueBody = /async function createGitHubIssueFromDraft\(\) \{([\s\S]*?)\n\}\n\nasync function saveAnnotation/.exec(reviewerSource)?.[1] ?? "";
   assert.match(createIssueBody, /applyReview\(result\.review\)/);
-  assert.doesNotMatch(createIssueBody, /loadSession/);
+  assert.doesNotMatch(createIssueBody, /filters\.statuses|syncFilterControls|persistFilters|loadSession/);
   assert.match(reviewerSource, /bindModifiedEnter\(elements\.githubIssueTitle, \(\) => elements\.githubIssueForm\.requestSubmit\(\)\)/);
   assert.match(reviewerSource, /bindModifiedEnter\(elements\.githubIssueBody, \(\) => elements\.githubIssueForm\.requestSubmit\(\)\)/);
   assert.match(reviewerSource, /annotation\.issue_state === "ready"[^]*issue-draft-open/);
