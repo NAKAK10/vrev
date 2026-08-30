@@ -255,6 +255,42 @@ test("trusted script mode enables jobs only with explicit AI consent", async () 
   }
 });
 
+test("returns an installation instruction when the GitHub Issue plugin is absent", async () => {
+  const missingRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-missing-issue-plugin-"));
+  mkdirSync(path.join(missingRoot, ".git"));
+  mkdirSync(path.join(missingRoot, ".code/htmls"), { recursive: true });
+  writeFileSync(path.join(missingRoot, ".code/htmls/index.html"), "<h1>Target</h1>");
+  const withoutPlugin = createVisualReviewServer({
+    projectRoot: missingRoot,
+    target: ".code/htmls/index.html",
+    jobManager: { executor: () => ({ result: Promise.resolve({ exitCode: 0, reason: "exit" }), cancel: () => undefined }) },
+  });
+  withoutPlugin.store.createIssueRequest({
+    comment: "Create an issue",
+    page_path: ".code/htmls/index.html",
+    kind: "dom",
+    anchor: { selector: "h1" },
+    source_hash: withoutPlugin.store.sourceHash(".code/htmls/index.html"),
+  });
+  const annotation = withoutPlugin.store.load().annotations.at(-1)!;
+  withoutPlugin.store.setStatus(annotation.id, { actor: "ai", status: "in_progress" });
+  withoutPlugin.store.setIssueDraftReady(annotation.id, "Issue title", "Issue body");
+  await new Promise<void>((resolve) => withoutPlugin.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = withoutPlugin.server.address();
+    assert.ok(address && typeof address !== "string");
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/issues`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ annotation_id: annotation.id, title: "Issue title", body: "Issue body" }),
+    });
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /github-issue.*not installed.*plugin install/i);
+  } finally {
+    await withoutPlugin.close();
+  }
+});
+
 test("stores an Issue request, then creates and archives the AI-authored draft", async () => {
   const before = visualReview.store.load().annotations.length;
   const annotation = {

@@ -1,0 +1,19 @@
+{
+  "name": "@nakak10/visual-review-plugin-github-issue",
+  "version": "1.0.0",
+  "description": "GitHub CLI issue provider for Visual Review",
+  "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "index.js",
+    "README.md",
+    "visual-review.plugin.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
+  }
+}

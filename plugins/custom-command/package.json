@@ -1,0 +1,26 @@
+{
+  "name": "@nakak10/visual-review-plugin-custom-command",
+  "version": "1.0.0",
+  "description": "Installable custom command manager for visual-review",
+  "license": "UNLICENSED",
+  "type": "module",
+  "files": [
+    "index.js",
+    "visual-review.plugin.json",
+    "README.md",
+    "test"
+  ],
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -64,3 +64,17 @@ jobs:
         run: npm publish --tag "${{ steps.dist-tag.outputs.value }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish plugin packages when their version is new
+        run: |
+          for directory in plugins/firebase-storage plugins/custom-command plugins/github-issue; do
+            name="$(node -p "require('./${directory}/package.json').name")"
+            version="$(node -p "require('./${directory}/package.json').version")"
+            if npm view "${name}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+              echo "Skipping existing ${name}@${version}"
+            else
+              npm publish "./${directory}" --tag latest
+            fi
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

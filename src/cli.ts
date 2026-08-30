@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
+import { installPlugin, installedPluginDirectory, listPlugins, removePlugin } from "./plugin-registry.js";
+import { loadPluginCommand } from "./plugin-runtime.js";
+import { createPluginScaffold } from "./plugin-scaffold.js";
 import { ReviewStore } from "./review-store.js";
 
 interface ServeArguments {
@@ -245,6 +248,47 @@ function runLifecycleCommand(command: string | null, cwd: string): Promise<void>
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  if (argv[0] === "plugin") {
+    const action = argv[1];
+    if (action === "create" && (argv.length === 3 || (argv.length === 4 && argv[3] === "--install"))) {
+      const scaffold = createPluginScaffold(argv[2]!);
+      console.log(`Created ${scaffold.id} at ${scaffold.directory}`);
+      if (argv[3] === "--install") {
+        const result = await installPlugin(scaffold.directory);
+        console.log(`Installed ${result.plugin.id}@${result.plugin.version}`);
+      }
+      return;
+    }
+    if (action === "install" && argv.length === 3) {
+      const result = await installPlugin(argv[2]!);
+      console.log(`Installed ${result.plugin.id}@${result.plugin.version}`);
+      return;
+    }
+    if (action === "list" && argv.length === 2) {
+      const plugins = listPlugins();
+      if (plugins.length === 0) console.log("No plugins installed.");
+      else for (const plugin of plugins) console.log(`${plugin.id}\t${plugin.version}\t${plugin.source}`);
+      return;
+    }
+    if (action === "remove" && argv.length === 3) {
+      removePlugin(argv[2]!);
+      console.log(`Removed ${argv[2]!}`);
+      return;
+    }
+    if (action === "run" && argv.length >= 4) {
+      const workspaceRoot = findWorkspaceRoot(process.cwd());
+      const pluginId = argv[2]!;
+      const commandName = argv[3]!;
+      const { handler } = await loadPluginCommand(pluginId, commandName, workspaceRoot);
+      await handler({
+        workspaceRoot,
+        pluginDirectory: installedPluginDirectory(pluginId, workspaceRoot),
+        args: argv.slice(4),
+      });
+      return;
+    }
+    throw new Error("usage: visual-review plugin create <id> [--install] | install <source> | list | remove <id> | run <id> <command> [args...]");
+  }
   if (argv[0] === "annotation") {
     const args = parseAnnotationArguments(argv);
     const store = reviewStoreForPath(args);

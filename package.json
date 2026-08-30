@@ -1,6 +1,6 @@
 {
   "name": "@nakak10/visual-review",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "private": false,
   "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
   "license": "UNLICENSED",
@@ -31,7 +31,8 @@
     "start": "node dist/src/cli.js serve",
     "check:secrets": "node scripts/check-secrets.mjs",
     "pretest": "npm run check:secrets",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "test": "npm run build && node --test dist/test/*.test.js && npm run test:plugins",
+    "test:plugins": "npm --prefix plugins/firebase-storage test && npm --prefix plugins/custom-command test",
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
   },
   "devDependencies": {

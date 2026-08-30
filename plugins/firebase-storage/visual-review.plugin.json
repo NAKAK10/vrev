@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "firebase-storage",
+  "version": "1.0.0",
+  "commands": [
+    { "name": "push", "module": "./index.mjs", "export": "pushCommand" },
+    { "name": "pull", "module": "./index.mjs", "export": "pullCommand" },
+    { "name": "status", "module": "./index.mjs", "export": "statusCommand" }
+  ],
+  "storage_provider": {
+    "module": "./index.mjs",
+    "export": "storageProvider"
+  }
+}

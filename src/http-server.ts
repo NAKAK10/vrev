@@ -8,14 +8,10 @@ import { fileURLToPath } from "node:url";
 
 import { testCustomCommand } from "./custom-command-test.js";
 import { fileSha256 } from "./file-utils.js";
-import {
-  createGitHubIssue,
-  normalizeGitHubIssueDraft,
-  type GitHubIssueDraft,
-  type GitHubIssueResult,
-} from "./github-issue.js";
+import { normalizeGitHubIssueDraft, type GitHubIssueDraft } from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { resolveTarget } from "./paths.js";
+import { loadPluginIssueProvider, type PluginIssueResult } from "./plugin-runtime.js";
 import { ReviewStore } from "./review-store.js";
 import { acquireServerLease, type ServerLease } from "./server-lease.js";
 import type { AddMessageInput, CreateAnnotationInput, SetStatusInput } from "./types.js";
@@ -106,7 +102,7 @@ export interface VisualReviewServerOptions {
   allowScripts?: boolean;
   allowAiJobsWithScripts?: boolean;
   jobManager?: JobManagerOptions;
-  issueCreator?: (draft: GitHubIssueDraft) => Promise<GitHubIssueResult>;
+  issueCreator?: (draft: GitHubIssueDraft) => Promise<PluginIssueResult>;
 }
 
 export interface VisualReviewServer {
@@ -389,6 +385,18 @@ function defaultUiRoot(): string {
   return fileURLToPath(new URL("./ui", import.meta.url));
 }
 
+async function createIssueWithInstalledPlugin(projectRoot: string, draft: GitHubIssueDraft): Promise<PluginIssueResult> {
+  try {
+    const { provider } = await loadPluginIssueProvider("github-issue", projectRoot);
+    return await provider.createIssue(projectRoot, draft);
+  } catch (error) {
+    if (error instanceof Error && error.message === "plugin is not installed: github-issue") {
+      throw new Error("GitHub Issue provider plugin 'github-issue' is not installed. Install it with: visual-review plugin install @nakak10/visual-review-plugin-github-issue");
+    }
+    throw error;
+  }
+}
+
 export function assertLoopbackHost(host: string): void {
   if (!LOOPBACK_HOSTS.has(host)) throw new Error("host must be 127.0.0.1 or ::1");
 }
@@ -396,9 +404,9 @@ export function assertLoopbackHost(host: string): void {
 export function createVisualReviewServer(options: VisualReviewServerOptions): VisualReviewServer {
   const store = new ReviewStore(options.target, { projectRoot: options.projectRoot, ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}) });
   const jobManager = new JobManager(store, options.jobManager);
-  const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createGitHubIssue(store.target.projectRoot, draft));
-  const issueCreations = new Map<string, Promise<GitHubIssueResult>>();
-  const createIssueOnce = (annotationId: string, draft: GitHubIssueDraft): Promise<GitHubIssueResult> => {
+  const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createIssueWithInstalledPlugin(store.target.projectRoot, draft));
+  const issueCreations = new Map<string, Promise<PluginIssueResult>>();
+  const createIssueOnce = (annotationId: string, draft: GitHubIssueDraft): Promise<PluginIssueResult> => {
     const annotation = store.load().annotations.find(({ id }) => id === annotationId);
     if (!annotation) throw new HttpError(404, `annotation not found: ${annotationId}`);
     if (annotation.issue_state === "created" && annotation.issue_url) return Promise.resolve({ url: annotation.issue_url });

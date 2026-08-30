@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "github-issue",
+  "version": "1.0.0",
+  "issue_provider": {
+    "module": "./index.js"
+  }
+}

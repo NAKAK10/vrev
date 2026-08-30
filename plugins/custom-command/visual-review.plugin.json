@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "custom-command",
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "custom-command",
+      "module": "./index.js",
+      "export": "handler"
+    }
+  ]
+}

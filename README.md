@@ -14,7 +14,7 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 ## 必要環境
 
 - Node.js 20以上
-- GitHub Issueを作成する場合は、認証済みのGitHub CLI（`gh`）
+- GitHub Issueを作成する場合は、認証済みのGitHub CLI（`gh`）と`github-issue`プラグイン
 - AI修正を使う場合は、対応するcoding agent CLI
 
 ## インストール
@@ -105,6 +105,36 @@ agent-command --prompt {prompt}
 
 API keyやtokenはcommandへ記載せず、各CLIの認証設定または環境変数を利用してください。
 
+## プラグイン
+
+プラグインは対象workspaceへinstallし、`.vreview/plugins/<plugin-id>/`で一段ずつ管理します。ローカルdirectoryと公開npm package specを利用できます。新規pluginのbaseも生成できます。
+
+```bash
+visual-review plugin create my-plugin --install
+visual-review plugin run my-plugin hello world
+
+# 同梱plugin
+
+visual-review plugin install ./plugins/custom-command
+visual-review plugin install ./plugins/firebase-storage
+visual-review plugin install ./plugins/github-issue
+visual-review plugin list
+```
+
+プラグインcommandは次の形式で実行します。
+
+```bash
+visual-review plugin run <plugin-id> <command> [args...]
+```
+
+このrepositoryには作成例とデバッグ用実装として次を収録しています。
+
+- [`plugins/custom-command/`](plugins/custom-command/README.md): shellを介さないカスタムagent command管理・実行
+- [`plugins/firebase-storage/`](plugins/firebase-storage/README.md): Firestore RESTを使うレビューJSONのpush/pull
+- [`plugins/github-issue/`](plugins/github-issue/README.md): `gh`を使うGitHub Issue provider
+
+GitHub Issue作成は`github-issue`プラグインを明示的にinstallしたworkspaceでのみ有効です。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。
+
 ## データ保存
 
 レビュー情報は対象Gitリポジトリの`.vreview/`へ保存します。
@@ -142,7 +172,7 @@ npm run build
 GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-npm version 1.0.0-beta.4 --no-git-tag-version
+npm version 1.0.0-beta.5 --no-git-tag-version
 npm test
 npm pack --dry-run
 ```
