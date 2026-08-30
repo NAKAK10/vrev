@@ -8,6 +8,12 @@ import { fileURLToPath } from "node:url";
 
 import { testCustomCommand } from "./custom-command-test.js";
 import { fileSha256 } from "./file-utils.js";
+import {
+  createGitHubIssue,
+  normalizeGitHubIssueDraft,
+  type GitHubIssueDraft,
+  type GitHubIssueResult,
+} from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { resolveTarget } from "./paths.js";
 import { ReviewStore } from "./review-store.js";
@@ -100,6 +106,7 @@ export interface VisualReviewServerOptions {
   allowScripts?: boolean;
   allowAiJobsWithScripts?: boolean;
   jobManager?: JobManagerOptions;
+  issueCreator?: (draft: GitHubIssueDraft) => Promise<GitHubIssueResult>;
 }
 
 export interface VisualReviewServer {
@@ -389,6 +396,7 @@ export function assertLoopbackHost(host: string): void {
 export function createVisualReviewServer(options: VisualReviewServerOptions): VisualReviewServer {
   const store = new ReviewStore(options.target, { projectRoot: options.projectRoot, ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}) });
   const jobManager = new JobManager(store, options.jobManager);
+  const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createGitHubIssue(store.target.projectRoot, draft));
   const uiRoot = defaultUiRoot();
   for (const name of ["index.html", "reviewer.css", "reviewer.js", "jobs.js"]) {
     if (!existsSync(path.join(uiRoot, name))) {
@@ -410,7 +418,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
       try {
         const url = new URL(request.url ?? "/", "http://localhost");
         const pathname = url.pathname;
-        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname === "/api/jobs/custom-command/test" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
+        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname === "/api/jobs/custom-command/test" || pathname === "/api/issues/request" || pathname === "/api/issues" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
           throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, "index.html"));
@@ -432,6 +440,25 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
             },
             review: store.loadActive(),
+          });
+        }
+        if (request.method === "GET" && pathname === "/api/archive") {
+          const offset = Number(url.searchParams.get("offset") ?? "0");
+          const limit = Number(url.searchParams.get("limit") ?? "24");
+          if (!Number.isInteger(offset) || offset < 0) throw new HttpError(400, "offset must be a nonnegative integer");
+          if (!Number.isInteger(limit) || limit < 1 || limit > 24) throw new HttpError(400, "limit must be an integer from 1 to 24");
+          const review = store.load();
+          const history = [...review.events].sort((left, right) => (
+            Date.parse(right.at) - Date.parse(left.at)
+            || right.revision - left.revision
+          ));
+          const resolved = review.annotations.filter(({ status }) => status === "resolved");
+          return sendJson(response, 200, {
+            annotations: resolved,
+            annotation_total: resolved.length,
+            events: history.slice(offset, offset + limit),
+            history_total: history.length,
+            revision: review.revision,
           });
         }
         if (request.method === "GET" && pathname === "/api/file-state") {
@@ -461,6 +488,19 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           if (typeof input.command !== "string") throw new HttpError(400, "command must be a string");
           const probe = await testCustomCommand(input.command);
           return sendJson(response, 200, { ok: true, duration_ms: probe.durationMs });
+        }
+        if (request.method === "POST" && pathname === "/api/issues/request") {
+          const payload = await readJson(request);
+          store.createIssueRequest(payload as unknown as CreateAnnotationInput);
+          return sendJson(response, 200, store.loadActive());
+        }
+        if (request.method === "POST" && pathname === "/api/issues") {
+          const payload = await readJson(request);
+          const draft = normalizeGitHubIssueDraft(payload);
+          if (typeof payload.annotation_id !== "string" || !payload.annotation_id) throw new HttpError(400, "annotation_id is required");
+          const result = await issueCreator(draft);
+          store.completeIssueDraft(payload.annotation_id, draft.title, result.url);
+          return sendJson(response, 200, result);
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));

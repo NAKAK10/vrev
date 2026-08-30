@@ -1,6 +1,7 @@
 export * from "./adapters.js";
 export * from "./custom-command-test.js";
 export * from "./file-utils.js";
+export * from "./github-issue.js";
 export * from "./http-server.js";
 export * from "./job-manager.js";
 export * from "./job-store.js";

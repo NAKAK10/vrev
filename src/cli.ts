@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
 import { ReviewStore } from "./review-store.js";
@@ -80,24 +81,26 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
 }
 
 interface AnnotationArguments {
-  action: "add-message" | "set-status";
+  action: "add-message" | "set-status" | "set-issue-draft";
   projectRoot: string;
   reviewPath: string;
   annotationId: string;
 }
 
 function annotationUsage(): never {
-  throw new Error("usage: visual-review annotation add-message|set-status --project-root <root> --review-path <relative review.json> --annotation-id <id> [--actor ai --body-stdin|--status addressed]");
+  throw new Error("usage: visual-review annotation add-message|set-status|set-issue-draft --project-root <root> --review-path <relative review.json> --annotation-id <id> [--actor ai --body-stdin|--status addressed|--draft-stdin]");
 }
 
 export function parseAnnotationArguments(argv: string[], cwd = process.cwd()): AnnotationArguments {
-  if (argv[0] !== "annotation" || (argv[1] !== "add-message" && argv[1] !== "set-status")) annotationUsage();
-  const action = argv[1];
+  if (argv[0] !== "annotation" || !["add-message", "set-status", "set-issue-draft"].includes(argv[1] ?? "")) annotationUsage();
+  const action = argv[1] as AnnotationArguments["action"];
   const values = new Map<string, string>();
   let bodyStdin = false;
+  let draftStdin = false;
   for (let index = 2; index < argv.length; index += 1) {
     const argument = argv[index]!;
     if (argument === "--body-stdin") { bodyStdin = true; continue; }
+    if (argument === "--draft-stdin") { draftStdin = true; continue; }
     if (!["--project-root", "--review-path", "--annotation-id", "--actor", "--status"].includes(argument)) annotationUsage();
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) annotationUsage();
@@ -112,8 +115,10 @@ export function parseAnnotationArguments(argv: string[], cwd = process.cwd()): A
     throw new Error("review-path must be a canonical POSIX relative path");
   }
   if (action === "add-message") {
-    if (!bodyStdin || values.get("--actor") !== "ai" || values.has("--status")) annotationUsage();
-  } else if (bodyStdin || values.has("--actor") || values.get("--status") !== "addressed") annotationUsage();
+    if (!bodyStdin || draftStdin || values.get("--actor") !== "ai" || values.has("--status")) annotationUsage();
+  } else if (action === "set-status") {
+    if (bodyStdin || draftStdin || values.has("--actor") || values.get("--status") !== "addressed") annotationUsage();
+  } else if (bodyStdin || !draftStdin || values.has("--actor") || values.has("--status")) annotationUsage();
   return { action, projectRoot: path.resolve(cwd, projectRoot), reviewPath, annotationId };
 }
 
@@ -244,7 +249,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const args = parseAnnotationArguments(argv);
     const store = reviewStoreForPath(args);
     if (args.action === "add-message") store.addMessage(args.annotationId, { actor: "ai", body: await readStdinBody() });
-    else store.setStatus(args.annotationId, { actor: "ai", status: "addressed" });
+    else if (args.action === "set-status") store.setStatus(args.annotationId, { actor: "ai", status: "addressed" });
+    else {
+      const draft = normalizeGitHubIssueDraft(JSON.parse(await readStdinBody()) as unknown);
+      store.setIssueDraftReady(args.annotationId, draft.title, draft.body);
+    }
     return;
   }
   const args = parseCliArguments(argv);

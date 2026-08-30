@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildCommand, createSpawnExecutor, parseCustomCommand, type CommandExecutor, type CommandResult, type RunningCommand } from "./adapters.js";
+import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { JobStore } from "./job-store.js";
 import { ReviewStore } from "./review-store.js";
 import type { Annotation, EnqueueJobsInput, ReviewJob, ReviewJobState } from "./types.js";
@@ -44,11 +45,52 @@ export function validateEnqueueInput(value: Record<string, unknown>): Required<E
 
 function shellDisplay(value: string): string { return `'${value.replaceAll("'", `'"'"'`)}'`; }
 
+export interface IssueDraftOutput {
+  annotationId: string;
+  title: string;
+  body: string;
+}
+
+const ISSUE_DRAFT_START = "VISUAL_REVIEW_ISSUE_DRAFT_START";
+const ISSUE_DRAFT_END = "VISUAL_REVIEW_ISSUE_DRAFT_END";
+
+export function extractIssueDraftOutput(output: string): IssueDraftOutput[] {
+  const texts = new Set<string>([output]);
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (!texts.has(value)) {
+        texts.add(value);
+        try { visit(JSON.parse(value)); } catch { /* not nested JSON */ }
+      }
+      return;
+    }
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (typeof value === "object" && value !== null) Object.values(value).forEach(visit);
+  };
+  try { visit(JSON.parse(output)); } catch { /* plain-text CLI output */ }
+  for (const line of output.split("\n")) {
+    try { visit(JSON.parse(line)); } catch { /* not JSONL */ }
+  }
+  const drafts = new Map<string, IssueDraftOutput>();
+  for (const text of texts) {
+    const pattern = new RegExp(`${ISSUE_DRAFT_START}\\s*([\\s\\S]*?)\\s*${ISSUE_DRAFT_END}`, "g");
+    for (const match of text.matchAll(pattern)) {
+      try {
+        const raw = JSON.parse(match[1]!) as Record<string, unknown>;
+        if (typeof raw.annotation_id !== "string") continue;
+        const draft = normalizeGitHubIssueDraft(raw);
+        drafts.set(raw.annotation_id, { annotationId: raw.annotation_id, ...draft });
+      } catch { /* malformed output is handled by the normal postcondition failure */ }
+    }
+  }
+  return [...drafts.values()];
+}
+
 export function buildBatchPrompt(reviewPath: string, annotationIds: string[], maxParallel: number, cliPath = "dist/src/cli.js"): string {
   const ids = annotationIds.map((id) => `- ${id}`).join("\n");
   const cli = `node ${shellDisplay(cliPath)} annotation`;
   const contextPath = path.posix.join(path.posix.dirname(reviewPath), "context.json");
-  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\ncontext file: ${contextPath}\n${ids}\n\n完了速度を優先し、関連fileを一度だけ読み、同じfileへの指摘はまとめて1回で編集してください。annotationが5件以下、または同じfileに集中している場合はsubagentを使わず親coordinatorが直接処理してください。それ以外の場合のみ最大${maxParallel}個のread-only subagentで異なるfileの調査を並列化できます。subagentはファイル変更禁止で、親coordinatorだけが編集します。context fileのdiscovery_statusがcompletedならworkspace再調査は禁止です。pendingの場合だけmanifest、target route、source hintからprimary_projectとrelated_scopesを最小限調査し、repository相対pathでcompletedへ更新してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintはrepository内で実在確認してください。編集後は実行環境で利用可能なbrowser確認手段を使い、同じpage_pathとviewport_modeの組み合わせごとに1回だけvisual検証してください。指摘へ直接必要な最小限のsource確認・編集・検証だけを行い、広範な回帰調査、無関係なfile探索、同じpageの重複screenshotは禁止です。既存の未commit変更を保持し、対象scope以外を編集しないでください。git add、commit、push、stash、resetは禁止です。message受け渡し用の一時fileをrepository内へ作らずstdinを使ってください。各annotationの検証が済んだ直後、追加調査より先にAI message追加とaddressed変更を実行してください。全annotationを最後まで保留しないでください。\n${cli} add-message --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --actor ai --body-stdin\n${cli} set-status --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --status addressed`;
+  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\ncontext file: ${contextPath}\n${ids}\n\n各annotationをreview fileで確認し、issue_stateがあるIssue用annotationと通常修正を分岐してください。Issue用annotationではsourceを一切編集せず、現在のworking directoryで対象repository・page_path・関連sourceを読み、画像に依存せずrepository相対pathを含む日本語のGitHub Issue title/bodyを作成してください。Issue単体を初めて読む実装者が背景と修正対象を理解できる内容にしてください。annotation ID、review file path、.vreview、Visual Review注釈など内部review情報はtitle/bodyへ書かず、ユーザーの指摘を自然な要件として説明してください。観測事実、期待結果、影響範囲、実装論点、不確定事項、検証可能な受入条件を含め、要件を捏造しないでください。GitHub Issue自体は作成せず、Issue用annotationごとに最終応答へ次の3行だけを必ず出力してください。JSONは1行で、annotation_idは処理対象ID、title/bodyはIssue本文です。この出力をhostが保存するため、Issue用annotationではannotation CLIやshellによる書き込みを実行しません。\n${ISSUE_DRAFT_START}\n{\"annotation_id\":\"<ID>\",\"title\":\"...\",\"body\":\"...\"}\n${ISSUE_DRAFT_END}\n\n通常annotationでは完了速度を優先し、関連fileを一度だけ読み、同じfileへの指摘はまとめて1回で編集してください。annotationが5件以下、または同じfileに集中している場合はsubagentを使わず親coordinatorが直接処理してください。それ以外の場合のみ最大${maxParallel}個のread-only subagentで異なるfileの調査を並列化できます。subagentはファイル変更禁止で、親coordinatorだけが編集します。context fileのdiscovery_statusがcompletedならworkspace再調査は禁止です。pendingの場合だけmanifest、target route、source hintからprimary_projectとrelated_scopesを最小限調査し、repository相対pathでcompletedへ更新してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintはrepository内で実在確認してください。編集後は実行環境で利用可能なbrowser確認手段を使い、同じpage_pathとviewport_modeの組み合わせごとに1回だけvisual検証してください。指摘へ直接必要な最小限のsource確認・編集・検証だけを行い、広範な回帰調査、無関係なfile探索、同じpageの重複screenshotは禁止です。既存の未commit変更を保持し、対象scope以外を編集しないでください。git add、commit、push、stash、resetは禁止です。message受け渡し用の一時fileをrepository内へ作らずstdinを使ってください。各annotationの検証が済んだ直後、追加調査より先にAI message追加とaddressed変更を実行してください。全annotationを最後まで保留しないでください。\n${cli} add-message --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --actor ai --body-stdin\n${cli} set-status --project-root . --review-path ${shellDisplay(reviewPath)} --annotation-id <ID> --status addressed`;
 }
 
 interface Checkpoint { threadLength: number; startedAt: string }
@@ -292,6 +334,19 @@ export class JobManager {
 
   private finishBatch(batchId: string, result: CommandResult, jobIds: string[], checkpoints: Map<string, Checkpoint>): void {
     this.running.delete(batchId);
+    if (result.reason === "exit" && result.exitCode === 0 && result.output) {
+      const jobs = this.jobStore.load().jobs.filter(({ id }) => jobIds.includes(id));
+      const allowedAnnotationIds = new Set(jobs.map(({ annotation_id }) => annotation_id));
+      for (const draft of extractIssueDraftOutput(result.output)) {
+        if (!allowedAnnotationIds.has(draft.annotationId)) continue;
+        try {
+          const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === draft.annotationId);
+          if (annotation?.issue_state && annotation.issue_state !== "ready" && annotation.issue_state !== "created") {
+            this.reviewStore.setIssueDraftReady(draft.annotationId, draft.title, draft.body);
+          }
+        } catch { /* malformed or internal-reference drafts fail the postcondition below */ }
+      }
+    }
     const timestamp = now();
     let annotations: Annotation[] = [];
     let reviewError: unknown;
@@ -330,6 +385,11 @@ export class JobManager {
         if (!annotation) {
           job.state = "failed";
           job.summary = "failed: annotation missing after coordinator exit";
+          continue;
+        }
+        if (annotation.issue_state && annotation.issue_state !== "ready" && annotation.issue_state !== "created") {
+          job.state = "failed";
+          job.summary = "failed: coordinator did not save an Issue draft";
           continue;
         }
         const checkpoint = checkpoints.get(job.id)!;

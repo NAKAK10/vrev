@@ -1,15 +1,23 @@
 {
   "name": "@nakak10/visual-review",
-  "version": "0.1.0",
-  "private": true,
+  "version": "1.0.0-beta.1",
+  "private": false,
   "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
+  "license": "UNLICENSED",
   "type": "module",
+  "files": [
+    "dist/src"
+  ],
   "bin": {
     "visual-review": "dist/src/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/NAKAK10/visual-review.git"
+    "url": "git+https://github.com/NAKAK10/visual-review.git"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
   },
   "engines": {
     "node": ">=20"

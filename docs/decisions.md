@@ -40,7 +40,7 @@ built-in adapterはOpenCode・Claude・Codex・GitHub Copilot・Piを提供す�
 shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした実行ファイルとargvを直接spawnする。promptの渡し忘れを防ぐため`{prompt}`を正確に1回必須とする。
 登録前に隔離した一時directoryで応答tokenとtoolによるmarker作成を検証し、単なる終了code 0ではagentic commandとして承認しない。probe時間も保存し、15秒以上なら遅いcommandとして警告する。command文字列をreview JSONやGit管理対象へ保存しない。queue復元に必要なruntime job-stateだけはGit ignore済み領域へ保持する。
 注釈の状態・種類filterも注釈欄右上のmenuから開くmodalへ移し、checkbox badgeによる複数選択とする。fresh browserの既定値は
-`open`・`in_progress`・`failed`・`addressed`および全種類で、`resolved`は通常sessionへ送らずfilter対象にも含めない。選択はlocalStorageへ保持する。
+`open`・`in_progress`・`failed`・`addressed`・`resolved`および全種類とし、選択はlocalStorageへ保持する。通常sessionはactive-onlyのまま維持し、解決済みannotationと履歴はarchive APIから取得する。解決済みannotationは対象画面上へ常時overlay表示せず、cardを選択したときだけgrayのmarkを表示する。active annotationを解決済みに変更した瞬間は選択状態も解除し、そのmarkを即時非表示にする。保存anchorが見つからない場合はfallback markを描かず、右上toastだけで通知する。履歴は最新順に24件だけ初回取得し、以降は利用者が「さらに読み込む」を押した場合に限り24件ずつ追加取得する。scroll到達による自動追加は行わない。返信・注釈保存などのtext actionはmacOSの`Command+Enter`とWindows/Linuxの`Ctrl+Enter`を同じ処理へ割り当て、IME変換中は発火させない。
 
 小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが指摘へ直接必要な最小限の共有編集を1回で行う。特定PCのtool名へ依存せず、利用可能なbrowser確認手段による検証をpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
@@ -69,6 +69,18 @@ HTML reviewはPC（stageの利用可能幅）、タブレット768px、スマホ
 再確認できる。切替後はiframeのresizeとoverlay再描画を行い、画像reviewではviewport controlsを無効にする。
 annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI coordinatorへ同じmodeでの修正・検証を要求する。
 
+## AI-authored GitHub Issues for large changes
+
+注釈dialogには通常保存と並列して`GitHub Issueにする`を置く。buttonはform submitにせず、click時だけ動作するため`Command/Ctrl+Enter`の注釈保存挙動は変えない。click後は元modalを即時閉じると同時に、Issue専用annotationを注釈一覧へ`未対応`で保存する。Issueラフ生成は独自AI processを起動せず、通常annotationと同じAI queue・選択中CLI・対象Git repositoryのworking directoryを使う。このため`注釈を保存したら自動でAI修正を開始`が有効なら自動開始し、無効ならhumanがAI一括修正を押すまで未対応のまま待つ。queue後は`Issue作成中`、ラフ完成後は`AI対応済み`、GitHub作成後は`Issue作成済み`へ遷移する。失敗時は通常jobと同じ`失敗`にしてcardへ`Issueラフを再実行`を表示する。再実行も自動実行設定に従う。coordinatorは対象repositoryとpage sourceをread-onlyで調査し、画像に依存せずrepository-relative pathを含むtitle/bodyへ整理するが、GitHubへの作成は行わない。Issue用annotationではCLIごとのtool実行能力へ依存せず、最終応答の`VISUAL_REVIEW_ISSUE_DRAFT_START` / `VISUAL_REVIEW_ISSUE_DRAFT_END`間に1行JSONを返し、host側が対象batchのannotation IDだけを検証して保存する。これによりOllama経由などのcustom CLIでもnested annotation CLIを実行できないことを理由に失敗させない。Issueは単体で初めて読む実装者にも理解できる内容にし、annotation ID、review file path、`.vreview`、`Visual Review注釈`など内部review情報をtitle/bodyへ露出させない。storeもこれらの内部参照を含むAI draftを拒否する。ラフ完成後は`AI対応済み`cardのclickで編集modalを開き、humanがtitle/bodyを修正して`Command/Ctrl+Enter`またはbuttonで初めて、対象Git repositoryをcwdとして`gh issue create`を実行する。作成後は同じ専用annotationへIssue URL/titleを付与して`resolved` archiveへ移し、通常AI修正には入れない。cardからIssueを特定できれば十分で、GitHub側のclose/reopen状態は追跡しない。保存nodeが後から見つからなくてもfallback overlayは出さず、pathとIssue linkを記録として使う。target scriptから任意のAI/gh実行を起動できないよう、AI jobs無効modeではIssue APIも無効にする。
+
+## Compact review chrome
+
+review対象を広く表示するため、desktop headerは56pxを基準とする。annotation list section自体のpadding・cardの角丸・shadow・全周borderは使わず、各rowを1pxの横罫線で区切る。statusはlabelで表現し、情報量を減らさず装飾による占有だけを削る。
+
+## Static target refresh after AI fixes
+
+local static HTMLにはframeworkのHMRがないため、current page上のannotationが新たに`addressed`へ遷移したことをsession pollingで検出したら、reviewer iframeを自動reloadする。CSS/JavaScriptだけの修正でもHTTPの`no-store`により最新resourceを取得できる。reload前のscroll座標は復元し、別pageの修正では閲覧中pageを動かさない。Vue/React等のloopback live targetはframework側のHMRと競合させないため、この自動reloadの対象外とする。
+
 ## Annotation focus restores transient UI context
 
 注釈カードを選んだとき、対象ノードが閉じたdialog、popover、details、`hidden` / `aria-hidden`
@@ -85,7 +97,7 @@ child pathを`.vreview/settings.json`へrepository相対pathで登録する。�
 manifest・route・source hintからprimary projectとshared scopeを調査して`context.json`を更新する。
 
 active annotation（`open`・`in_progress`・`failed`・`addressed`）は`review.json`、humanが解決したannotationは`resolved.json`へ分離する。
-通常sessionとjob managerはactive-only readを使い、解決済みpayloadをpolling・card・overlay・件数へ入れない。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
+通常sessionとjob managerはactive-only readを使い、polling payloadを小さく保つ。reviewerは別のarchive APIから解決済みannotationを取得してfilter・card・overlay・件数へ含め、履歴だけは24件単位でpage取得する。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
 
 ## External projects
 

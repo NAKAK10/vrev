@@ -118,6 +118,36 @@ test("custom command capability test requires both a response and tool use", asy
   await assert.rejects(testCustomCommand("runner {prompt}", textOnlyExecutor), /toolによるファイル操作/);
 });
 
+test("custom CLI Issue output is persisted by the host without requiring annotation CLI tool use", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const review = store.createIssueRequest({
+    kind: "dom",
+    page_path: store.entryPath,
+    comment: "The creation flow is unclear",
+    anchor: { selector: "h1" },
+    source_hash: store.sourceHash(),
+  });
+  const annotationId = review.annotations.at(-1)!.id;
+  const control = controlledExecutor();
+  const manager = new JobManager(store, { executor: control.executor });
+  manager.start();
+  const enqueued = manager.enqueue({ cli: "custom", max_parallel: 1, custom_name: "Cloud model", custom_command: "runner {prompt}" });
+  await waitFor(() => control.pending.length === 1);
+  const block = [
+    "VISUAL_REVIEW_ISSUE_DRAFT_START",
+    JSON.stringify({ annotation_id: annotationId, title: "Clarify the creation flow", body: "## Background\\nUsers cannot find the creation controls." }),
+    "VISUAL_REVIEW_ISSUE_DRAFT_END",
+  ].join("\n");
+  control.pending[0]!.resolve({ exitCode: 0, reason: "exit", output: JSON.stringify({ result: block }) });
+  await waitFor(() => manager.list().jobs.find(({ id }) => id === enqueued.jobs[0]!.id)?.state === "succeeded");
+  const annotation = store.load().annotations.find(({ id }) => id === annotationId)!;
+  assert.equal(annotation.status, "addressed");
+  assert.equal(annotation.issue_state, "ready");
+  assert.equal(annotation.issue_title, "Clarify the creation flow");
+  await manager.close();
+});
+
 test("runs one coordinator process per batch with IDs-only prompt and max subagent limit", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
@@ -434,6 +464,32 @@ test("annotation CLI works for external projects and requires the canonical revi
   const annotation = store.load().annotations.find((candidate) => candidate.id === id)!;
   assert.equal(annotation.status, "addressed");
   assert.equal(annotation.thread.at(-1)?.body, "implemented");
+
+  const issueReview = store.createIssueRequest({
+    kind: "dom",
+    page_path: store.entryPath,
+    comment: "large change",
+    anchor: { selector: "h1" },
+    source_hash: store.sourceHash(),
+  });
+  const issueId = issueReview.annotations.at(-1)!.id;
+  store.setStatus(issueId, { actor: "ai", status: "in_progress" });
+  assert.throws(
+    () => store.setIssueDraftReady(issueId, "Internal reference", `Visual Review注釈: ${issueId}`),
+    /understandable without internal review references/,
+  );
+  assert.throws(
+    () => store.setIssueDraftReady(issueId, "Internal path", "See .vreview/reviews/page/review.json"),
+    /understandable without internal review references/,
+  );
+  await runAnnotationCli(
+    ["annotation", "set-issue-draft", "--project-root", root, "--review-path", reviewPath, "--annotation-id", issueId, "--draft-stdin"],
+    JSON.stringify({ title: "Large change", body: "## Expected\nUpdated UI" }),
+  );
+  const issue = store.load().annotations.find((candidate) => candidate.id === issueId)!;
+  assert.equal(issue.status, "addressed");
+  assert.equal(issue.issue_state, "ready");
+  assert.equal(issue.issue_title, "Large change");
   assert.throws(() => parseAnnotationArguments(["annotation", "set-status", "--project-root", root, "--review-path", `./${reviewPath}`, "--annotation-id", id, "--status", "addressed"]), /canonical/);
 });
 

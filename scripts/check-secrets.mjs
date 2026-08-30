@@ -3,7 +3,7 @@ import path from "node:path";
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const ignoredDirectories = new Set([".git", "dist", "node_modules"]);
-const ignoredFiles = new Set(["package-lock.json"]);
+const ignoredFiles = new Set([".git", "package-lock.json"]);
 const checks = [
   ["private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ["GitHub token", /\b(?:gh[opusr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/],

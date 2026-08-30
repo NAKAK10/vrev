@@ -24,7 +24,29 @@
   - `pi`
   - または登録したカスタムコマンド
 
-## セットアップ
+## GitHub Packagesからインストール
+
+このpackageはprivate GitHub Packageとして配布します。利用者はpackageへのアクセス権と`read:packages` scopeを持つpersonal access token (classic)を用意してください。OrganizationでSSOが必須の場合はtokenも承認します。
+
+projectまたはuserの`.npmrc`にregistryと、環境変数を参照する認証設定を追加します。token自体はfileへ記載しないでください。
+
+```ini
+@nakak10:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+認証後、beta版をglobal installします。
+
+```bash
+export NODE_AUTH_TOKEN=YOUR_GITHUB_TOKEN
+npm install --global @nakak10/visual-review@beta
+# versionを固定する場合:
+# npm install --global @nakak10/visual-review@1.0.0-beta.1
+```
+
+以後は`visual-review` commandを利用できます。
+
+## sourceからのセットアップ
 
 ```bash
 git clone https://github.com/NAKAK10/visual-review.git
@@ -33,8 +55,6 @@ npm ci
 npm run build
 npm link
 ```
-
-以後は `visual-review` コマンドを利用できます。
 
 ## 対象リポジトリの配置規則
 
@@ -96,12 +116,15 @@ AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI
 - `R`: 矩形範囲指定
 - `PC / タブレット / スマホ`: responsive表示切り替え
 - AI一括修正欄右上の`•••`: CLI、最大並列数（read-only調査agent 1〜10）、自動実行、カスタムコマンドをmodalで設定
-- 注釈欄右上の`•••`: 状態と種類を複数選択できるbadge形式のfilter modal。初期状態は「未対応・AI対応中・AI対応済み」と全種類を選択
+- 注釈欄右上の`•••`: 状態と種類を複数選択できるbadge形式のfilter modal。初期状態は「未対応・AI対応中・失敗・AI対応済み・解決済み」と全種類を選択
+- `履歴`: 最新24件を初回表示し、「さらに24件読み込む」を押すたびに次の24件を取得
 - `注釈を保存したら自動でAI修正を開始`: 有効にすると、注釈保存後に確認dialogなしでjobをqueueへ追加。設定はbrowserに保存され、手動の「AIにまとめて修正依頼」ボタンは非表示
+- `⌘+Enter`（macOS）/ `Ctrl+Enter`（Windows・Linux）: 返信送信、注釈保存、カスタムコマンドのテスト登録を実行
+- `GitHub Issueにする`: 大規模な修正向け。Issue用注釈を「未対応」で保存し、通常修正と同じAI queueでrepository contextと対象pathからtitle/bodyを生成。「AI対応済み」cardから編集modalを開き、`⌘/Ctrl+Enter`またはボタンでIssueを作成
 
-注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。
+注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。local static HTMLでは、閲覧中pageの注釈がAI対応済みになった時点でiframeを自動更新し、修正後のHTML/CSS/JavaScriptをscroll位置を保ったまま反映します。loopback applicationはVue/React等のHMRへ任せ、自動更新を重ねません。
 
-注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。coordinatorが終了code 0で正常終了すると、個別のmessage/status更新が漏れていても実行中jobを成功として`addressed`へ補正します。AI完了messageがない場合は、処理完了と人間による確認が必要なことを示す中立的なAI messageを追加します。非zero終了、timeout、起動失敗、対象page消失、起動前のsource競合は従来どおり失敗またはskipとして保持します。旧versionでpostcondition失敗になったjobへ遅れて完了messageが届いた場合も成功へ回復します。失敗理由はannotation threadへAI messageとして表示します。キャンセル・server再起動による中断は`open`へ戻します。失敗カードの「再試行」または人間の返信で`open`へ戻り、自動実行が有効なら再度queueへ登録します。`resolved`へ変更できるのは人間だけです。人間はどのactive statusからでも解決済みにでき、`addressed`以外では確認dialogを経由します。解決済みannotationは通常sessionのAPI payload・card・overlay・件数から除外され、`resolved.json`にだけarchiveされます。
+注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。coordinatorが終了code 0で正常終了すると、個別のmessage/status更新が漏れていても実行中jobを成功として`addressed`へ補正します。AI完了messageがない場合は、処理完了と人間による確認が必要なことを示す中立的なAI messageを追加します。非zero終了、timeout、起動失敗、対象page消失、起動前のsource競合は従来どおり失敗またはskipとして保持します。旧versionでpostcondition失敗になったjobへ遅れて完了messageが届いた場合も成功へ回復します。失敗理由はannotation threadへAI messageとして表示します。キャンセル・server再起動による中断は`open`へ戻します。失敗カードの「再試行」または人間の返信で`open`へ戻り、自動実行が有効なら再度queueへ登録します。`resolved`へ変更できるのは人間だけです。人間はどのactive statusからでも解決済みにでき、`addressed`以外では確認dialogを経由します。解決済みannotationは`resolved.json`へarchiveされます。通常sessionのpolling payloadには含めず、reviewerがarchive APIから取得してcard・件数へ表示します。対象画面上では常時表示せず、cardを選択したときだけgrayのmarkを表示し、anchorが見つからない場合は右上toastだけで通知します。
 
 カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。能力testに15秒以上かかった場合は、実際の修正も遅くなる可能性を表示します。AI batchは5件以下または同一file中心ならsubagentを起動せず、指摘に直接必要な最小限の編集へ絞ります。visual検証は実行環境で利用可能なbrowser確認手段を使い、pageとviewportの組み合わせごとに1回へ集約します。
 
@@ -118,6 +141,18 @@ npm ci
 npm test
 npm run build
 ```
+
+## release
+
+GitHub Releaseの公開を契機に`.github/workflows/release-package.yml`がGitHub Packagesへpublishします。workflowはrelease tagが`v` + `package.json` versionと完全一致すること（例: `v1.0.0-beta.1`）、およびlockfileのversion一致を確認し、`npm ci`、test/build、`npm publish`を実行します。prereleaseはSemVer識別子（`beta`など）、stable版は`latest`のnpm dist-tagへpublishします。publishにはrepositoryの`GITHUB_TOKEN`だけを使用し、手元から`npm publish`は実行しません。
+
+1. `npm version 1.0.0-beta.1 --no-git-tag-version`のようにstandard SemVerで`package.json`と`package-lock.json`を同時に更新する。
+2. `npm ci && npm test && npm pack --dry-run`を実行し、package内容を確認する。
+3. version変更をcommitしてdefault branchへ反映する。
+4. GitHubで同じcommitを指す`v1.0.0-beta.1` tagのReleaseを作成し、prereleaseとしてmarkしてからpublishする。
+5. Actionsの`Publish package` workflow成功と、package visibilityがprivateであることを確認する。
+
+versionまたはtagが一致しないReleaseはpublish前に失敗します。既にpublish済みのversionは再利用せず、次のSemVerへ更新してください。
 
 ## localhostアプリ
 

@@ -90,13 +90,12 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /__reactFiber\$/);
   assert.match(reviewerSource, /source_hint/);
   assert.match(reviewerSource, /in_progress: "AI対応中"/);
-  assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "failed", "addressed"\]/);
-  assert.doesNotMatch(sourceHtml, /name="annotation-status" value="resolved"/);
-  assert.doesNotMatch(reviewerSource, /countItem\(`解決済み/);
-  assert.doesNotMatch(reviewerSource, /statusButton\.textContent = "再オープン"/);
-  assert.doesNotMatch(reviewerSource, /is-resolved/);
-  assert.match(reviewerSource, /annotation\?\.status !== "resolved"/);
-  assert.match(reviewerSource, /FILTER_STORAGE_VERSION = 3/);
+  assert.match(reviewerSource, /DEFAULT_STATUS_FILTERS = \["open", "in_progress", "failed", "addressed", "resolved"\]/);
+  assert.match(sourceHtml, /name="annotation-status" value="resolved" checked/);
+  assert.match(reviewerSource, /countItem\(`解決済み/);
+  assert.match(reviewerSource, /resolveButton\.textContent = "再オープン"/);
+  assert.match(reviewerSource, /state\.archive\.annotations/);
+  assert.match(reviewerSource, /FILTER_STORAGE_VERSION = 4/);
   assert.match(reviewerSource, /statuses\.size === 0[^]*new Set\(DEFAULT_STATUS_FILTERS\)/);
   assert.match(reviewerSource, /stored\.version !== FILTER_STORAGE_VERSION[^]*statuses\.add\("failed"\)/);
   assert.match(reviewerSource, /failed: "失敗"/);
@@ -111,6 +110,40 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /new Set\(elements\.statusFilterInputs/);
 });
 
+test("rough feedback becomes an editable AI draft before GitHub Issue creation", () => {
+  assert.match(sourceHtml, /id="github-issue-submit"[^>]*type="button"[^>]*>GitHub Issueにする</);
+  assert.match(sourceHtml, /id="github-issue-dialog"/);
+  assert.match(sourceHtml, /id="github-issue-title"[^>]*aria-keyshortcuts="Meta\+Enter Control\+Enter"/);
+  assert.match(sourceHtml, /id="github-issue-body"[^>]*aria-keyshortcuts="Meta\+Enter Control\+Enter"/);
+  assert.doesNotMatch(reviewerSource, /visual-review:ai-config-request/);
+  assert.doesNotMatch(jobsSource, /visual-review:ai-config-request/);
+  assert.match(reviewerSource, /async function requestGitHubIssueFromPending\(\)/);
+  assert.match(reviewerSource, /state\.pendingAnnotation = null;\s*elements\.dialog\.close\(\);[^]*await request\("\/api\/issues\/request"/);
+  assert.match(reviewerSource, /visual-review:annotation-created/);
+  assert.match(reviewerSource, /elements\.githubIssueTitle\.value = item\.draft\.title/);
+  assert.match(reviewerSource, /request\("\/api\/issues"/);
+  assert.match(reviewerSource, /annotation_id: state\.currentIssueDraft\?\.annotationId/);
+  assert.match(reviewerSource, /state\.filters\.statuses\.add\("resolved"\)/);
+  assert.match(reviewerSource, /bindModifiedEnter\(elements\.githubIssueTitle, \(\) => elements\.githubIssueForm\.requestSubmit\(\)\)/);
+  assert.match(reviewerSource, /bindModifiedEnter\(elements\.githubIssueBody, \(\) => elements\.githubIssueForm\.requestSubmit\(\)\)/);
+  assert.match(reviewerSource, /annotation\.issue_state === "ready"[^]*issue-draft-open/);
+  assert.match(reviewerSource, /Issueラフを再実行/);
+  assert.match(reviewerSource, /issueStatusLabel/);
+  assert.match(reviewerSource, /status === "in_progress"[^]*Issue作成中/);
+  assert.match(reviewerSource, /status === "resolved"[^]*Issue作成済み/);
+  assert.match(reviewerSource, /annotation\.issue_url[^]*issue-reference-link/);
+  assert.match(reviewerSource, /if \(annotation\.issue_state \|\| !pathsMatch/);
+});
+
+test("compact header and annotation rows maximize the review area", () => {
+  const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
+  assert.match(css, /\.app-header\s*\{[^}]*min-height:\s*56px;[^}]*padding:\s*8px 20px;/s);
+  assert.match(css, /section\.sidebar-section\.annotation-section\s*\{[^}]*padding:\s*0;/s);
+  assert.match(css, /\.annotation-list\s*\{[^}]*gap:\s*0;/s);
+  assert.match(css, /\.annotation-card\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
+  assert.match(css, /\.annotation-card \+ \.annotation-card\s*\{[^}]*border-top:\s*1px solid var\(--line\);/s);
+});
+
 test("custom command settings stay within the dialog with long commands", () => {
   const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
   assert.match(css, /\.ai-settings-dialog\s*\{[^}]*overflow-x:\s*hidden;/s);
@@ -123,6 +156,11 @@ test("annotation marks use translucent fills instead of red outlines", () => {
   const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
   assert.match(css, /\.review-mark\s*\{[^}]*border:\s*0;[^}]*background:\s*rgb\(217 52 43 \/ 22%\);/s);
   assert.match(css, /\.review-mark\.is-highlighted\s*\{[^}]*background:\s*rgb\(217 52 43 \/ 34%\);/s);
+  assert.match(css, /\.review-mark\.is-resolved[^}]*background:\s*rgb\(92 99 97 \/ 30%\);/s);
+  assert.match(reviewerSource, /if \(isResolved && annotationId\(annotation\) !== state\.highlightedId\) return/);
+  assert.match(reviewerSource, /if \(status === "resolved" && state\.highlightedId === id\) state\.highlightedId = null/);
+  assert.match(reviewerSource, /if \(!isResolved && annotation\.kind === "dom"\) renderStalePin/);
+  assert.match(css, /\.toast-region\s*\{[^}]*top:\s*18px;[^}]*right:\s*18px;/s);
   assert.match(css, /\.draft-region\s*\{[^}]*border-color:\s*transparent;[^}]*background:\s*rgb\(217 52 43 \/ 24%\);/s);
 });
 
@@ -147,14 +185,24 @@ test("source hashes stay internal instead of showing version-change warnings", (
   assert.doesNotMatch(reviewerSource, /classList\.toggle\("is-stale", isAnnotationStale/);
 });
 
-test("history is newest-first and lazy-renders 24 events at a time", () => {
+test("history is fetched newest-first in explicit pages of 24", () => {
   assert.match(sourceHtml, /id="history-load-more"/);
   assert.match(reviewerSource, /HISTORY_PAGE_SIZE = 24/);
-  assert.match(reviewerSource, /eventTime\(right\) - eventTime\(left\)/);
-  assert.match(reviewerSource, /sorted\.slice\(0, state\.historyRenderLimit\)/);
-  assert.match(reviewerSource, /historyRenderLimit \+= HISTORY_PAGE_SIZE/);
-  assert.match(reviewerSource, /new IntersectionObserver/);
+  assert.match(reviewerSource, /\/api\/archive\?offset=\$\{offset\}&limit=\$\{HISTORY_PAGE_SIZE\}/);
+  assert.match(reviewerSource, /events: reset \? payload\.events : \[\.\.\.state\.archive\.events, \.\.\.payload\.events\]/);
+  assert.match(reviewerSource, /elements\.historyLoadMore\.addEventListener\("click", loadMoreHistory\)/);
+  assert.doesNotMatch(reviewerSource, /new IntersectionObserver/);
   assert.match(reviewerSource, /historyList\.hidden[^]*historyList\.replaceChildren\(\)/);
+});
+
+test("static HTML refreshes automatically when an AI fix becomes addressed", () => {
+  assert.match(reviewerSource, /function newlyAddressedPages\(previousReview, nextReview\)/);
+  assert.match(reviewerSource, /annotation\.status === "addressed" && previous\.get\(annotationId\(annotation\)\) !== "addressed"/);
+  assert.match(reviewerSource, /targetKind\(\) !== "html" \|\| state\.session\?\.target\?\.live_url/);
+  assert.match(reviewerSource, /state\.pendingTargetRefresh = \{ pagePath, x: win\.scrollX, y: win\.scrollY \}/);
+  assert.match(reviewerSource, /win\.location\.reload\(\)/);
+  assert.match(reviewerSource, /elements\.frame\.contentWindow\.scrollTo\(pending\.x, pending\.y\)/);
+  assert.match(reviewerSource, /AI修正を反映するため、対象ページを自動更新しました/);
 });
 
 test("sidebar polling skips unchanged reviews and reconciles annotation cards by key", () => {
@@ -164,6 +212,18 @@ test("sidebar polling skips unchanged reviews and reconciles annotation cards by
   assert.match(reviewerSource, /card\.replaceWith\(replacement\)/);
   assert.match(reviewerSource, /annotationList\.insertBefore\(card, cursor\)/);
   assert.doesNotMatch(reviewerSource, /annotationList\.replaceChildren\(\)/);
+});
+
+test("text actions submit with Command+Enter and Control+Enter", () => {
+  const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
+  assert.match(reviewerSource, /function bindModifiedEnter\(input, action\)/);
+  assert.match(reviewerSource, /event\.key !== "Enter" \|\| \(!event\.metaKey && !event\.ctrlKey\) \|\| event\.isComposing/);
+  assert.match(reviewerSource, /bindModifiedEnter\(input, \(\) => form\.requestSubmit\(\)\)/);
+  assert.match(reviewerSource, /bindModifiedEnter\(elements\.commentInput, \(\) => elements\.commentForm\.requestSubmit\(\)\)/);
+  assert.match(reviewerSource, /bindModifiedEnter\(input, \(\) => customCommandAdd\?\.click\(\)\)/);
+  assert.match(sourceHtml, /aria-keyshortcuts="Meta\+Enter Control\+Enter"/);
+  assert.match(css, /\.reply-input\s*\{[^}]*height:\s*40px;[^}]*box-sizing:\s*border-box;/s);
+  assert.match(css, /\.reply-button\s*\{[^}]*height:\s*40px;[^}]*box-sizing:\s*border-box;/s);
 });
 
 test("reply text survives polling and sidebar rerenders", () => {

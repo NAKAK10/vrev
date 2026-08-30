@@ -338,6 +338,87 @@ export class ReviewStore {
     });
   }
 
+  createIssueRequest(payload: CreateAnnotationInput): Review {
+    if (payload.kind !== "dom" && payload.kind !== "region") throw new Error("kind must be dom or region");
+    const comment = nonblank(payload.comment, "comment");
+    const anchor = sanitizeAnchor(payload.kind, payload.anchor);
+    this.normalizeSourceHint(anchor);
+    const page = this.pagePath(payload.page_path);
+    if (!SOURCE_HASH.test(payload.source_hash)) throw new Error("source_hash must be a 64-character lowercase hex digest");
+    return withFileLock(this.path, () => {
+      const review = this.loadUnlocked();
+      if (this.sourceHash(page.entryPath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
+      const timestamp = now();
+      const annotationId = randomUUID();
+      const annotation: Annotation = {
+        id: annotationId,
+        kind: payload.kind,
+        page_path: page.entryPath,
+        comment,
+        anchor,
+        actor: "human",
+        status: "open",
+        source_hash: payload.source_hash,
+        created_at: timestamp,
+        updated_at: timestamp,
+        thread: [{ id: randomUUID(), body: comment, actor: "human", at: timestamp }],
+        issue_state: "requested",
+      };
+      review.annotations.push(annotation);
+      this.addEvent(review, "annotation_created", annotationId, "human", timestamp, { kind: payload.kind, page_path: page.entryPath });
+      this.writeUnlocked(review);
+      return review;
+    });
+  }
+
+  setIssueDraftReady(annotationId: string, title: string, body: string): Review {
+    const issueTitle = nonblank(title, "issue_title");
+    const issueBody = nonblank(body, "issue_body");
+    return withFileLock(this.path, () => {
+      const review = this.loadUnlocked();
+      const annotation = this.findAnnotation(review, annotationId);
+      const internalReferences = [annotationId, ".vreview/", "Visual Review注釈", "Visual Review annotation"];
+      if (internalReferences.some((reference) => issueTitle.includes(reference) || issueBody.includes(reference))) {
+        throw new Error("Issue draft must be understandable without internal review references");
+      }
+      const timestamp = now();
+      annotation.issue_state = "ready";
+      annotation.issue_title = issueTitle;
+      annotation.issue_body = issueBody;
+      const previous = annotation.status;
+      annotation.status = "addressed";
+      annotation.updated_at = timestamp;
+      const message = { id: randomUUID(), body: "GitHub Issueのラフを作成しました。内容を確認してください。", actor: "ai" as const, at: timestamp };
+      annotation.thread.push(message);
+      this.addEvent(review, "message_added", annotationId, "ai", timestamp, { message_id: message.id });
+      if (previous !== "addressed") this.addEvent(review, "status_changed", annotationId, "ai", timestamp, { from: previous, to: "addressed" });
+      this.writeUnlocked(review);
+      return review;
+    });
+  }
+
+  completeIssueDraft(annotationId: string, title: string, url: string): Review {
+    const issueTitle = nonblank(title, "issue_title");
+    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/.test(url)) throw new Error("issue_url must be a GitHub Issue URL");
+    return withFileLock(this.path, () => {
+      const review = this.loadUnlocked();
+      const annotation = this.findAnnotation(review, annotationId);
+      const timestamp = now();
+      annotation.issue_state = "created";
+      annotation.issue_title = issueTitle;
+      annotation.issue_url = url;
+      const previous = annotation.status;
+      annotation.status = "resolved";
+      annotation.updated_at = timestamp;
+      const message = { id: randomUUID(), body: `GitHub Issueとして作成しました：${url}`, actor: "human" as const, at: timestamp };
+      annotation.thread.push(message);
+      this.addEvent(review, "message_added", annotationId, "human", timestamp, { message_id: message.id });
+      this.addEvent(review, "status_changed", annotationId, "human", timestamp, { from: previous, to: "resolved" });
+      this.writeUnlocked(review);
+      return review;
+    });
+  }
+
   addMessage(annotationId: string, payload: AddMessageInput): Review {
     const body = nonblank(payload.body, "body");
     const messageActor = actor(payload.actor ?? "human");

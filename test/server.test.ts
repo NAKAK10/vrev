@@ -19,6 +19,7 @@ import { listenOnAvailablePort, parseCliArguments } from "../src/cli.js";
 let root: string;
 let visualReview: VisualReviewServer;
 let baseUrl: string;
+const createdIssueDrafts: Array<{ title: string; body: string }> = [];
 
 before(async () => {
   root = mkdtempSync(path.join(os.tmpdir(), "visual-review-server-"));
@@ -40,6 +41,10 @@ before(async () => {
     target: ".code/htmls/pages/index.html",
     jobManager: {
       executor: () => ({ result: Promise.resolve({ exitCode: 0, reason: "exit" }), cancel: () => undefined }),
+    },
+    issueCreator: async (draft) => {
+      createdIssueDrafts.push(draft);
+      return { url: "https://github.com/example/project/issues/42" };
     },
   });
   await new Promise<void>((resolve) => visualReview.server.listen(0, "127.0.0.1", resolve));
@@ -208,7 +213,7 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
     const address = trusted.server.address();
     assert.ok(address && typeof address !== "string");
     const url = `http://127.0.0.1:${address.port}`;
-    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["POST", "/api/jobs/custom-command/test"], ["POST", "/api/jobs/anything/cancel"]] as const) {
+    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["POST", "/api/jobs/custom-command/test"], ["POST", "/api/issues/request"], ["POST", "/api/issues"], ["POST", "/api/jobs/anything/cancel"]] as const) {
       const response = await fetch(`${url}${route}`, { method });
       assert.equal(response.status, 403, `${method} ${route}`);
     }
@@ -245,6 +250,55 @@ test("trusted script mode enables jobs only with explicit AI consent", async () 
   } finally {
     await trusted.close();
   }
+});
+
+test("stores an Issue request, then creates and archives the AI-authored draft", async () => {
+  const before = visualReview.store.load().annotations.length;
+  const annotation = {
+    comment: "大きめに整理してほしい",
+    page_path: ".code/htmls/pages/index.html",
+    kind: "dom",
+    viewport_mode: "desktop",
+    selector: "h1",
+  };
+  const reference = {
+    ...annotation,
+    anchor: { selector: "h1", tag: "h1" },
+    source_hash: visualReview.store.sourceHash(annotation.page_path),
+  };
+  const requestResponse = await fetch(`${baseUrl}/api/issues/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reference),
+  });
+  assert.equal(requestResponse.status, 200);
+  const requested = (await requestResponse.json() as { annotations: Array<{ id: string; status: string; issue_state: string }> }).annotations.at(-1)!;
+  assert.equal(requested.status, "open");
+  assert.equal(requested.issue_state, "requested");
+  assert.equal(visualReview.store.load().annotations.length, before + 1);
+  visualReview.store.setStatus(requested.id, { actor: "ai", status: "in_progress" });
+  visualReview.store.setIssueDraftReady(requested.id, "整理されたIssue", "## 期待結果\n正しく表示する");
+  const ready = visualReview.store.load().annotations.find(({ id }) => id === requested.id)!;
+  assert.equal(ready.status, "addressed");
+  assert.equal(ready.issue_state, "ready");
+
+  const createResponse = await fetch(`${baseUrl}/api/issues`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "編集後のIssue",
+      body: "## 期待結果\n編集済み",
+      annotation_id: requested.id,
+    }),
+  });
+  assert.equal(createResponse.status, 200);
+  assert.deepEqual(await createResponse.json(), { url: "https://github.com/example/project/issues/42" });
+  assert.deepEqual(createdIssueDrafts.at(-1), { title: "編集後のIssue", body: "## 期待結果\n編集済み" });
+  const archived = visualReview.store.load().annotations.find(({ id }) => id === requested.id)!;
+  assert.equal(archived.status, "resolved");
+  assert.equal(archived.issue_url, "https://github.com/example/project/issues/42");
+  assert.equal(archived.issue_title, "編集後のIssue");
+  assert.equal(archived.issue_state, "created");
 });
 
 test("supports file-state and annotation/message/status APIs through ReviewStore", async () => {
@@ -293,6 +347,20 @@ test("supports file-state and annotation/message/status APIs through ReviewStore
   const session = await (await fetch(`${baseUrl}/api/session`)).json() as { review: { annotations: Array<{ id: string }> } };
   assert.equal(session.review.annotations.some((annotation) => annotation.id === id), false);
   assert.equal((JSON.parse(readFileSync(visualReview.store.resolvedPath, "utf8")) as { annotations: Array<{ id: string }> }).annotations.some((annotation) => annotation.id === id), true);
+
+  const archiveResponse = await fetch(`${baseUrl}/api/archive?offset=0&limit=1`);
+  const archive = await archiveResponse.json() as {
+    annotations: Array<{ id: string; status: string }>;
+    annotation_total: number;
+    events: Array<{ revision: number }>;
+    history_total: number;
+  };
+  assert.equal(archiveResponse.status, 200);
+  assert.equal(archive.annotations.some((annotation) => annotation.id === id && annotation.status === "resolved"), true);
+  assert.ok(archive.annotation_total >= 1);
+  assert.equal(archive.events.length, 1);
+  assert.ok(archive.history_total >= archive.events.length);
+  assert.equal((await fetch(`${baseUrl}/api/archive?offset=0&limit=25`)).status, 400);
 
   const reopenedResponse = await fetch(`${baseUrl}/api/annotations/${id}`, {
     method: "PATCH",

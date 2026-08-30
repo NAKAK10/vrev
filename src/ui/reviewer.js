@@ -1,9 +1,9 @@
 "use strict";
 
-const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "failed", "addressed"];
+const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "failed", "addressed", "resolved"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
 const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
-const FILTER_STORAGE_VERSION = 3;
+const FILTER_STORAGE_VERSION = 4;
 const HISTORY_PAGE_SIZE = 24;
 const replyDrafts = new Map();
 
@@ -22,8 +22,12 @@ const state = {
   revealedContexts: new Set(),
   currentFileState: null,
   fileStateRequestId: 0,
-  historyRenderLimit: HISTORY_PAGE_SIZE,
-  historySignature: "",
+  archive: { annotations: [], events: [], annotationTotal: 0, historyTotal: 0 },
+  archiveRequestId: 0,
+  historyLoading: false,
+  pendingTargetRefresh: null,
+  issueDraftQueue: [],
+  currentIssueDraft: null,
   forceResolve: null,
 };
 
@@ -66,6 +70,13 @@ const elements = {
   selectionSummary: document.querySelector("#selection-summary"),
   commentInput: document.querySelector("#comment-input"),
   commentSubmit: document.querySelector("#comment-submit"),
+  githubIssueSubmit: document.querySelector("#github-issue-submit"),
+  githubIssueDialog: document.querySelector("#github-issue-dialog"),
+  githubIssueForm: document.querySelector("#github-issue-form"),
+  githubIssueTitle: document.querySelector("#github-issue-title"),
+  githubIssueBody: document.querySelector("#github-issue-body"),
+  githubIssueCreate: document.querySelector("#github-issue-create"),
+  githubIssueCancelButtons: [...document.querySelectorAll("[data-github-issue-cancel]")],
   dialogCancelButtons: [...document.querySelectorAll("[data-dialog-cancel]")],
   toast: document.querySelector("#toast-region"),
 };
@@ -78,6 +89,14 @@ const STATUS_LABELS = {
   resolved: "解決済み",
 };
 const KIND_LABELS = { dom: "ノード", region: "範囲" };
+function issueStatusLabel(annotation, status) {
+  if (!annotation.issue_state) return STATUS_LABELS[status] ?? status;
+  if (status === "in_progress") return "Issue作成中";
+  if (status === "failed" || annotation.issue_state === "failed") return "失敗";
+  if (status === "addressed" && annotation.issue_state === "ready") return "AI対応済み";
+  if (status === "resolved" || annotation.issue_state === "created") return "Issue作成済み";
+  return "未対応";
+}
 
 function restoreFilters() {
   try {
@@ -85,7 +104,10 @@ function restoreFilters() {
     if (!stored || !Array.isArray(stored.statuses) || !Array.isArray(stored.kinds)) return;
     state.filters.statuses = new Set(stored.statuses.filter((value) => DEFAULT_STATUS_FILTERS.includes(value)));
     if (state.filters.statuses.size === 0) state.filters.statuses = new Set(DEFAULT_STATUS_FILTERS);
-    else if (stored.version !== FILTER_STORAGE_VERSION) state.filters.statuses.add("failed");
+    else if (stored.version !== FILTER_STORAGE_VERSION) {
+      state.filters.statuses.add("failed");
+      state.filters.statuses.add("resolved");
+    }
     state.filters.kinds = new Set(stored.kinds.filter((value) => value in KIND_LABELS));
   } catch (_error) { /* retain defaults */ }
 }
@@ -131,14 +153,18 @@ const SENSITIVE_TEXT_TAGS = new Set([...NON_VISUAL_TAGS, "input", "textarea", "s
 
 function annotations() {
   const value = state.review?.annotations;
-  const items = Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : [];
-  return items.filter((annotation) => annotation?.status !== "resolved");
+  const active = Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : [];
+  const combined = [...active.filter((annotation) => annotation?.status !== "resolved"), ...state.archive.annotations];
+  const order = Array.isArray(state.review?.annotation_order) ? state.review.annotation_order : [];
+  const orderIndex = new Map(order.map((id, index) => [id, index]));
+  return combined.sort((left, right) => (
+    (orderIndex.get(annotationId(left)) ?? Number.MAX_SAFE_INTEGER)
+    - (orderIndex.get(annotationId(right)) ?? Number.MAX_SAFE_INTEGER)
+  ));
 }
 
 function events() {
-  const value = state.review?.events;
-  if (Array.isArray(value)) return value;
-  return value && typeof value === "object" ? Object.values(value) : [];
+  return state.archive.events;
 }
 
 function annotationId(annotation) {
@@ -250,16 +276,70 @@ async function request(url, options = {}) {
   return response.json();
 }
 
+function newlyAddressedPages(previousReview, nextReview) {
+  const previous = new Map((previousReview?.annotations ?? []).map((annotation) => [annotationId(annotation), annotation.status]));
+  return new Set((nextReview?.annotations ?? [])
+    .filter((annotation) => !annotation.issue_state && annotation.status === "addressed" && previous.get(annotationId(annotation)) !== "addressed")
+    .map((annotation) => annotation.page_path));
+}
+
+function refreshStaticTargetForPages(pagePaths) {
+  if (pagePaths.size === 0 || targetKind() !== "html" || state.session?.target?.live_url) return;
+  const pagePath = currentPagePath();
+  if (![...pagePaths].some((candidate) => pathsMatch(candidate, pagePath))) return;
+  try {
+    const win = elements.frame.contentWindow;
+    state.pendingTargetRefresh = { pagePath, x: win.scrollX, y: win.scrollY };
+    state.currentFileState = null;
+    state.fileStateRequestId += 1;
+    win.location.reload();
+    showToast("AI修正を反映するため、対象ページを自動更新しました。");
+  } catch (error) {
+    state.pendingTargetRefresh = null;
+    showToast(`対象ページを自動更新できませんでした：${error.message}`, true);
+  }
+}
+
 function applyReview(payload) {
   const nextReview = payload?.review ?? payload ?? { annotations: [], events: [] };
   if (nextReview.revision !== undefined && nextReview.revision === state.review?.revision) {
     state.review = nextReview;
     return;
   }
+  const addressedPages = newlyAddressedPages(state.review, nextReview);
   state.review = nextReview;
   renderSidebar();
   renderOverlay();
   renderHashWarning();
+  refreshStaticTargetForPages(addressedPages);
+  void loadArchivePage({ reset: true });
+}
+
+async function loadArchivePage({ reset = false } = {}) {
+  if (state.historyLoading && !reset) return;
+  const requestId = ++state.archiveRequestId;
+  const offset = reset ? 0 : state.archive.events.length;
+  state.historyLoading = true;
+  renderHistory();
+  try {
+    const payload = await request(`/api/archive?offset=${offset}&limit=${HISTORY_PAGE_SIZE}`);
+    if (requestId !== state.archiveRequestId) return;
+    state.archive = {
+      annotations: Array.isArray(payload.annotations) ? payload.annotations : [],
+      events: reset ? payload.events : [...state.archive.events, ...payload.events],
+      annotationTotal: Number(payload.annotation_total ?? 0),
+      historyTotal: Number(payload.history_total ?? 0),
+    };
+    renderSidebar();
+    renderOverlay();
+  } catch (error) {
+    if (requestId === state.archiveRequestId) showToast(`解決済み・履歴の読み込みに失敗しました：${error.message}`, true);
+  } finally {
+    if (requestId === state.archiveRequestId) {
+      state.historyLoading = false;
+      renderHistory();
+    }
+  }
 }
 
 async function loadSession({ reloadTarget = false } = {}) {
@@ -283,6 +363,7 @@ async function loadSession({ reloadTarget = false } = {}) {
     renderSidebar();
     renderHashWarning();
     renderOverlay();
+    await loadArchivePage({ reset: true });
   } catch (error) {
     showToast(`読み込みに失敗しました：${error.message}`, true);
     elements.stageEmpty.hidden = false;
@@ -361,7 +442,7 @@ function setMode(mode) {
 function renderSidebar() {
   const all = annotations();
   renderFilterSummary();
-  const statusCounts = { open: 0, in_progress: 0, failed: 0, addressed: 0 };
+  const statusCounts = { open: 0, in_progress: 0, failed: 0, addressed: 0, resolved: 0 };
   for (const annotation of all) {
     const status = annotation.status || "open";
     if (status in statusCounts) statusCounts[status] += 1;
@@ -372,6 +453,7 @@ function renderSidebar() {
     countItem(`AI対応中 ${statusCounts.in_progress}`),
     countItem(`失敗 ${statusCounts.failed}`),
     countItem(`AI対応済み ${statusCounts.addressed}`),
+    countItem(`解決済み ${statusCounts.resolved}`),
   );
 
   const filtered = all.filter((annotation) => state.filters.statuses.has(annotation.status || "open") && state.filters.kinds.has(annotation.kind));
@@ -441,7 +523,10 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   const focusButton = document.createElement("button");
   focusButton.type = "button";
   focusButton.className = "card-focus";
-  focusButton.addEventListener("click", () => focusAnnotation(annotation));
+  focusButton.addEventListener("click", () => {
+    if (annotation.issue_state) openIssueAnnotation(annotation);
+    else focusAnnotation(annotation);
+  });
 
   const heading = document.createElement("div");
   heading.className = "card-heading";
@@ -449,8 +534,8 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   numberBadge.className = "annotation-number";
   numberBadge.textContent = String(number);
   const statusLabel = document.createElement("span");
-  statusLabel.className = `status-label ${status}`;
-  statusLabel.textContent = STATUS_LABELS[status] ?? status;
+  statusLabel.className = `status-label ${status}${annotation.issue_state ? " issue" : ""}`;
+  statusLabel.textContent = issueStatusLabel(annotation, status);
   heading.append(numberBadge, statusLabel);
 
   const comment = document.createElement("p");
@@ -492,6 +577,34 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
     card.append(thread);
   }
 
+  if (annotation.issue_state) {
+    if (status === "failed" || annotation.issue_state === "failed") {
+      const retryDraft = document.createElement("button");
+      retryDraft.type = "button";
+      retryDraft.className = "issue-draft-open";
+      retryDraft.textContent = "Issueラフを再実行";
+      retryDraft.addEventListener("click", () => updateStatus(id, "open", retryDraft));
+      card.append(retryDraft);
+    } else if (annotation.issue_state === "ready") {
+      const reviewDraft = document.createElement("button");
+      reviewDraft.type = "button";
+      reviewDraft.className = "issue-draft-open";
+      reviewDraft.textContent = "Issueラフを確認";
+      reviewDraft.addEventListener("click", () => openIssueAnnotation(annotation));
+      card.append(reviewDraft);
+    }
+    if (annotation.issue_url) {
+      const issueLink = document.createElement("a");
+      issueLink.className = "issue-reference-link";
+      issueLink.href = annotation.issue_url;
+      issueLink.target = "_blank";
+      issueLink.rel = "noreferrer";
+      issueLink.textContent = annotation.issue_title ? `GitHub Issue：${annotation.issue_title}` : "GitHub Issueを開く";
+      card.append(issueLink);
+    }
+    return card;
+  }
+
   card.append(createReplyForm(id, status));
   const actions = document.createElement("div");
   actions.className = "card-actions";
@@ -506,12 +619,18 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   }
   const resolveButton = document.createElement("button");
   resolveButton.type = "button";
-  resolveButton.className = `status-button ${status === "addressed" ? "resolve" : "force-resolve"}`;
-  resolveButton.textContent = status === "addressed" ? "解決にする" : "強制的に解決";
-  resolveButton.addEventListener("click", () => {
-    if (status === "addressed") void updateStatus(id, "resolved", resolveButton);
-    else openForceResolveDialog(id, status, resolveButton);
-  });
+  if (status === "resolved") {
+    resolveButton.className = "status-button reopen";
+    resolveButton.textContent = "再オープン";
+    resolveButton.addEventListener("click", () => void updateStatus(id, "open", resolveButton));
+  } else {
+    resolveButton.className = `status-button ${status === "addressed" ? "resolve" : "force-resolve"}`;
+    resolveButton.textContent = status === "addressed" ? "解決にする" : "強制的に解決";
+    resolveButton.addEventListener("click", () => {
+      if (status === "addressed") void updateStatus(id, "resolved", resolveButton);
+      else openForceResolveDialog(id, status, resolveButton);
+    });
+  }
   actions.append(resolveButton);
   card.append(actions);
   return card;
@@ -531,6 +650,14 @@ function createMessage(message) {
   return item;
 }
 
+function bindModifiedEnter(input, action) {
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey) || event.isComposing) return;
+    event.preventDefault();
+    action();
+  });
+}
+
 function createReplyForm(id, previousStatus) {
   const form = document.createElement("form");
   form.className = "reply-form";
@@ -540,6 +667,7 @@ function createReplyForm(id, previousStatus) {
   input.maxLength = 2000;
   input.required = true;
   input.setAttribute("aria-label", "返信内容");
+  input.setAttribute("aria-keyshortcuts", "Meta+Enter Control+Enter");
   input.placeholder = "返信を入力";
   input.value = replyDrafts.get(id) ?? "";
   input.addEventListener("input", () => {
@@ -551,6 +679,7 @@ function createReplyForm(id, previousStatus) {
   button.type = "submit";
   button.textContent = "返信";
   form.append(input, button);
+  bindModifiedEnter(input, () => form.requestSubmit());
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const body = input.value.trim();
@@ -593,6 +722,7 @@ async function updateStatus(id, status, button) {
       method: "PATCH",
       body: JSON.stringify({ status, actor: "human" }),
     });
+    if (status === "resolved" && state.highlightedId === id) state.highlightedId = null;
     applyReview(review);
     if (status === "open") window.dispatchEvent(new CustomEvent("visual-review:annotation-reopened", { detail: { annotationId: id, reason: "manual-reopen" } }));
     showToast(status === "resolved" ? "注釈を解決済みにしました。" : "注釈を再オープンしました。");
@@ -627,20 +757,14 @@ function sortedHistoryEvents() {
 }
 
 function renderHistory() {
-  const sorted = sortedHistoryEvents();
-  const signature = `${sorted.length}:${sorted[0]?.id ?? ""}:${sorted[0]?.revision ?? ""}`;
-  if (signature !== state.historySignature) {
-    state.historySignature = signature;
-    state.historyRenderLimit = HISTORY_PAGE_SIZE;
-  }
-  elements.historyCount.textContent = String(sorted.length);
+  const visible = sortedHistoryEvents();
+  elements.historyCount.textContent = String(state.archive.historyTotal);
   if (elements.historyList.hidden) {
     elements.historyList.replaceChildren();
     elements.historyLoadMore.hidden = true;
     return;
   }
 
-  const visible = sorted.slice(0, state.historyRenderLimit);
   const fragment = document.createDocumentFragment();
   for (const event of visible) {
     const item = document.createElement("li");
@@ -654,14 +778,16 @@ function renderHistory() {
     fragment.append(item);
   }
   elements.historyList.replaceChildren(fragment);
-  const remaining = sorted.length - visible.length;
+  const remaining = state.archive.historyTotal - visible.length;
   elements.historyLoadMore.hidden = remaining <= 0;
-  elements.historyLoadMore.textContent = `さらに${Math.min(HISTORY_PAGE_SIZE, remaining)}件読み込む`;
+  elements.historyLoadMore.disabled = state.historyLoading;
+  elements.historyLoadMore.textContent = state.historyLoading
+    ? "読み込み中…"
+    : `さらに${Math.min(HISTORY_PAGE_SIZE, remaining)}件読み込む`;
 }
 
 function loadMoreHistory() {
-  state.historyRenderLimit += HISTORY_PAGE_SIZE;
-  renderHistory();
+  void loadArchivePage();
 }
 
 function eventTime(event) {
@@ -703,6 +829,14 @@ function formatTime(value) {
 
 function handleFrameLoad() {
   installFrameListeners();
+  const pending = state.pendingTargetRefresh;
+  if (pending && pathsMatch(pending.pagePath, currentPagePath())) {
+    state.pendingTargetRefresh = null;
+    requestAnimationFrame(() => {
+      elements.frame.contentWindow.scrollTo(pending.x, pending.y);
+      renderOverlay();
+    });
+  }
   refreshCurrentFileState();
 }
 
@@ -1306,10 +1440,12 @@ function renderOverlay() {
   elements.overlay.replaceChildren();
   const all = annotations();
   all.forEach((annotation, index) => {
-    if (!pathsMatch(annotation.page_path, currentPagePath())) return;
+    if (annotation.issue_state || !pathsMatch(annotation.page_path, currentPagePath())) return;
+    const isResolved = annotation.status === "resolved";
+    if (isResolved && annotationId(annotation) !== state.highlightedId) return;
     const box = annotationBox(annotation);
     if (!box) {
-      if (annotation.kind === "dom") renderStalePin(annotation, index + 1);
+      if (!isResolved && annotation.kind === "dom") renderStalePin(annotation, index + 1);
       return;
     }
     elements.overlay.append(createMark(annotation, index + 1, box));
@@ -1377,6 +1513,7 @@ function createMark(annotation, number, box) {
   const mark = document.createElement("div");
   mark.className = "review-mark";
   mark.classList.toggle("is-highlighted", annotationId(annotation) === state.highlightedId);
+  mark.classList.toggle("is-resolved", annotation.status === "resolved");
   setBoxStyle(mark, box);
   const pin = document.createElement("span");
   pin.className = "review-pin";
@@ -1456,6 +1593,91 @@ function openCommentDialog(summary) {
   elements.commentInput.value = "";
   elements.dialog.showModal();
   requestAnimationFrame(() => elements.commentInput.focus());
+}
+
+function openIssueAnnotation(annotation) {
+  if (annotation.status === "in_progress") {
+    showToast("Issueラフをバックグラウンドで作成しています。");
+    return;
+  }
+  if (annotation.status === "failed" || annotation.issue_state === "failed") {
+    showToast("Issueラフの作成に失敗しました。「Issueラフを再実行」から再試行できます。", true);
+    return;
+  }
+  if (annotation.status === "open") {
+    showToast("未対応です。AI一括修正または自動実行からIssueラフを作成してください。");
+    return;
+  }
+  if (annotation.issue_state === "ready" && annotation.issue_title && annotation.issue_body) {
+    state.issueDraftQueue.push({
+      draft: { title: annotation.issue_title, body: annotation.issue_body },
+      annotationId: annotationId(annotation),
+    });
+    openNextIssueDraft();
+  }
+}
+
+function openNextIssueDraft() {
+  if (document.querySelector("dialog[open]") || state.issueDraftQueue.length === 0) return;
+  const item = state.issueDraftQueue.shift();
+  state.currentIssueDraft = item;
+  elements.githubIssueTitle.value = item.draft.title;
+  elements.githubIssueBody.value = item.draft.body;
+  elements.githubIssueDialog.showModal();
+  requestAnimationFrame(() => elements.githubIssueTitle.focus());
+}
+
+async function requestGitHubIssueFromPending() {
+  const pending = state.pendingAnnotation;
+  const comment = elements.commentInput.value.trim();
+  if (!pending || !comment) {
+    elements.commentInput.reportValidity();
+    return;
+  }
+  state.pendingAnnotation = null;
+  elements.dialog.close();
+  setMode("browse");
+  try {
+    const review = await request("/api/issues/request", {
+      method: "POST",
+      body: JSON.stringify({ ...pending, comment, actor: "human" }),
+    });
+    applyReview(review);
+    window.dispatchEvent(new CustomEvent("visual-review:annotation-created"));
+    showToast("Issue用の注釈を保存しました。AI実行設定に従ってラフを作成します。");
+  } catch (error) {
+    showToast(`Issue用注釈の保存に失敗しました：${error.message}`, true);
+  }
+}
+
+function cancelGitHubIssueDraft() {
+  state.currentIssueDraft = null;
+  if (elements.githubIssueDialog.open) elements.githubIssueDialog.close();
+}
+
+async function createGitHubIssueFromDraft() {
+  elements.githubIssueCreate.disabled = true;
+  try {
+    const result = await request("/api/issues", {
+      method: "POST",
+      body: JSON.stringify({
+        title: elements.githubIssueTitle.value.trim(),
+        body: elements.githubIssueBody.value.trim(),
+        annotation_id: state.currentIssueDraft?.annotationId,
+      }),
+    });
+    state.currentIssueDraft = null;
+    state.filters.statuses.add("resolved");
+    syncFilterControls();
+    persistFilters();
+    elements.githubIssueDialog.close();
+    showToast(`GitHub Issueを作成し、解決済みへ記録しました：${result.url}`);
+    void loadSession();
+  } catch (error) {
+    showToast(`GitHub Issueの作成に失敗しました：${error.message}`, true);
+  } finally {
+    elements.githubIssueCreate.disabled = false;
+  }
 }
 
 async function saveAnnotation() {
@@ -1591,16 +1813,9 @@ elements.historyToggle.addEventListener("click", () => {
   const expanded = elements.historyToggle.getAttribute("aria-expanded") !== "true";
   elements.historyToggle.setAttribute("aria-expanded", String(expanded));
   elements.historyList.hidden = !expanded;
-  if (expanded) state.historyRenderLimit = HISTORY_PAGE_SIZE;
   renderHistory();
 });
 elements.historyLoadMore.addEventListener("click", loadMoreHistory);
-if ("IntersectionObserver" in window) {
-  const historyObserver = new IntersectionObserver((entries) => {
-    if (entries.some(({ isIntersecting }) => isIntersecting) && !elements.historyLoadMore.hidden) loadMoreHistory();
-  }, { rootMargin: "160px" });
-  historyObserver.observe(elements.historyLoadMore);
-}
 elements.forceResolveForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const pending = state.forceResolve;
@@ -1618,6 +1833,24 @@ elements.commentForm.addEventListener("submit", (event) => {
   event.preventDefault();
   saveAnnotation();
 });
+bindModifiedEnter(elements.commentInput, () => elements.commentForm.requestSubmit());
+elements.githubIssueSubmit.addEventListener("click", requestGitHubIssueFromPending);
+elements.githubIssueForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  createGitHubIssueFromDraft();
+});
+bindModifiedEnter(elements.githubIssueTitle, () => elements.githubIssueForm.requestSubmit());
+bindModifiedEnter(elements.githubIssueBody, () => elements.githubIssueForm.requestSubmit());
+elements.githubIssueCancelButtons.forEach((button) => button.addEventListener("click", cancelGitHubIssueDraft));
+elements.githubIssueDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelGitHubIssueDraft();
+});
+document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("close", () => queueMicrotask(openNextIssueDraft)));
+const customCommandAdd = document.querySelector("#custom-command-add");
+for (const input of document.querySelectorAll("#custom-command-name, #custom-command-value")) {
+  bindModifiedEnter(input, () => customCommandAdd?.click());
+}
 elements.dialogCancelButtons.forEach((button) => button.addEventListener("click", cancelComment));
 elements.dialog.addEventListener("cancel", (event) => {
   event.preventDefault();
@@ -1634,7 +1867,7 @@ elements.image.addEventListener("pointercancel", cancelDrag);
 elements.imageWrap.addEventListener("scroll", renderOverlay, { passive: true });
 window.addEventListener("resize", renderOverlay, { passive: true });
 document.addEventListener("keydown", (event) => {
-  const modalOpen = elements.dialog.open || elements.filterDialog.open || document.querySelector("#ai-settings-dialog")?.open;
+  const modalOpen = elements.dialog.open || elements.githubIssueDialog.open || elements.filterDialog.open || document.querySelector("#ai-settings-dialog")?.open;
   if (event.key === "Escape" && !modalOpen) {
     cancelDrag();
     setMode("browse");

@@ -75,6 +75,10 @@ export interface Annotation {
   created_at: string;
   updated_at: string;
   thread: ReviewMessage[];
+  issue_url?: string;
+  issue_title?: string;
+  issue_body?: string;
+  issue_state?: "requested" | "ready" | "failed" | "created";
 }
 
 export interface ReviewEvent {

@@ -143,8 +143,8 @@
           <h3 id="custom-command-heading">カスタムコマンド</h3>
           <p>shellを経由せず直接実行します。依頼文を渡す<code>{prompt}</code>を必ず1回記述してください。登録前に一時directoryで応答とtool利用を検証します。</p>
           <div class="custom-command-fields">
-            <label for="custom-command-name"><span>表示名</span><input id="custom-command-name" type="text" maxlength="80" placeholder="Ollama Claude"></label>
-            <label for="custom-command-value"><span>コマンド</span><input id="custom-command-value" type="text" maxlength="2000" placeholder="ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}"></label>
+            <label for="custom-command-name"><span>表示名</span><input id="custom-command-name" type="text" maxlength="80" placeholder="Ollama Claude" aria-keyshortcuts="Meta+Enter Control+Enter"></label>
+            <label for="custom-command-value"><span>コマンド</span><input id="custom-command-value" type="text" maxlength="2000" placeholder="ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}" aria-keyshortcuts="Meta+Enter Control+Enter"></label>
           </div>
           <button id="custom-command-add" class="secondary-button" type="button">テストして登録</button>
           <p id="custom-command-status" class="custom-command-feedback" role="status" aria-live="polite"></p>
@@ -171,6 +171,7 @@
           <label class="filter-badge"><input type="checkbox" name="annotation-status" value="in_progress" checked><span>AI対応中</span></label>
           <label class="filter-badge"><input type="checkbox" name="annotation-status" value="failed" checked><span>失敗</span></label>
           <label class="filter-badge"><input type="checkbox" name="annotation-status" value="addressed" checked><span>AI対応済み</span></label>
+          <label class="filter-badge"><input type="checkbox" name="annotation-status" value="resolved" checked><span>解決済み</span></label>
         </fieldset>
         <fieldset class="filter-badge-group">
           <legend>種類</legend>
@@ -213,10 +214,32 @@
         </div>
         <p id="selection-summary" class="selection-summary"></p>
         <label class="comment-label" for="comment-input">修正内容・確認事項</label>
-        <textarea id="comment-input" rows="5" maxlength="2000" required placeholder="例：見出しと本文の間隔をもう少し広げてください"></textarea>
+        <textarea id="comment-input" rows="5" maxlength="2000" required placeholder="例：見出しと本文の間隔をもう少し広げてください" aria-keyshortcuts="Meta+Enter Control+Enter"></textarea>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-dialog-cancel>キャンセル</button>
+          <button id="github-issue-submit" class="github-issue-button" type="button">GitHub Issueにする</button>
           <button id="comment-submit" class="primary-button" type="submit">注釈を保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="github-issue-dialog" class="comment-dialog github-issue-dialog">
+      <form id="github-issue-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">GITHUB ISSUE DRAFT</span>
+            <h2>Issueラフを確認</h2>
+          </div>
+          <button class="dialog-close" type="button" data-github-issue-cancel aria-label="閉じる">×</button>
+        </div>
+        <p class="issue-draft-note">AIが対象ソースとパスを確認して作成したラフです。編集してからGitHubへ追加できます。</p>
+        <label class="comment-label" for="github-issue-title">タイトル</label>
+        <input id="github-issue-title" class="github-issue-title" type="text" maxlength="256" required aria-keyshortcuts="Meta+Enter Control+Enter">
+        <label class="comment-label" for="github-issue-body">本文</label>
+        <textarea id="github-issue-body" rows="14" maxlength="65536" required aria-keyshortcuts="Meta+Enter Control+Enter"></textarea>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-github-issue-cancel>キャンセル</button>
+          <button id="github-issue-create" class="github-issue-button" type="submit">GitHubにIssueを追加</button>
         </div>
       </form>
     </dialog>

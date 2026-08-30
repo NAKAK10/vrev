@@ -68,11 +68,11 @@ input:focus-visible,
 .app-header {
   z-index: 10;
   display: flex;
-  min-height: 72px;
+  min-height: 56px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 12px 20px;
+  padding: 8px 20px;
   border-bottom: 1px solid var(--line);
   background: rgb(255 255 255 / 94%);
   backdrop-filter: blur(12px);
@@ -129,6 +129,7 @@ h1 {
 .icon-button,
 .secondary-button,
 .primary-button,
+.github-issue-button,
 .status-button,
 .reply-button {
   border: 1px solid var(--line);
@@ -584,6 +585,15 @@ kbd {
   background: rgb(217 52 43 / 34%);
 }
 
+.review-mark.is-resolved,
+.review-mark.is-resolved.is-highlighted {
+  background: rgb(92 99 97 / 30%);
+}
+
+.review-mark.is-resolved .review-pin {
+  background: #5c6361;
+}
+
 .review-mark.is-stale {
   background: rgb(218 153 34 / 24%);
 }
@@ -713,7 +723,8 @@ kbd {
 
 select,
 textarea,
-.reply-input {
+.reply-input,
+.github-issue-title {
   width: 100%;
   border: 1px solid #cbd5d2;
   border-radius: 8px;
@@ -751,39 +762,33 @@ select {
   background: #eef2f1;
 }
 
-.annotation-section {
-  padding-top: 12px;
+section.sidebar-section.annotation-section {
+  padding: 0;
 }
 
 .annotation-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
 .annotation-card {
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   background: white;
-  box-shadow: 0 3px 10px rgb(24 40 37 / 5%);
+  box-shadow: none;
 }
 
-.annotation-card[data-status="in_progress"] {
-  border-left-color: #d18a16;
+.annotation-card + .annotation-card {
+  border-top: 1px solid var(--line);
 }
 
 .annotation-card[data-status="failed"] {
-  border-left-color: #b42318;
   background: #fffafa;
-}
-
-.annotation-card[data-status="addressed"] {
-  border-left-color: #2c78b7;
 }
 
 .card-focus {
   width: 100%;
-  padding: 13px 13px 9px;
+  padding: 9px 12px 7px;
   border: 0;
   text-align: left;
   background: transparent;
@@ -829,11 +834,16 @@ select {
   background: #eaf4fc;
 }
 
+.status-label.issue {
+  color: #4b3a73;
+  background: #eee8ff;
+}
+
 .annotation-comment {
-  margin: 10px 0 9px;
+  margin: 6px 0 5px;
   overflow-wrap: anywhere;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.4;
   white-space: pre-wrap;
 }
 
@@ -851,7 +861,7 @@ select {
 }
 
 .anchor-warning {
-  margin: 0 13px 9px;
+  margin: 0 12px 7px;
   padding: 6px 8px;
   border-radius: 6px;
   color: #754b06;
@@ -861,8 +871,8 @@ select {
 }
 
 .thread {
-  margin: 0 13px;
-  padding: 9px 0;
+  margin: 0 12px;
+  padding: 7px 0;
   border-top: 1px solid var(--line);
 }
 
@@ -887,17 +897,40 @@ select {
   white-space: pre-wrap;
 }
 
+.issue-draft-open {
+  display: block;
+  margin: 0 12px 10px;
+  padding: 7px 10px;
+  border: 1px solid #8a75bd;
+  border-radius: 7px;
+  color: #4b3a73;
+  background: #f5f1ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.issue-reference-link {
+  display: block;
+  margin: 0 12px 10px;
+  overflow-wrap: anywhere;
+  color: #185f97;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .reply-form {
   display: flex;
   gap: 6px;
-  padding: 0 13px 11px;
+  padding: 0 12px 8px;
 }
 
 .reply-input {
   min-width: 0;
+  height: 40px;
   flex: 1;
+  box-sizing: border-box;
   padding: 7px 8px;
-  resize: vertical;
+  resize: none;
 }
 
 .reply-button,
@@ -907,7 +940,9 @@ select {
 }
 
 .reply-button {
+  height: 40px;
   align-self: flex-end;
+  box-sizing: border-box;
   color: white;
   border-color: var(--ink);
   background: var(--ink);
@@ -916,7 +951,7 @@ select {
 .card-actions {
   display: flex;
   gap: 6px;
-  padding: 0 13px 13px;
+  padding: 0 12px 9px;
 }
 
 .status-button.retry {
@@ -1027,6 +1062,28 @@ select {
   box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
 }
 
+.github-issue-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.issue-draft-note {
+  margin: 14px 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.github-issue-dialog .comment-label:not(:first-of-type) {
+  margin-top: 12px;
+}
+
+.github-issue-title {
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 11px;
+}
+
 .comment-dialog::backdrop {
   background: rgb(17 28 26 / 48%);
   backdrop-filter: blur(3px);
@@ -1125,9 +1182,20 @@ textarea {
 }
 
 .secondary-button,
-.primary-button {
+.primary-button,
+.github-issue-button {
   min-height: 38px;
   padding: 8px 13px;
+}
+
+.github-issue-button {
+  color: white;
+  border-color: #24292f;
+  background: #24292f;
+}
+
+.github-issue-button:hover:not(:disabled) {
+  background: #424a53;
 }
 
 .primary-button {
@@ -1143,8 +1211,8 @@ textarea {
 .toast-region {
   position: fixed;
   z-index: 100;
+  top: 18px;
   right: 18px;
-  bottom: 18px;
   max-width: min(400px, calc(100vw - 36px));
   padding: 0;
   border-radius: 9px;
