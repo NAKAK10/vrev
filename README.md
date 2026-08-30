@@ -1,52 +1,38 @@
 # visual-review
 
-ローカルHTML・画像へDOMノード／範囲単位で注釈を付け、各種coding agentへ修正を依頼するためのローカルVisual Reviewツールです。
+HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVisual Reviewツールです。
 
 ## 主な機能
 
-- HTMLのDOMノード選択と矩形範囲指定
-- 画像の矩形範囲指定
-- 注釈スレッドと `open` / `in_progress` / `failed` / `addressed` / `resolved` の状態管理
-- 注釈カード選択時のモーダル・ドロワー・popover・details復元
-- PC／タブレット（768px）／スマホ（390px）の表示切り替え
-- OpenCode／Claude／Codex／GitHub Copilot／Pi／カスタムコマンドによるAI一括修正
-- リポジトリ外から `--project-root` を指定できるCLI
-- schema v2、atomic write、lock、server lease、永続ジョブキュー
+- DOMノード・矩形範囲への注釈
+- PC／タブレット／スマートフォン表示の切り替え
+- 注釈スレッド、状態、履歴、フィルター管理
+- OpenCode／Claude／Codex／GitHub Copilot／Pi／カスタムCLIによるAI修正
+- AIによるIssueラフ生成と`gh`経由のGitHub Issue作成
+- static HTML、localhostアプリ、HTTPSのstagingサイトに対応
 
 ## 必要環境
 
 - Node.js 20以上
-- AI一括修正を使う場合は、次のいずれかのCLI
-  - `opencode`
-  - `claude`
-  - `codex`
-  - `copilot`
-  - `pi`
-  - または登録したカスタムコマンド
+- GitHub Issueを作成する場合は、認証済みのGitHub CLI（`gh`）
+- AI修正を使う場合は、対応するcoding agent CLI
 
-## GitHub Packagesからインストール
+## インストール
 
-このpackageはprivate GitHub Packageとして配布します。利用者はpackageへのアクセス権と`read:packages` scopeを持つpersonal access token (classic)を用意してください。OrganizationでSSOが必須の場合はtokenも承認します。
-
-projectまたはuserの`.npmrc`にregistryと、環境変数を参照する認証設定を追加します。token自体はfileへ記載しないでください。
+このprivate GitHub Packageへのアクセス権と、`read:packages`を持つGitHub tokenが必要です。
 
 ```ini
+# ~/.npmrc またはプロジェクトの .npmrc
 @nakak10:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-認証後、beta版をglobal installします。
-
 ```bash
 export NODE_AUTH_TOKEN=YOUR_GITHUB_TOKEN
 npm install --global @nakak10/visual-review@beta
-# versionを固定する場合:
-# npm install --global @nakak10/visual-review@1.0.0-beta.1
 ```
 
-以後は`visual-review` commandを利用できます。
-
-## sourceからのセットアップ
+sourceから利用する場合:
 
 ```bash
 git clone https://github.com/NAKAK10/visual-review.git
@@ -56,50 +42,45 @@ npm run build
 npm link
 ```
 
-## 対象リポジトリの配置規則
-
-対象リポジトリでは、レビュー対象を次の場所へ置きます。
-
-```text
-.code/htmls/**/*.html
-assets/**/*.{png,jpg,jpeg,gif,webp,svg}
-```
-
-レビュー情報はrepository rootの`.vreview/`へ集約します。解決済みannotationは別JSONへ移動します。
-
-```text
-.vreview/
-├── settings.json
-├── .gitignore
-└── reviews/<safe-stem>--<path-hash>/
-    ├── review.json       # 未対応・AI対応中・AI対応済み
-    ├── resolved.json     # 解決済み
-    ├── context.json      # 初回AIによるproject/monorepo探索結果
-    └── job-state.json    # Git管理対象外
-```
-
-`settings.json`がmonorepo内のprojectとreview参照をrepository相対pathで管理します。`review.json`、`resolved.json`、`context.json`、`settings.json`はGit管理対象です。runtime stateは`.vreview/.gitignore`で除外します。旧`.code/visual-reviews/.../review.json`は対象を最初に開いたとき自動移行します。
-
 ## 起動
 
+対象リポジトリで実行します。
+
 ```bash
-cd /absolute/path/to/project
 visual-review serve --target .code/htmls/example/index.html
 ```
 
-画像の場合:
+画像:
 
 ```bash
 visual-review serve --target assets/example.png
 ```
 
-`--project-root`省略時は実行directoryをprojectとして扱い、最寄りのGit rootをworkspace/storage rootとして自動検出します。monorepoのchild projectから実行した場合もrootの`.vreview/settings.json`へ集約し、child project pathを登録します。Git管理外では実行directory自身がrootです。明示的な`--project-root`は別directoryを対象にするときだけ使用します。
+起動済みのlocalhostアプリ:
 
-既定の開始ポートは `18765` です。使用中の場合は `18766`、`18767`…の順に空きポートを自動選択します。`--port`を指定した場合も、その番号を起点に自動インクリメントします。ブラウザを自動で開かない場合は `--no-open` を追加します。
+```bash
+visual-review serve --target http://127.0.0.1:5173
+```
 
-### 動的HTML
+開発サーバーも起動する場合:
 
-既定では対象JavaScriptを無効化します。完全に信頼できるローカルprototypeでのみ有効化してください。
+```bash
+visual-review serve \
+  --target http://127.0.0.1:5173 \
+  --start "npm run dev"
+```
+
+HTTPSのstagingサイト:
+
+```bash
+visual-review serve --target https://staging.example.com/products
+```
+
+既定ポートは`18765`です。使用中の場合は次の空きポートを自動選択します。`--no-open`でブラウザの自動起動を無効化できます。
+
+## JavaScriptを含むHTML
+
+static HTMLでは対象JavaScriptを既定で無効化します。信頼できる対象でのみ有効化してください。
 
 ```bash
 visual-review serve \
@@ -107,32 +88,46 @@ visual-review serve \
   --allow-scripts
 ```
 
-AI一括修正は既定で有効です。対象JavaScriptを動かしながらAI修正を無効にしたい場合だけ、`--no-ai-jobs-with-scripts`を指定します。未確認または第三者由来のHTMLでは`--allow-scripts`を使用しないでください。
-
 ## 操作
 
 - `V`: 閲覧
 - `N`: DOMノード選択
 - `R`: 矩形範囲指定
-- `PC / タブレット / スマホ`: responsive表示切り替え
-- AI一括修正欄右上の`•••`: CLI、最大並列数（read-only調査agent 1〜10）、自動実行、カスタムコマンドをmodalで設定
-- 注釈欄右上の`•••`: 状態と種類を複数選択できるbadge形式のfilter modal。初期状態は「未対応・AI対応中・失敗・AI対応済み・解決済み」と全種類を選択
-- `履歴`: 最新24件を初回表示し、「さらに24件読み込む」を押すたびに次の24件を取得
-- `注釈を保存したら自動でAI修正を開始`: 有効にすると、注釈保存後に確認dialogなしでjobをqueueへ追加。設定はbrowserに保存され、手動の「AIにまとめて修正依頼」ボタンは非表示
-- `⌘+Enter`（macOS）/ `Ctrl+Enter`（Windows・Linux）: 返信送信、注釈保存、カスタムコマンドのテスト登録を実行
-- `GitHub Issueにする`: 大規模な修正向け。Issue用注釈を「未対応」で保存し、通常修正と同じAI queueでrepository contextと対象pathからtitle/bodyを生成。「AI対応済み」cardから編集modalを開き、`⌘/Ctrl+Enter`またはボタンでIssueを作成
+- `⌘+Enter` / `Ctrl+Enter`: 注釈・返信・Issueの送信
+- AI設定: CLI、並列数、自動実行、カスタムコマンドを設定
+- `GitHub Issueにする`: AIが編集可能なIssueラフを作成し、確認後にGitHubへ追加
 
-注釈JSONにはviewportの幅・高さに加えて`viewport_mode`（`desktop` / `tablet` / `mobile`）も保存されます。AIは修正とbrowser検証を同じ表示modeで行います。local static HTMLでは、閲覧中pageの注釈がAI対応済みになった時点でiframeを自動更新し、修正後のHTML/CSS/JavaScriptをscroll位置を保ったまま反映します。loopback applicationはVue/React等のHMRへ任せ、自動更新を重ねません。
-
-注釈statusは`open`（未対応）→`in_progress`（AI対応中）→`addressed`（AI対応済み）→`resolved`（解決済み）で管理します。coordinatorが終了code 0で正常終了すると、個別のmessage/status更新が漏れていても実行中jobを成功として`addressed`へ補正します。AI完了messageがない場合は、処理完了と人間による確認が必要なことを示す中立的なAI messageを追加します。非zero終了、timeout、起動失敗、対象page消失、起動前のsource競合は従来どおり失敗またはskipとして保持します。旧versionでpostcondition失敗になったjobへ遅れて完了messageが届いた場合も成功へ回復します。失敗理由はannotation threadへAI messageとして表示します。キャンセル・server再起動による中断は`open`へ戻します。失敗カードの「再試行」または人間の返信で`open`へ戻り、自動実行が有効なら再度queueへ登録します。`resolved`へ変更できるのは人間だけです。人間はどのactive statusからでも解決済みにでき、`addressed`以外では確認dialogを経由します。解決済みannotationは`resolved.json`へarchiveされます。通常sessionのpolling payloadには含めず、reviewerがarchive APIから取得してcard・件数へ表示します。対象画面上では常時表示せず、cardを選択したときだけgrayのmarkを表示し、anchorが見つからない場合は右上toastだけで通知します。
-
-カスタムコマンドはbrowser localStorageへ登録し、shellを介さず実行ファイルと引数へ分割して起動します。依頼文を渡す`{prompt}`を必ず1回記述してください。登録前に一時directoryで応答とtoolによるmarker作成をテストし、終了codeが0でも実際にtoolを利用できないコマンドは登録しません。能力testに15秒以上かかった場合は、実際の修正も遅くなる可能性を表示します。AI batchは5件以下または同一file中心ならsubagentを起動せず、指摘に直接必要な最小限の編集へ絞ります。visual検証は実行環境で利用可能なbrowser確認手段を使い、pageとviewportの組み合わせごとに1回へ集約します。
+カスタムコマンドには依頼文を渡す`{prompt}`を1回だけ記述します。commandはshellを介さず実行され、登録前にtool利用能力を検証します。
 
 ```text
-ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}
+agent-command --prompt {prompt}
 ```
 
-API keyやtokenをコマンド欄へ記載しないでください。認証は各CLIの既存設定または環境変数を利用します。
+API keyやtokenはcommandへ記載せず、各CLIの認証設定または環境変数を利用してください。
+
+## データ保存
+
+レビュー情報は対象Gitリポジトリの`.vreview/`へ保存します。
+
+```text
+.vreview/
+├── settings.json
+└── reviews/<target-id>/
+    ├── review.json
+    ├── resolved.json
+    ├── context.json
+    └── job-state.json
+```
+
+`job-state.json`などのruntime情報はGit管理対象外です。
+
+## 対応対象と安全性
+
+- local fileは`.code/htmls/**/*.html`と`assets/`配下の画像に対応
+- localhostは`localhost`、`127.0.0.1`、`::1`のみ許可
+- public targetはHTTPSのみ許可し、cookie・authorizationを転送しない
+- public targetではJavaScript、form、ローカルAI APIを無効化
+- GitHub Issueは対象リポジトリ内で`gh issue create`を実行して作成
 
 ## 開発
 
@@ -142,68 +137,12 @@ npm test
 npm run build
 ```
 
-## release
+## リリース
 
-GitHub Releaseの公開を契機に`.github/workflows/release-package.yml`がGitHub Packagesへpublishします。workflowはrelease tagが`v` + `package.json` versionと完全一致すること（例: `v1.0.0-beta.1`）、およびlockfileのversion一致を確認し、`npm ci`、test/build、`npm publish`を実行します。prereleaseはSemVer識別子（`beta`など）、stable版は`latest`のnpm dist-tagへpublishします。publishにはrepositoryの`GITHUB_TOKEN`だけを使用し、手元から`npm publish`は実行しません。
-
-1. `npm version 1.0.0-beta.1 --no-git-tag-version`のようにstandard SemVerで`package.json`と`package-lock.json`を同時に更新する。
-2. `npm ci && npm test && npm pack --dry-run`を実行し、package内容を確認する。
-3. version変更をcommitしてdefault branchへ反映する。
-4. GitHubで同じcommitを指す`v1.0.0-beta.1` tagのReleaseを作成し、prereleaseとしてmarkしてからpublishする。
-5. Actionsの`Publish package` workflow成功と、package visibilityがprivateであることを確認する。
-
-versionまたはtagが一致しないReleaseはpublish前に失敗します。既にpublish済みのversionは再利用せず、次のSemVerへ更新してください。
-
-## localhostアプリ
-
-`--target`へloopback URLを渡すと、同一生成元のローカルreverse proxyを通してDOM注釈できます。HTTPの`localhost`、`127.0.0.1`、`::1`だけを許可し、外部URLやURL内credentialは拒否します。
-
-起動済みの開発サーバーを確認する場合:
+GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-cd /path/to/repository
-visual-review serve --target http://127.0.0.1:5173
+npm version 1.0.0-beta.4 --no-git-tag-version
+npm test
+npm pack --dry-run
 ```
-
-開発サーバーも同時に起動する場合:
-
-```bash
-cd /path/to/repository
-visual-review serve \
-  --target http://127.0.0.1:5173 \
-  --start "npm run dev"
-```
-
-`--start`のprocessはproject rootで起動し、Visual Review終了時に停止します。Docker Composeなど起動command自体が終了してserviceだけが残る構成では、`--stop "npm run down"`も指定してください。
-
-### 対応framework
-
-DOM selector、表示text、routeに加え、development runtimeから取得できる場合はcomponent名とsource file hintも注釈へ保存します。
-
-- Vue / Nuxt
-- React / Next.js
-- Angular
-- Svelte / SvelteKit
-- WordPress / PHP theme
-- framework情報を取得できない一般的なHTML/JavaScriptアプリ
-
-source hintはframeworkのdevelopment runtimeに依存する補助情報です。AI coordinatorはrepository内で実在と内容を確認してから編集します。
-
-## hosting済みサイト
-
-公開またはstaging環境のHTTPS URLも、ローカルの実装repositoryと紐付けてレビューできます。
-
-```bash
-cd /path/to/local/repository
-visual-review serve --target https://staging.example.com/products
-```
-
-AIはhosting先そのものを書き換えるのではなく、自動検出したローカルworkspaceを修正します。公開サイトからローカルAPIやAI実行機能へ干渉されないよう、public targetはread-only static modeで取得し、対象サイトのJavaScript、form、cross-origin navigationを無効化します。SSR/WordPressなどHTMLを返すサイトに対応します。client-side renderingだけで内容を生成するSPAは、localhost targetを利用してください。
-
-安全制約:
-
-- public targetはHTTPSのみ。URL内credentialは禁止
-- DNS解決先がloopback、private、link-local、予約addressの場合は拒否
-- request cookie・authorizationとresponse cookieは転送しない
-- redirectは同一origin内だけ許可
-- `--allow-scripts`、`--start`、`--stop`はpublic targetでは使用不可
