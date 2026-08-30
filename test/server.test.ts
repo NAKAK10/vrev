@@ -20,6 +20,8 @@ let root: string;
 let visualReview: VisualReviewServer;
 let baseUrl: string;
 const createdIssueDrafts: Array<{ title: string; body: string }> = [];
+let releaseIssueCreation: (() => void) | null = null;
+let issueCreationGate: Promise<void> | null = null;
 
 before(async () => {
   root = mkdtempSync(path.join(os.tmpdir(), "visual-review-server-"));
@@ -44,6 +46,7 @@ before(async () => {
     },
     issueCreator: async (draft) => {
       createdIssueDrafts.push(draft);
+      if (issueCreationGate) await issueCreationGate;
       return { url: "https://github.com/example/project/issues/42" };
     },
   });
@@ -282,7 +285,11 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   assert.equal(ready.status, "addressed");
   assert.equal(ready.issue_state, "ready");
 
-  const createResponse = await fetch(`${baseUrl}/api/issues`, {
+  const issueCountBefore = createdIssueDrafts.length;
+  const preservedUpdatedAt = ready.updated_at;
+  const preservedThreadLength = ready.thread.length;
+  issueCreationGate = new Promise<void>((resolve) => { releaseIssueCreation = resolve; });
+  const issuePayload = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -290,15 +297,34 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
       body: "## 期待結果\n編集済み",
       annotation_id: requested.id,
     }),
-  });
+  };
+  const firstRequest = fetch(`${baseUrl}/api/issues`, issuePayload);
+  const duplicateRequest = fetch(`${baseUrl}/api/issues`, issuePayload);
+  while (createdIssueDrafts.length === issueCountBefore) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(createdIssueDrafts.length, issueCountBefore + 1);
+  releaseIssueCreation?.();
+  issueCreationGate = null;
+  releaseIssueCreation = null;
+  const [createResponse, duplicateResponse] = await Promise.all([firstRequest, duplicateRequest]);
   assert.equal(createResponse.status, 200);
-  assert.deepEqual(await createResponse.json(), { url: "https://github.com/example/project/issues/42" });
+  assert.equal(duplicateResponse.status, 200);
+  const createdResult = await createResponse.json() as { url: string; review: { annotations: unknown[] } };
+  const duplicateResult = await duplicateResponse.json() as { url: string; review: { annotations: unknown[] } };
+  assert.equal(createdResult.url, "https://github.com/example/project/issues/42");
+  assert.equal(duplicateResult.url, createdResult.url);
+  assert.ok(Array.isArray(createdResult.review.annotations));
   assert.deepEqual(createdIssueDrafts.at(-1), { title: "編集後のIssue", body: "## 期待結果\n編集済み" });
+
+  const laterDuplicateResponse = await fetch(`${baseUrl}/api/issues`, issuePayload);
+  assert.equal(laterDuplicateResponse.status, 200);
+  assert.equal(createdIssueDrafts.length, issueCountBefore + 1);
   const archived = visualReview.store.load().annotations.find(({ id }) => id === requested.id)!;
   assert.equal(archived.status, "resolved");
   assert.equal(archived.issue_url, "https://github.com/example/project/issues/42");
   assert.equal(archived.issue_title, "編集後のIssue");
   assert.equal(archived.issue_state, "created");
+  assert.equal(archived.updated_at, preservedUpdatedAt);
+  assert.equal(archived.thread.length, preservedThreadLength);
 });
 
 test("supports file-state and annotation/message/status APIs through ReviewStore", async () => {

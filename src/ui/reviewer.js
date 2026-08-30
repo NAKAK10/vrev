@@ -28,6 +28,7 @@ const state = {
   pendingTargetRefresh: null,
   issueDraftQueue: [],
   currentIssueDraft: null,
+  issueCreateInFlight: false,
   forceResolve: null,
 };
 
@@ -1609,9 +1610,11 @@ function openIssueAnnotation(annotation) {
     return;
   }
   if (annotation.issue_state === "ready" && annotation.issue_title && annotation.issue_body) {
+    const id = annotationId(annotation);
+    if (state.currentIssueDraft?.annotationId === id || state.issueDraftQueue.some(({ annotationId: queuedId }) => queuedId === id)) return;
     state.issueDraftQueue.push({
       draft: { title: annotation.issue_title, body: annotation.issue_body },
-      annotationId: annotationId(annotation),
+      annotationId: id,
     });
     openNextIssueDraft();
   }
@@ -1651,32 +1654,39 @@ async function requestGitHubIssueFromPending() {
 }
 
 function cancelGitHubIssueDraft() {
+  if (state.issueCreateInFlight) return;
   state.currentIssueDraft = null;
   if (elements.githubIssueDialog.open) elements.githubIssueDialog.close();
 }
 
 async function createGitHubIssueFromDraft() {
+  if (state.issueCreateInFlight || !state.currentIssueDraft) return;
+  const draft = {
+    title: elements.githubIssueTitle.value.trim(),
+    body: elements.githubIssueBody.value.trim(),
+    annotation_id: state.currentIssueDraft.annotationId,
+  };
+  state.issueCreateInFlight = true;
   elements.githubIssueCreate.disabled = true;
+  elements.githubIssueCancelButtons.forEach((button) => { button.disabled = true; });
   try {
     const result = await request("/api/issues", {
       method: "POST",
-      body: JSON.stringify({
-        title: elements.githubIssueTitle.value.trim(),
-        body: elements.githubIssueBody.value.trim(),
-        annotation_id: state.currentIssueDraft?.annotationId,
-      }),
+      body: JSON.stringify(draft),
     });
     state.currentIssueDraft = null;
     state.filters.statuses.add("resolved");
     syncFilterControls();
     persistFilters();
     elements.githubIssueDialog.close();
+    applyReview(result.review);
     showToast(`GitHub Issueを作成し、解決済みへ記録しました：${result.url}`);
-    void loadSession();
   } catch (error) {
     showToast(`GitHub Issueの作成に失敗しました：${error.message}`, true);
   } finally {
+    state.issueCreateInFlight = false;
     elements.githubIssueCreate.disabled = false;
+    elements.githubIssueCancelButtons.forEach((button) => { button.disabled = false; });
   }
 }
 

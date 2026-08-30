@@ -403,17 +403,20 @@ export class ReviewStore {
     return withFileLock(this.path, () => {
       const review = this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
+      if (annotation.issue_state === "created") {
+        if (annotation.issue_url === url) return review;
+        throw new Error("Issue draft was already created with a different URL");
+      }
+      if (annotation.issue_state !== "ready" || annotation.status !== "addressed") {
+        throw new Error("Issue draft is not ready for creation");
+      }
       const timestamp = now();
       annotation.issue_state = "created";
       annotation.issue_title = issueTitle;
       annotation.issue_url = url;
       const previous = annotation.status;
       annotation.status = "resolved";
-      annotation.updated_at = timestamp;
-      const message = { id: randomUUID(), body: `GitHub Issueとして作成しました：${url}`, actor: "human" as const, at: timestamp };
-      annotation.thread.push(message);
-      this.addEvent(review, "message_added", annotationId, "human", timestamp, { message_id: message.id });
-      this.addEvent(review, "status_changed", annotationId, "human", timestamp, { from: previous, to: "resolved" });
+      this.addEvent(review, "status_changed", annotationId, "human", timestamp, { from: previous, to: "resolved", issue_url: url });
       this.writeUnlocked(review);
       return review;
     });

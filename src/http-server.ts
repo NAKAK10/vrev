@@ -397,6 +397,25 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
   const store = new ReviewStore(options.target, { projectRoot: options.projectRoot, ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}) });
   const jobManager = new JobManager(store, options.jobManager);
   const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createGitHubIssue(store.target.projectRoot, draft));
+  const issueCreations = new Map<string, Promise<GitHubIssueResult>>();
+  const createIssueOnce = (annotationId: string, draft: GitHubIssueDraft): Promise<GitHubIssueResult> => {
+    const annotation = store.load().annotations.find(({ id }) => id === annotationId);
+    if (!annotation) throw new HttpError(404, `annotation not found: ${annotationId}`);
+    if (annotation.issue_state === "created" && annotation.issue_url) return Promise.resolve({ url: annotation.issue_url });
+    if (annotation.issue_state !== "ready" || annotation.status !== "addressed") {
+      throw new HttpError(409, "Issue draft is not ready for creation");
+    }
+    const existing = issueCreations.get(annotationId);
+    if (existing) return existing;
+    const creation = issueCreator(draft)
+      .then((result) => {
+        store.completeIssueDraft(annotationId, draft.title, result.url);
+        return result;
+      })
+      .finally(() => issueCreations.delete(annotationId));
+    issueCreations.set(annotationId, creation);
+    return creation;
+  };
   const uiRoot = defaultUiRoot();
   for (const name of ["index.html", "reviewer.css", "reviewer.js", "jobs.js"]) {
     if (!existsSync(path.join(uiRoot, name))) {
@@ -498,9 +517,8 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           const payload = await readJson(request);
           const draft = normalizeGitHubIssueDraft(payload);
           if (typeof payload.annotation_id !== "string" || !payload.annotation_id) throw new HttpError(400, "annotation_id is required");
-          const result = await issueCreator(draft);
-          store.completeIssueDraft(payload.annotation_id, draft.title, result.url);
-          return sendJson(response, 200, result);
+          const result = await createIssueOnce(payload.annotation_id, draft);
+          return sendJson(response, 200, { ...result, review: store.loadActive() });
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));

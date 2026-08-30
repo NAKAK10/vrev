@@ -1,6 +1,6 @@
 {
   "name": "@nakak10/visual-review",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "private": false,
   "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
   "license": "UNLICENSED",
