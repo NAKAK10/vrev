@@ -275,8 +275,9 @@ function instruction(value: unknown, label: string, depth: number): void {
       break;
     }
     case "target.focus":
-      exactKeys(item, ["type", "target", "anchor", "restore_context"], label);
+      exactKeys(item, ["type", "target", "anchor", "annotation_id", "restore_context"], label);
       if (item.target !== undefined) binding(item.target, `${label}.target`);
+      if (item.annotation_id !== undefined) binding(item.annotation_id, `${label}.annotation_id`);
       if (item.anchor === undefined) throw new Error(`${label}.anchor is required`);
       binding(item.anchor, `${label}.anchor`);
       if (item.restore_context !== undefined && typeof item.restore_context !== "boolean") throw new Error(`${label}.restore_context must be boolean`);

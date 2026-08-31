@@ -143,8 +143,8 @@ a { color: inherit; }
 .vr-target-stage[data-viewport="tablet"] iframe { width: 768px; }
 .vr-target-stage[data-viewport="mobile"] iframe { width: 390px; }
 .vr-annotation-mark-layer { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
-.vr-annotation-mark { position: absolute; border-radius: 3px; background: rgb(217 52 43 / 24%); }
-.vr-annotation-mark.is-selected { background: rgb(217 52 43 / 38%); }
+.vr-annotation-mark { position: absolute; border: 2px solid var(--vr-color-accent); border-radius: 3px; background: rgb(217 52 43 / 16%); box-shadow: 0 0 0 1px rgb(255 255 255 / 75%); }
+.vr-annotation-mark.is-selected { z-index: 4; border-width: 3px; background: rgb(217 52 43 / 32%); box-shadow: 0 0 0 2px rgb(255 255 255 / 90%), 0 4px 14px rgb(17 24 39 / 24%); }
 .vr-annotation-mark.is-preview { outline: 2px solid var(--vr-color-accent); background: rgb(217 52 43 / 18%); }
 .vr-node-hover-mark { position: absolute; z-index: 5; border: 2px solid var(--vr-color-accent); border-radius: 3px; background: rgb(217 52 43 / 16%); box-shadow: 0 0 0 1px rgb(255 255 255 / 75%); pointer-events: none; }
 .vr-annotation-pin { position: absolute; top: -12px; left: -12px; display: grid; width: 24px; height: 24px; place-items: center; border: 2px solid #fff; border-radius: 50%; color: #fff; background: var(--vr-color-accent); font-size: 10px; font-weight: 800; }
@@ -198,6 +198,9 @@ a { color: inherit; }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="addressed"] { color: var(--vr-color-success); background: var(--vr-color-success-soft); }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="resolved"] { color: #596563; background: #eef2f1; }
 .vr-panel[data-variant="annotation-card"] > .vr-text { margin: 1px 86px 8px 0; font-size: 13px; font-weight: 700; line-height: 1.5; }
+.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"] { display: block; width: calc(100% - 82px); min-height: 0; margin: 0 82px 8px 0; padding: 1px 0; color: var(--vr-color-text); font-size: 13px; font-weight: 800; line-height: 1.5; text-align: left; background: transparent; border: 0; border-radius: 3px; }
+.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:hover { color: var(--vr-color-accent); text-decoration: underline; text-underline-offset: 3px; background: var(--vr-color-accent-soft); }
+.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:focus-visible { outline: 2px solid var(--vr-color-focus); outline-offset: 2px; }
 .vr-row[data-variant="annotation-meta"] { display: grid; margin: 0 !important; color: var(--vr-color-text-muted); grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; }
 .vr-row[data-variant="annotation-meta"] .vr-badge { padding: 2px 6px; font-size: 9px; }
 .vr-row[data-variant="annotation-meta"] .vr-text { min-width: 0; margin: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

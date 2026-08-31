@@ -2,7 +2,7 @@
 
 ## Core is a minimal Plugin Host (v4 beta)
 
-Status: accepted and implemented through migration Phase 10 for `1.1.3`.
+Status: accepted and implemented through migration Phase 10 for `1.1.4`.
 
 Review persistence and validation are owned by the bundled `review` plugin; job orchestration and the complete right sidebar by `annotation-workflow`; verified external runners by `custom-command`; and Issue behavior by `github-issue`. Core retains bootstrap, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned SDK contracts.
 
@@ -99,7 +99,7 @@ annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI co
 
 ## Phase 10 release and publication policy
 
-`1.1.3` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
+`1.1.4` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
 
 Root and standalone plugin publication is non-atomic. Because the root package bundles compatible default server/UI copies, a standalone registry failure does not break initial startup. Recovery is to retain the published root, rerun publication after fixing the failed plugin, and let the workflow skip package versions already present. Never republish or overwrite an existing version.
 
@@ -134,6 +134,10 @@ modal内の長時間commandは開始時に所要時間を通知し、対象butto
 node/region/browseのmode変更ではtarget iframeを維持しつつ、旧modeのcapture listenerを必ずremoveしてから新modeのlistenerをinstallする。documentにcleanup handleを1つだけ保持し、同一modeの重複installは行わない。これによりregionからnodeへ切り替えた後に旧pointer listenerが範囲注釈を作る競合を防ぐ。
 
 review treeの部分patchではtarget iframe以外のoverlay DOMが置換されるため、main browser moduleもcleanup後に接続中のcontribution rootへ再mountする。hover枠が切り離された旧annotation layerへ描画されることを防ぎ、node modeのたびに現在のlayerへ追従させる。iframe読込初期に`documentElement`が未生成の場合は短時間後にinstallを再試行する。
+
+## Annotation target visibility
+
+active annotationはnode/regionともcurrent target上へ、選択時と同じaccent border＋translucent fillで常時表示する。live proxyのcurrent pageは`/live/...`ではなく元の`live_url`を基準にcanonical URLへ戻してannotationの`page_path`と比較する。sidebarのannotation titleと「対象を表示」はどちらもtarget focus actionとし、クリックしたannotation IDをselected markとして強調して対象位置へscrollする。
 
 ## Auto-run and manual batch exclusivity
 

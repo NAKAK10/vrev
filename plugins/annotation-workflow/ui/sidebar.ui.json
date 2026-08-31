@@ -29,7 +29,7 @@
       { "type": "list", "props": { "label": { "literal": "レビュー注釈" }, "empty_message": { "literal": "注釈はまだありません。" }, "variant": { "literal": "annotation-list" } }, "children": [
         { "type": "panel", "props": { "variant": { "literal": "annotation-card" } }, "repeat": { "source": { "resource": "annotations", "path": "/items" }, "key": { "item": "/id" } }, "children": [
           { "type": "status", "props": { "value": { "item": "/status" }, "label": { "item": "/status_label" } } },
-          { "type": "text", "props": { "text": { "item": "/comment" }, "preserve_whitespace": { "literal": true } } },
+          { "type": "button", "props": { "label": { "item": "/comment" }, "variant": { "literal": "annotation-target" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
           { "type": "row", "props": { "variant": { "literal": "annotation-meta" } }, "children": [
             { "type": "badge", "props": { "text": { "item": "/kind_label" } } },
             { "type": "text", "props": { "text": { "item": "/page_path" }, "truncate": { "literal": true } } },
@@ -42,7 +42,7 @@
               { "type": "text", "props": { "text": { "item": "/body" }, "preserve_whitespace": { "literal": true } } }
             ] }
           ] },
-          { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "restore_context": true }] } },
+          { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
           { "type": "form", "props": { "name": { "literal": "reply" }, "submit_on_enter": { "literal": true }, "variant": { "literal": "inline-reply" } }, "on": { "submit": [{ "type": "command.execute", "command": "annotation.reply", "input": { "annotation_id": { "item": "/id" }, "comment": { "form": "reply" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }] }] }, "children": [
             { "type": "input", "props": { "name": { "literal": "reply" }, "label": { "literal": "返信" }, "max_length": { "literal": 2000 } } },
             { "type": "button", "props": { "label": { "literal": "返信" }, "type": { "literal": "submit" } } }

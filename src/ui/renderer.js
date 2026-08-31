@@ -257,7 +257,7 @@ function renderSingle(definition, scope) {
   if (type === "checkbox-group") renderCheckboxGroup(node, values, definition, scope);
   if (type.includes("dialog")) prepareDialog(node, values, definition, scope);
   if (type === "disclosure") node.open = Boolean(values.expanded);
-  if (type === "annotation-mark-layer") { node.setAttribute("aria-hidden", "true"); node.__marks = Array.isArray(values.marks) ? values.marks : []; node.__selectedId = values.selected_id; }
+  if (type === "annotation-mark-layer") { node.setAttribute("aria-hidden", "true"); node.__marks = Array.isArray(values.marks) ? values.marks : []; node.__selectedId = values.selected_id ?? reviewSelection.annotation_id; }
   bindEvents(node, definition, scope);
   for (const child of definition.children || []) (node.__content || node).append(renderNode(child, scope));
   if (type === "list" && values.empty_message && node.childElementCount === 0) { const empty = element("p", "vr-empty-state"); empty.textContent = String(values.empty_message); node.append(empty); }
@@ -330,7 +330,7 @@ async function execute(instructions, scope) {
     else if (instruction.type === "dialog.close") closeDialog(instruction.dialog ? dialogFor(scope, instruction.dialog) : document.querySelector("dialog[open]"));
     else if (instruction.type === "resource.refresh") await loadResource(scope.contribution, instruction.resource, scope);
     else if (instruction.type === "target.reload") document.querySelector(".vr-target-stage iframe")?.contentWindow?.location.reload();
-    else if (instruction.type === "target.focus") await focusTarget(binding(instruction.target, scope), binding(instruction.anchor, scope), instruction.restore_context);
+    else if (instruction.type === "target.focus") { reviewSelection.annotation_id = binding(instruction.annotation_id, scope) ?? null; const layer = document.querySelector(".vr-annotation-mark-layer"); if (layer) layer.__selectedId = reviewSelection.annotation_id; await focusTarget(binding(instruction.target, scope), binding(instruction.anchor, scope), instruction.restore_context); }
     else if (instruction.type === "navigate.internal") location.assign(String(binding(instruction.path, scope)));
     else if (instruction.type === "navigate.external") { const url = String(binding(instruction.url, scope)); if ((!instruction.confirmation || confirm(String(instruction.confirmation))) && /^https?:\/\//.test(url)) open(url, "_blank", "noopener"); }
     else if (instruction.type === "toast.show") toast(String(binding(instruction.message, scope)), instruction.variant);
@@ -400,7 +400,7 @@ function safeMarkdown(markdown) {
   return container;
 }
 function documentSize(doc) { const root = doc.documentElement; const body = doc.body; return { width: Math.max(1, root?.scrollWidth || 0, body?.scrollWidth || 0), height: Math.max(1, root?.scrollHeight || 0, body?.scrollHeight || 0) }; }
-function pagePathForFrame(stage, frame) { try { const pathname = frame.contentWindow.location.pathname; return pathname.startsWith("/target/") ? decodeURIComponent(pathname.slice(8)) : pathname.startsWith("/live") ? pathname.slice(5) || "/" : pathname; } catch { return stage.__target?.entry_path || "/"; } }
+function pagePathForFrame(stage, frame) { try { const location = frame.contentWindow.location; const pathname = location.pathname; if (pathname.startsWith("/target/")) return decodeURIComponent(pathname.slice(8)); if (pathname.startsWith("/live")) { const proxiedPath = `${pathname.slice(5) || "/"}${location.search}`; return stage.__target?.live_url ? new URL(proxiedPath, stage.__target.live_url).toString() : proxiedPath; } return `${pathname}${location.search}`; } catch { return stage.__target?.entry_path || "/"; } }
 function domSelector(selected, doc) { if (selected.id) { const value = `#${CSS.escape(selected.id)}`; if (doc.querySelectorAll(value).length === 1) return value; } const parts = []; for (let item = selected; item && item !== doc.documentElement && parts.length < 16; item = item.parentElement) { const siblings = item.parentElement ? [...item.parentElement.children].filter((child) => child.localName === item.localName) : []; parts.unshift(`${item.localName}${siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(item) + 1})` : ""}`); } return parts.join(" > "); }
 function installHtmlSelection(container, frame, mode) {
   const doc = frame.contentDocument; const win = frame.contentWindow; if (!doc || !win) return;
