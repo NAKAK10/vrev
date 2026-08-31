@@ -12,7 +12,7 @@
 - [x] Phase 7: implement the bounded JSON UI document loader and Core-owned declarative renderer; trusted local browser modules are now an explicit opt-in for behavior that cannot be expressed declaratively
 - [x] Phase 8: make the declarative plugin surface the default and compose bundled review/workflow/custom-command/Issue contributions
 - [x] Phase 9: reduce old Core domain modules to delegating compatibility façades and add source-boundary tests that reject domain logic in those façades and implementation imports across plugin boundaries
-- [x] Phase 10: complete desktop/tablet/mobile browser acceptance, verify the declarative default and legacy rollback routes, and close package/release hygiene for `1.1.5`
+- [x] Phase 10: complete desktop/tablet/mobile browser acceptance, verify the declarative default and legacy rollback routes, and close package/release hygiene for `1.1.6`
 - [x] Move declarative review/settings chrome to a shared Core-owned semantic token stylesheet so every plugin surface receives consistent CSS
 - [ ] Add a versioned theme-provider contract that can override only validated semantic tokens, never arbitrary plugin CSS or selectors
 
@@ -20,7 +20,7 @@ The beta compatibility line intentionally retains rollback and deprecation surfa
 
 Focused host, extraction, renderer, server, job, manifest, and plugin tests enforce lifecycle isolation, exact contracts, opaque runner IDs, façade delegation, declarative JSON documents plus explicitly declared local browser modules, and the implemented import boundaries. Browser acceptance covers the default declarative review/settings surfaces at desktop, tablet, and mobile sizes and the legacy route/flag rollback. Automated framework-fixture E2E remains a future localhost-mode enhancement, not an unverified v4 release claim. The authoritative remote-storage atomicity model remains a post-v4 decision gate.
 
-### Phase 10 release acceptance (`1.1.5`)
+### Phase 10 release acceptance (`1.1.6`)
 
 - [x] root `package.json` and `package-lock.json` versions match
 - [x] schema v4 is documented as the default; schema v1–v3 and legacy routes remain compatibility inputs

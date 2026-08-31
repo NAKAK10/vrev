@@ -131,6 +131,7 @@ test("bundled review documents bind localized annotation content, filters, overl
   const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
   const issueText = readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/issue.ui.json"), "utf8");
   assert.doesNotThrow(() => parsePluginUiDocument(review));
+  assert.match(sidebarText, /"aria_label": \{ "item": "\/comment" \}/);
   assert.match(sidebarText, /"label": \{ "item": "\/comment" \}/);
   assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
   assert.match(sidebarText, /"kind_label"|\/kind_label/);
@@ -150,6 +151,8 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(rendererSource, /anchor\?\.bounds \|\| anchor\?\.rect/);
   assert.match(rendererSource, /else if \(annotation\.anchor\?\.rect\)/);
   assert.match(rendererSource, /if \(status\) mark\.dataset\.status = status/);
+  assert.match(rendererSource, /definition\.type === "panel" && eventName === "click"/);
+  assert.match(rendererSource, /node\.classList\.add\("is-clickable"\); node\.tabIndex = 0/);
   assert.match(rendererSource, /aria-keyshortcuts/);
   assert.match(reviewRuntime, /\{ v: "browse", n: "node", r: "region" \}/);
   assert.match(reviewRuntime, /doc\.addEventListener\("keydown", keydown, true\)/);

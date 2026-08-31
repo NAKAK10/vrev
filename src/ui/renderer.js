@@ -231,6 +231,7 @@ function renderSingle(definition, scope) {
   if (type === "live-status") { node.setAttribute("role", "status"); node.setAttribute("aria-live", values.politeness === "assertive" ? "assertive" : "polite"); }
   if (type === "count") node.textContent = `${values.value ?? 0}${values.label ? ` ${values.label}` : ""}`;
   if ((type === "section" || type === "panel") && values.title) { const title = element(type === "section" ? "h2" : "h3", "vr-section-title"); title.textContent = String(values.title); node.append(title); if (values.description) { const description = element("p", "vr-section-description"); description.textContent = String(values.description); node.append(description); } }
+  if (type === "panel" && values.aria_label) node.setAttribute("aria-label", String(values.aria_label));
   if (type === "button" || type === "load-more") { node.textContent = String(values.label || ""); if (values.type) node.type = String(values.type); }
   if (type === "link") { node.textContent = String(values.label || ""); if (typeof values.href === "string") node.href = values.href; if (values.external) { node.target = "_blank"; node.rel = "noopener noreferrer"; } }
   if (["input", "textarea"].includes(type)) { control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
@@ -280,11 +281,16 @@ function bindEvents(node, definition, scope) {
   for (const [name, instructions] of Object.entries(definition.on || {})) {
     const eventName = ({ change: "change", input: "input", click: "click", submit: "submit", toggle: "toggle", close: "close", cancel: "cancel", confirm: "click" })[name] || name;
     node.addEventListener(eventName, (event) => {
+      if (definition.type === "panel" && eventName === "click" && event.target !== node && event.target.closest("button,a,input,textarea,select,form,[role='button']")) return;
       if (eventName === "submit") event.preventDefault();
       if (name === "selection-commit" && event.detail?.selection) { reviewSelection.anchor = event.detail.selection; reviewSelection.page_path = event.detail.selection.page_path ?? null; scope.slotContext.review = { selection: reviewSelection }; }
       const eventData = event.detail ?? (name === "toggle" ? { expanded: node.open } : { value: node.type === "checkbox" ? node.checked : node.__optionValues?.get(node.value) ?? node.value });
       void execute(instructions, { ...scope, event: eventData, form: formValues(node) });
     });
+  }
+  if (definition.type === "panel" && definition.on?.click) {
+    node.classList.add("is-clickable"); node.tabIndex = 0;
+    node.addEventListener("keydown", (event) => { if (event.target === node && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); node.click(); } });
   }
   if (node instanceof HTMLFormElement) node.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); node.requestSubmit(); }

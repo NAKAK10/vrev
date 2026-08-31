@@ -196,7 +196,7 @@ npm run build
 GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-npm version 1.1.5 --no-git-tag-version
+npm version 1.1.6 --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check

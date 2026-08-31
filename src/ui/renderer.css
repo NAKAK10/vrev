@@ -196,6 +196,9 @@ a { color: inherit; }
 .vr-section[data-variant="sidebar-annotations"] > .vr-checkbox-group .vr-checkbox-option { min-height: 30px; padding: 5px 9px; background: var(--vr-color-surface-subtle); }
 .vr-list[data-variant="annotation-list"] { margin-top: 4px; border-top: 1px solid var(--vr-color-border); }
 .vr-panel[data-variant="annotation-card"] { position: relative; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--vr-color-border); }
+.vr-panel[data-variant="annotation-card"].is-clickable { cursor: pointer; transition: background 120ms ease, box-shadow 120ms ease; }
+.vr-panel[data-variant="annotation-card"].is-clickable:hover { background: var(--vr-color-surface-subtle); }
+.vr-panel[data-variant="annotation-card"].is-clickable:focus-visible { outline: 2px solid var(--vr-color-focus); outline-offset: -2px; }
 .vr-panel[data-variant="annotation-card"] > .vr-status { position: absolute; top: 13px; right: 16px; margin: 0; font-size: 10px; }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="open"] { color: #8b261f; background: var(--vr-color-danger-soft); }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="in_progress"] { color: #245f8a; background: #edf6fc; }

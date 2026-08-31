@@ -27,7 +27,7 @@ const COMPONENT_PROPS: Readonly<Record<string, readonly string[]>> = {
   section: ["title", "description", "collapsible", "expanded"],
   stack: ["gap", "align", "justify", "wrap", "collapse"],
   row: ["gap", "align", "justify", "wrap", "collapse"],
-  panel: ["title", "tone", "variant", "padding"],
+  panel: ["title", "tone", "variant", "padding", "aria_label"],
   spacer: ["size", "grow"],
   text: ["text", "value", "tone", "variant", "size", "truncate", "preserve_whitespace"],
   heading: ["text", "value", "level", "size"],
@@ -63,7 +63,7 @@ const COMPONENT_PROPS: Readonly<Record<string, readonly string[]>> = {
 };
 
 const COMPONENT_EVENTS: Readonly<Record<string, readonly string[]>> = {
-  button: ["click"], link: ["click"], form: ["submit", "reset"],
+  button: ["click"], link: ["click"], panel: ["click"], form: ["submit", "reset"],
   input: ["input", "change", "focus", "blur"], textarea: ["input", "change", "focus", "blur"],
   select: ["change", "focus", "blur"], switch: ["change"], checkbox: ["change"], "checkbox-group": ["change"],
   dialog: ["open", "close", "cancel"], "confirmation-dialog": ["confirm", "cancel", "close"],

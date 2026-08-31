@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "github-issue",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "display": {
     "title": "GitHub Issue",
     "summary": "レビューから確認済みのGitHub Issueを作成します。",
