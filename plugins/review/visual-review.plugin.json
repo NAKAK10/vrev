@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "review",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "display": {
     "title": "レビュー",
     "summary": "レビュー注釈、履歴、永続化を提供します。",

@@ -31,7 +31,7 @@ export interface ResolvedTarget {
   absolutePath: string;
   kind: "html" | "image";
   liveUrl?: string;
-  urlMode?: "loopback" | "public";
+  urlMode?: "loopback" | "private" | "public";
 }
 
 const ACTORS = new Set(["human", "ai"]);

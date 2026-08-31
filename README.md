@@ -70,13 +70,19 @@ visual-review serve \
   --start "npm run dev"
 ```
 
+同一LAN上のprivate IPもHTTPで指定できます:
+
+```bash
+visual-review serve --target http://192.168.11.13:3000
+```
+
 HTTPSのstagingサイト:
 
 ```bash
 visual-review serve --target https://staging.example.com/products
 ```
 
-既定ポートは`18765`です。使用中の場合は次の空きポートを自動選択します。`--no-open`でブラウザの自動起動を無効化できます。
+既定ポートは`18765`です。使用中の場合は次の空きポートを自動選択します。起動後は既定ブラウザを開き、ブラウザ起動コマンドの完了まで待って取りこぼしを防ぎます。`--no-open`でブラウザの自動起動を無効化できます。
 
 ## JavaScriptを含むHTML
 
@@ -171,7 +177,8 @@ beta.7では宣言的rendererが`/`と`/settings/plugins`の既定です。one-b
 ## 対応対象と安全性
 
 - local fileは`.code/htmls/**/*.html`と`assets/`配下の画像に対応
-- localhostは`localhost`、`127.0.0.1`、`::1`のみ許可
+- localhostは`localhost`、`127.0.0.1`、`::1`をHTTPで許可
+- private networkのIP literal（`10/8`、`100.64/10`、`172.16/12`、`192.168/16`、IPv6 ULA/link-local）をHTTPで許可
 - public targetはHTTPSのみ許可し、cookie・authorizationを転送しない
 - public targetではJavaScript、form、ローカルAI APIを無効化
 - GitHub Issueは対象リポジトリ内で`gh issue create`を実行して作成
@@ -189,7 +196,7 @@ npm run build
 GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-npm version 1.1.0 --no-git-tag-version
+npm version 1.1.1 --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check

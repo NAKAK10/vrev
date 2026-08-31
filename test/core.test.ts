@@ -39,16 +39,22 @@ test("safe stem excludes decomposed Unicode combining marks", () => {
   assert.equal(reviewDirectoryName("assets/é.png").split("--")[0], "é");
 });
 
-test("accepts loopback and public HTTPS targets while rejecting unsafe URLs", () => {
+test("accepts loopback, private-network HTTP, and public HTTPS targets while rejecting unsafe URLs", () => {
   const root = repository();
   const live = resolveTarget("http://127.0.0.1:5173/dashboard?tab=one#ignored", root);
   assert.equal(live.liveUrl, "http://127.0.0.1:5173/dashboard?tab=one");
   assert.equal(live.kind, "html");
   assert.equal(live.urlMode, "loopback");
+  const privateNetwork = resolveTarget("http://192.168.11.13:3000/dashboard#ignored", root);
+  assert.equal(privateNetwork.liveUrl, "http://192.168.11.13:3000/dashboard");
+  assert.equal(privateNetwork.urlMode, "private");
+  assert.equal(resolveTarget("http://10.0.0.8:8080", root).urlMode, "private");
+  assert.equal(resolveTarget("http://172.16.4.8:8080", root).urlMode, "private");
   const hosted = resolveTarget("https://example.com/products?tab=one#ignored", root);
   assert.equal(hosted.liveUrl, "https://example.com/products?tab=one");
   assert.equal(hosted.urlMode, "public");
   assert.throws(() => resolveTarget("http://example.com", root), /public host/);
+  assert.throws(() => resolveTarget("http://169.254.169.254", root), /public host/);
   const credentialed = ["https://", "user", ":", "placeholder", "@example.com"].join("");
   assert.throws(() => resolveTarget(credentialed, root), /credentials/);
 });

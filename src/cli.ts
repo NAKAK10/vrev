@@ -28,7 +28,7 @@ interface ServeArguments {
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve [--project-root <root>] --target <relative|loopback-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: visual-review serve [--project-root <root>] --target <relative|local-network-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
@@ -59,9 +59,9 @@ export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArg
   const urlTarget = /^https?:\/\//i.test(target);
   const targetUrl = urlTarget ? normalizeTargetUrl(target) : null;
   if (!target.trim() || (!urlTarget && (path.isAbsolute(target) || path.win32.isAbsolute(target) || target.includes("\\")))) {
-    throw new Error("target must be a POSIX relative path, loopback HTTP URL, or public HTTPS URL");
+    throw new Error("target must be a POSIX relative path, local-network HTTP URL, or public HTTPS URL");
   }
-  if (values.has("--start") && targetUrl?.mode !== "loopback") throw new Error("--start requires a loopback URL target");
+  if (values.has("--start") && (!targetUrl || targetUrl.mode === "public")) throw new Error("--start requires a loopback or private-network URL target");
   if (targetUrl?.mode === "public" && allowScripts) throw new Error("--allow-scripts is not available for public targets");
   if (values.has("--stop") && !values.has("--start")) throw new Error("--stop requires --start");
   const host = values.get("--host") ?? "127.0.0.1";
@@ -188,16 +188,18 @@ export async function ensureDefaultPlugins(
   return installed;
 }
 
-function openBrowser(url: string): void {
+async function openBrowser(url: string): Promise<void> {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  try {
-    const child = spawn(command, args, { shell: false, detached: true, stdio: "ignore" });
-    child.on("error", () => undefined);
-    child.unref();
-  } catch {
-    // Opening the browser is best-effort; the printed URL remains usable.
-  }
+  await new Promise<void>((resolve) => {
+    try {
+      const child = spawn(command, args, { shell: false, stdio: "ignore" });
+      child.once("error", () => resolve());
+      child.once("close", () => resolve());
+    } catch {
+      resolve();
+    }
+  });
 }
 
 export interface SignalSource {
@@ -397,7 +399,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const url = `http://${args.host === "::1" ? "[::1]" : args.host}:${address.port}/`;
   console.log(`Visual review: ${url}`);
   console.log(`Target: ${visualReview.store.entryPath}`);
-  if (args.open) openBrowser(url);
+  if (args.open) await openBrowser(url);
 }
 
 const invokedPath = process.argv[1];

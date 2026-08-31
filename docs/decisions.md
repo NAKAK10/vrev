@@ -2,7 +2,7 @@
 
 ## Core is a minimal Plugin Host (v4 beta)
 
-Status: accepted and implemented through migration Phase 10 for `1.1.0`.
+Status: accepted and implemented through migration Phase 10 for `1.1.1`.
 
 Review persistence and validation are owned by the bundled `review` plugin; job orchestration and the complete right sidebar by `annotation-workflow`; verified external runners by `custom-command`; and Issue behavior by `github-issue`. Core retains bootstrap, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned SDK contracts.
 
@@ -30,7 +30,7 @@ Compatibility is deliberate, not incomplete extraction. For this one-beta deprec
 
 ## Loopback live application proxy
 
-HTTPの`localhost` / `127.0.0.1` / `::1` targetはreview serverの`/live/`配下へreverse proxyする。
+HTTPの`localhost` / `127.0.0.1` / `::1`と、private networkのIP literal（`10/8`、`100.64/10`、`172.16/12`、`192.168/16`、IPv6 ULA/link-local）targetはreview serverの`/live/`配下へreverse proxyする。private hostnameをDNS解決して暗黙許可せず、明示されたprivate IPだけをtrusted local-network targetとして扱う。
 同一生成元に揃えることでVue、React、WordPressなどのDOMを親reviewerから選択できる。HTML/CSS/JavaScript内のroot-relative URLと
 同じportのloopback aliasを`/live/`へ書き換え、route URLをannotationの`page_path`として保存する。
 
@@ -81,7 +81,7 @@ review保存先、schema v2、schema 1 migration、status/event規則は既存re
 同じreview directoryを複数serverが同時所有しないよう`.server-lease.json`で起動を排他する。
 
 `--allow-scripts`は信頼済みlocal prototype専用である。AI一括修正は通常運用を優先してCLI既定で有効とする。
-対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。loopback proxyは`/live/` baseを注入し、JavaScript全体の文字列置換ではなくmodule import・network URL・location bridgeだけを変換する。これによりSPA route文字列や正規表現を壊さず、root-relative assetは未知route fallbackでupstreamへ転送する。loopback targetは信頼済みappとして外部style・font・API・WebSocketを許可するが、public targetの厳格なCSPは緩和しない。
+対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。loopback/private-network proxyは`/live/` baseを注入し、JavaScript全体の文字列置換ではなくmodule import・network URL・location bridgeだけを変換する。これによりSPA route文字列や正規表現を壊さず、root-relative assetは未知route fallbackでupstreamへ転送する。loopback targetは信頼済みappとして外部style・font・API・WebSocketを許可するが、public targetの厳格なCSPは緩和しない。
 public targetでは`--allow-scripts`を受理せず、対象scriptからlocal APIやAI processへ到達する経路を作らない。
 
 ## Coordinator sessions are CLI-owned
@@ -99,7 +99,7 @@ annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI co
 
 ## Phase 10 release and publication policy
 
-`1.1.0` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
+`1.1.1` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
 
 Root and standalone plugin publication is non-atomic. Because the root package bundles compatible default server/UI copies, a standalone registry failure does not break initial startup. Recovery is to retain the published root, rerun publication after fixing the failed plugin, and let the workflow skip package versions already present. Never republish or overwrite an existing version.
 

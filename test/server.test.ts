@@ -617,7 +617,7 @@ test("server increments from an occupied port", async () => {
   }
 });
 
-test("CLI normalizes project root, validates POSIX target, loopback host and port", () => {
+test("CLI normalizes project root and accepts loopback or private-network targets", () => {
   const cliRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-cli-"));
   mkdirSync(path.join(cliRoot, "project"));
   const parsed = parseCliArguments([
@@ -649,13 +649,16 @@ test("CLI normalizes project root, validates POSIX target, loopback host and por
   assert.equal(live.target, "http://localhost:5173");
   assert.equal(live.startCommand, "npm run dev");
   assert.equal(live.stopCommand, "npm run down");
+  const privateNetwork = parseCliArguments(["serve", "--project-root", ".", "--target", "http://192.168.11.13:3000", "--start", "npm run dev"], "/tmp");
+  assert.equal(privateNetwork.target, "http://192.168.11.13:3000");
+  assert.equal(privateNetwork.startCommand, "npm run dev");
   assert.throws(() => assertLoopbackHost("0.0.0.0"), /host/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets\\x.png"]), /POSIX/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--port", "0"]), /port/);
   const hosted = parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com/products"], "/tmp");
   assert.equal(hosted.target, "https://example.com/products");
-  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback URL/);
-  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--start", "npm run dev"]), /requires a loopback URL/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback or private-network URL/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--start", "npm run dev"]), /requires a loopback or private-network URL/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--allow-scripts"]), /not available for public/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--stop", "npm run down"]), /requires --start/);
 });

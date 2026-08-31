@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
 import path from "node:path";
 
 import type { TargetKind } from "./types.js";
@@ -22,25 +23,37 @@ export interface ResolvedTarget {
   entryPath: string;
   kind: TargetKind;
   liveUrl?: string;
-  urlMode?: "loopback" | "public";
+  urlMode?: "loopback" | "private" | "public";
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+const PRIVATE_NETWORKS = new BlockList();
+for (const [address, prefix, family] of [
+  ["10.0.0.0", 8, "ipv4"], ["100.64.0.0", 10, "ipv4"], ["172.16.0.0", 12, "ipv4"], ["192.168.0.0", 16, "ipv4"],
+  ["fc00::", 7, "ipv6"], ["fe80::", 10, "ipv6"],
+] as const) PRIVATE_NETWORKS.addSubnet(address, prefix, family);
 
-export function normalizeTargetUrl(value: string): { url: string; mode: "loopback" | "public" } {
+function isPrivateNetworkAddress(hostname: string): boolean {
+  const family = isIP(hostname);
+  return family !== 0 && PRIVATE_NETWORKS.check(hostname, family === 6 ? "ipv6" : "ipv4");
+}
+
+export function normalizeTargetUrl(value: string): { url: string; mode: "loopback" | "private" | "public" } {
   let url: URL;
   try { url = new URL(value); } catch { throw new Error("target URL must be a valid HTTP URL"); }
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (url.username || url.password) throw new Error("target URL must not contain credentials");
   const loopback = LOOPBACK_HOSTNAMES.has(hostname);
-  if ((loopback && url.protocol !== "http:") || (!loopback && url.protocol !== "https:")) {
-    throw new Error("target URL must use HTTP on loopback or HTTPS on a public host");
+  const privateNetwork = !loopback && url.protocol === "http:" && isPrivateNetworkAddress(hostname);
+  const localNetwork = loopback || privateNetwork;
+  if ((localNetwork && url.protocol !== "http:") || (!localNetwork && url.protocol !== "https:")) {
+    throw new Error("target URL must use HTTP on loopback/private networks or HTTPS on a public host");
   }
-  if (!loopback && (hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname === "metadata.google.internal")) {
+  if (!localNetwork && (hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname === "metadata.google.internal")) {
     throw new Error("public target hostname is not allowed");
   }
   url.hash = "";
-  return { url: url.toString(), mode: loopback ? "loopback" : "public" };
+  return { url: url.toString(), mode: loopback ? "loopback" : privateNetwork ? "private" : "public" };
 }
 
 export function normalizeLoopbackUrl(value: string): string {
