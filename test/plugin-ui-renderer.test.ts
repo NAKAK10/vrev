@@ -79,6 +79,9 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /instanceKey: \[scope\.instanceKey, repeatKey\]/);
   assert.match(source, /scope\.instanceKey \|\| "root".*instruction\.command/);
   assert.match(source, /pending\?\.disable/);
+  assert.match(source, /result\.error\?\.code === "CONFLICT"/);
+  assert.match(source, /await refreshResourceNamed\(revisionResource, scope\)/);
+  assert.match(source, /result = await requestCommand\(\)/);
   assert.match(source, /installHtmlSelection/);
   assert.match(source, /doc\.__vrSelectionCleanup\?\.\(\)/);
   assert.match(source, /doc\.removeEventListener\("pointerdown", pointerdown, true\)/);
@@ -129,6 +132,7 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
   assert.match(sidebarText, /"kind_label"|\/kind_label/);
   assert.match(sidebarText, /"type": "checkbox-group"/);
+  assert.match(sidebarText, /"id": "batch-run".*"resource": "workflow-settings", "path": "\/auto_run".*"literal": false/);
   assert.match(sidebarText, /"limit": \{ "literal": 24 \}/);
   assert.match(sidebarText, /"type": "target\.focus", "target": \{ "item": "\/page_path" \}/);
   assert.match(sidebarText, /"id": "force-resolve-dialog"/);

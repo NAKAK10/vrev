@@ -344,7 +344,21 @@ async function command(instruction, scope) {
   const disableId = instruction.pending?.disable ? instanceId(scope, instruction.pending.disable) : null;
   const disabledControl = disableId ? document.getElementById(disableId) : null;
   if (disabledControl) { disabledControl.disabled = true; disabledControl.setAttribute("aria-busy", "true"); }
-  const operation = fetch(`/api/plugin-host/v1/plugins/${encodeURIComponent(scope.plugin)}/commands/${encodeURIComponent(instruction.command)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), expected_revision: binding(instruction.expected_revision, scope) ?? null, input }) }).then(async (response) => { const result = await response.json().catch(() => null); if (!result) throw new Error(`${response.status} ${response.statusText}`); return result; });
+  const requestCommand = async () => {
+    const response = await fetch(`/api/plugin-host/v1/plugins/${encodeURIComponent(scope.plugin)}/commands/${encodeURIComponent(instruction.command)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), expected_revision: binding(instruction.expected_revision, scope) ?? null, input }) });
+    const result = await response.json().catch(() => null);
+    if (!result) throw new Error(`${response.status} ${response.statusText}`);
+    return result;
+  };
+  const operation = (async () => {
+    let result = await requestCommand();
+    const revisionResource = instruction.expected_revision?.resource;
+    if (!result.ok && result.error?.code === "CONFLICT" && typeof revisionResource === "string") {
+      await refreshResourceNamed(revisionResource, scope);
+      result = await requestCommand();
+    }
+    return result;
+  })();
   pending.set(key, operation);
   try {
     const result = await operation; if (!result.ok) throw result.error;
