@@ -154,6 +154,9 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(rendererSource, /else if \(annotation\.anchor\?\.rect\)/);
   assert.match(rendererSource, /if \(status\) mark\.dataset\.status = status/);
   assert.match(rendererSource, /definition\.type === "panel" && eventName === "click"/);
+  assert.match(rendererSource, /resourceStores\.get\("annotation-workflow:workflow-settings"\)\?\.data/);
+  assert.match(rendererSource, /commands\/jobs\.enqueue/);
+  assert.match(rendererSource, /instruction\.command === "annotation\.create"\) await autoRunNewAnnotation\(scope\)/);
   assert.match(rendererSource, /node\.classList\.add\("is-clickable"\); node\.tabIndex = 0/);
   assert.match(rendererSource, /aria-keyshortcuts/);
   assert.match(reviewRuntime, /\{ v: "browse", n: "node", r: "region" \}/);

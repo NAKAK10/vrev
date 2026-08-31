@@ -343,6 +343,19 @@ async function execute(instructions, scope) {
     else if (instruction.type === "command.execute") await command(instruction, scope);
   }
 }
+async function autoRunNewAnnotation(scope) {
+  const settings = resourceStores.get("annotation-workflow:workflow-settings")?.data;
+  if (settings?.auto_run !== true) return;
+  try {
+    const response = await fetch("/api/plugin-host/v1/plugins/annotation-workflow/commands/jobs.enqueue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), input: { runner: settings.runner, max_parallel: settings.max_parallel } }) });
+    const result = await response.json().catch(() => null);
+    if (!result?.ok) throw new Error(result?.error?.message || `${response.status} ${response.statusText}`);
+    await Promise.all([refreshResourceNamed("annotations", scope), refreshResourceNamed("jobs", scope)]);
+    toast("注釈を保存し、AI修正を開始しました", "success");
+  } catch (error) {
+    toast(`注釈は保存されましたが、AI修正を開始できませんでした：${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
 async function command(instruction, scope) {
   const key = `${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:${instruction.command}`;
   if (instruction.pending?.deduplicate && pending.has(key)) return pending.get(key);
@@ -370,6 +383,7 @@ async function command(instruction, scope) {
     const result = await operation; if (!result.ok) throw result.error;
     for (const effect of result.effects || []) if (effect.type === "resource.invalidate") for (const resource of effect.resources || []) await refreshResourceNamed(resource, scope);
     await execute(instruction.on_success || [], { ...scope, result: result.data });
+    if (scope.plugin === "review" && instruction.command === "annotation.create") await autoRunNewAnnotation(scope);
     for (const declaration of scope.contribution.document.local_state || []) if (declaration.reset_on_success) scope.state[declaration.key] = structuredClone(declaration.default);
     for (const draftKey of [...formDrafts.keys()]) if (draftKey.startsWith(`${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:`)) formDrafts.delete(draftKey);
   }

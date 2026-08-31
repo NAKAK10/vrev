@@ -398,7 +398,7 @@ Add architecture import-boundary test:
 
 ## 14. Phase 10 — Release gates
 
-Completed for `1.1.7`:
+Completed for `1.1.8`:
 
 - [x] every published plugin has standalone tests
 - [x] manifest version matches package version
