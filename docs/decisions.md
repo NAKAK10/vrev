@@ -2,7 +2,7 @@
 
 ## Core is a minimal Plugin Host (v4 beta)
 
-Status: accepted and implemented through migration Phase 10 for `1.1.8`.
+Status: accepted and implemented through migration Phase 10 for `1.1.9`.
 
 Review persistence and validation are owned by the bundled `review` plugin; job orchestration and the complete right sidebar by `annotation-workflow`; verified external runners by `custom-command`; and Issue behavior by `github-issue`. Core retains bootstrap, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned SDK contracts.
 
@@ -73,7 +73,7 @@ shell injectionを避けるためshellを経由せずPOSIX風にtokenizeした�
 小規模batch（5件以下）または同一file中心ではsubagent起動のoverheadを避け、親coordinatorが指摘へ直接必要な最小限の共有編集を1回で行う。特定PCのtool名へ依存せず、利用可能なbrowser確認手段による検証をpage pathとviewportの組み合わせごとにまとめ、完了したannotationのmessage/status更新をbatch末尾まで保留しない。
 
 jobをqueueへ登録したannotationは`in_progress`へ変更する。coordinatorが終了code 0で正常終了した実行中jobは、AI側のmessage/status更新が漏れても成功として`addressed`へ補正する。完了messageがない場合は処理完了とhuman verificationが必要なことを示す中立messageを追加する。非zero終了、timeout、spawn失敗、page unavailable、起動前source conflictは失敗またはskipのまま保持する。ただしtimeout・output limit・cancel等より前にAI completion messageまたはIssue draftが永続化済みなら、そのdurable evidenceをprocess終了理由より優先し、完了済みannotationを`failed`へ戻さない。Piはevent streamではなくfinal text modeで起動し、stderr diagnosticsをresult parserとstdout上限から分離する。旧job-stateに残るpostcondition失敗へ遅れて完了messageが届いた場合も互換性のため成功へ回復する。失敗・起動前skip時は理由message付きの`failed`、cancel時は`open`へ戻し、
-server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。humanは全active statusから`resolved`へ強制変更できるが、通常flowの`addressed`以外では誤操作を避ける確認dialogを必須とする。
+server restart時もactive jobのない孤立した`in_progress`を`open`へ回復する。これによりannotation statusだけでAI対応中かを判断できる。失敗状態からAI処理へ戻す操作は、解決済み注釈の状態変更を表す「再オープン」と区別して「再実行」と表示し、選択した注釈だけを直ちに新しいAI jobへqueueする。単に`open`へ戻して「未対応」のまま待機させたり、別の未対応注釈まで同じretryへ混ぜたりしない。humanは全active statusから`resolved`へ強制変更できるが、通常flowの`addressed`以外では誤操作を避ける確認dialogを必須とする。
 
 ## Compatibility and trust boundary
 
@@ -99,7 +99,7 @@ annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI co
 
 ## Phase 10 release and publication policy
 
-`1.1.8` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
+`1.1.9` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
 
 Root and standalone plugin publication is non-atomic. Because the root package bundles compatible default server/UI copies, a standalone registry failure does not break initial startup. Recovery is to retain the published root, rerun publication after fixing the failed plugin, and let the workflow skip package versions already present. Never republish or overwrite an existing version.
 

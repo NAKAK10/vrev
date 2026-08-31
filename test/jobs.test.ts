@@ -188,6 +188,27 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.ok(store.load().annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
 });
 
+test("retry queues only the selected failed annotation", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const failedId = annotate(store, ".code/htmls/pages/a.html", "retry me");
+  const untouchedId = annotate(store, ".code/htmls/pages/b.html", "leave me open");
+  store.setStatus(failedId, { actor: "ai", status: "in_progress" });
+  store.setStatus(failedId, { actor: "ai", status: "failed" });
+  const control = controlledExecutor();
+  const manager = new JobManager(store, { executor: control.executor });
+  manager.start();
+
+  const retried = manager.retry(failedId, { cli: "claude", max_parallel: 1 });
+
+  assert.deepEqual(retried.jobs.map(({ annotation_id }) => annotation_id), [failedId]);
+  assert.equal(store.load().annotations.find(({ id }) => id === failedId)?.status, "in_progress");
+  assert.equal(store.load().annotations.find(({ id }) => id === untouchedId)?.status, "open");
+  await waitFor(() => control.pending.length === 1);
+  control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
+  await manager.close();
+});
+
 test("treats normal coordinator exit as success and adds a verification message when completion is missing", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });

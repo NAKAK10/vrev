@@ -616,7 +616,7 @@ function createAnnotationCard(annotation, number, renderKey = annotationCardRend
   statusButton.className = "status-button";
   if (status === "failed") {
     statusButton.classList.add("retry");
-    statusButton.textContent = "再試行";
+    statusButton.textContent = "再実行";
     statusButton.addEventListener("click", () => updateStatus(id, "open", statusButton));
     actions.append(statusButton);
   }

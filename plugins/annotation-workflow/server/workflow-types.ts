@@ -35,6 +35,7 @@ export interface EnqueueJobsInput {
   session_id?: string | null;
   opencode_attach?: string | null;
   runner_id?: string | null;
+  annotation_ids?: string[] | null;
 }
 
 /** The subset of the versioned review capability required by workflow orchestration. */
@@ -52,7 +53,7 @@ export interface WorkflowReviewStore {
   load(): { annotations: WorkflowAnnotation[] };
   loadActive(): { annotations: WorkflowAnnotation[] };
   addMessage(annotationId: string, payload: { actor: "ai"; body: string }): unknown;
-  setStatus(annotationId: string, payload: { actor: "ai"; status: "open" | "in_progress" | "failed" | "addressed" }): unknown;
+  setStatus(annotationId: string, payload: { actor: "ai" | "human"; status: "open" | "in_progress" | "failed" | "addressed" }): unknown;
 }
 export interface ReviewCapabilityV1 { readonly apiVersion: 1; readonly store: WorkflowReviewStore }
 

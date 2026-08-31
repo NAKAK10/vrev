@@ -102,12 +102,14 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
         manager.cancel(input.job_id);
         return { ok: true, data: {}, effects: [{ type: "resource.invalidate", resources: ["jobs", "annotations"] }] };
       }
-      if (name === "jobs.enqueue") {
+      if ((name === "jobs.enqueue" || name === "jobs.retry") && (name !== "jobs.retry" || typeof input.annotation_id === "string")) {
         const runners = await externalRunners();
         const settings = workflowSettingsProjection(review.store.target.projectRoot, runners);
         const selected = parseRunnerSelection(typeof input.runner === "string" ? input.runner : settings.runner);
         if (selected.runner_id && !runners.some(({ runner_id, verified }) => runner_id === selected.runner_id && verified)) throw new Error("選択した外部AIコマンドは未検証です。外部AIコマンド設定でテストを完了してください。");
-        return { ok: true, data: manager.enqueue({ ...selected, max_parallel: Number.isInteger(input.max_parallel) ? input.max_parallel as number : settings.max_parallel }), effects: [{ type: "resource.invalidate", resources: ["jobs", "annotations"] }] };
+        const enqueueInput = { ...selected, max_parallel: Number.isInteger(input.max_parallel) ? input.max_parallel as number : settings.max_parallel };
+        const data = name === "jobs.retry" ? manager.retry(input.annotation_id as string, enqueueInput) : manager.enqueue(enqueueInput);
+        return { ok: true, data, effects: [{ type: "resource.invalidate", resources: ["jobs", "annotations"] }] };
       }
       return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
     },

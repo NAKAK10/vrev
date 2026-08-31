@@ -132,7 +132,7 @@ test("captures framework source hints for live applications", () => {
   assert.match(reviewerSource, /stored\.version !== FILTER_STORAGE_VERSION[^]*statuses\.add\("failed"\)/);
   assert.match(reviewerSource, /failed: "失敗"/);
   assert.match(reviewerSource, /countItem\(`失敗 \$\{statusCounts\.failed\}`\)/);
-  assert.match(reviewerSource, /status === "failed"[^]*statusButton\.textContent = "再試行"/);
+  assert.match(reviewerSource, /status === "failed"[^]*statusButton\.textContent = "再実行"/);
   assert.match(sourceHtml, /id="force-resolve-dialog"/);
   assert.match(sourceHtml, /AI対応済みではない状態.*強制的に解決|強制的に解決する/);
   assert.match(reviewerSource, /status === "addressed" \? "解決にする" : "強制的に解決"/);
@@ -216,8 +216,9 @@ test("running AI shows only its start, latest status, and stop control", () => {
   assert.match(workflowSidebarSource, /"AI修正を停止"/);
 });
 
-test("failed annotations keep both retry and human force-resolve escape routes", () => {
-  assert.match(workflowSidebarSource, /\["resolved", "failed"\][^]*"再オープン"/);
+test("failed annotations use a rerun action and keep the human force-resolve escape route", () => {
+  assert.match(workflowSidebarSource, /"failed"[^]*"再実行"[^]*"command": "jobs\.retry"/);
+  assert.match(workflowSidebarSource, /"resolved"[^]*"再オープン"/);
   assert.match(workflowSidebarSource, /\["open", "in_progress", "failed"\][^]*"強制的に解決"/);
 });
 

@@ -20,7 +20,7 @@ function validateAttach(value: string): string {
 }
 
 export function validateEnqueueInput(value: Record<string, unknown>): Required<EnqueueJobsInput> {
-  const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach", "runner_id"]);
+  const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach", "runner_id", "annotation_ids"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("job batch contains an unknown field");
   if (!["opencode", "claude", "codex", "copilot", "pi", "custom"].includes(String(value.cli))) throw new Error("cli is unsupported");
   if (!Number.isInteger(value.max_parallel) || (value.max_parallel as number) < 1 || (value.max_parallel as number) > 10) throw new Error("max_parallel must be an integer from 1 to 10");
@@ -34,7 +34,11 @@ export function validateEnqueueInput(value: Record<string, unknown>): Required<E
   if (value.cli === "custom") {
     if (typeof runnerId !== "string" || !runnerId.trim() || runnerId.length > 128) throw new Error("runner_id must be a nonblank opaque identifier");
   } else if (runnerId !== null) throw new Error("runner_id requires cli=custom");
-  return { cli: value.cli as Required<EnqueueJobsInput>["cli"], max_parallel: value.max_parallel as number, session_id: sessionId, opencode_attach: attach === null ? null : validateAttach(attach), runner_id: runnerId };
+  const annotationIds = value.annotation_ids === undefined ? null : value.annotation_ids;
+  if (annotationIds !== null && (!Array.isArray(annotationIds) || annotationIds.length < 1 || annotationIds.length > 2000 || annotationIds.some((id) => typeof id !== "string" || !SESSION_ID.test(id)) || new Set(annotationIds).size !== annotationIds.length)) {
+    throw new Error("annotation_ids must contain unique valid annotation IDs");
+  }
+  return { cli: value.cli as Required<EnqueueJobsInput>["cli"], max_parallel: value.max_parallel as number, session_id: sessionId, opencode_attach: attach === null ? null : validateAttach(attach), runner_id: runnerId, annotation_ids: annotationIds as string[] | null };
 }
 
 const COMPLETION_START = "VISUAL_REVIEW_COMPLETION_START";
@@ -120,7 +124,8 @@ export class JobManager {
     const activeJobs = jobSnapshot.jobs.filter(({ state }) => state === "queued" || state === "running");
     const activeIds = new Set(activeJobs.map(({ annotation_id }) => annotation_id));
     const activePages = new Set(activeJobs.map(({ page_path }) => page_path));
-    const annotations = review.annotations.filter(({ status, id }) => status === "open" && !activeIds.has(id));
+    const selectedIds = input.annotation_ids ? new Set(input.annotation_ids) : null;
+    const annotations = review.annotations.filter(({ status, id }) => status === "open" && !activeIds.has(id) && (!selectedIds || selectedIds.has(id)));
     const batchId = randomUUID();
     const created = now();
     const jobs = annotations.map((annotation): ReviewJob => {
@@ -146,6 +151,24 @@ export class JobManager {
     }
     this.schedule();
     return { batch_id: batchId, jobs };
+  }
+
+  retry(annotationId: string, rawInput: Record<string, unknown>): { batch_id: string; jobs: ReviewJob[] } {
+    const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
+    if (!annotation || annotation.status !== "failed") throw new Error("再実行できる失敗状態の注釈が見つかりません。");
+    const active = this.jobStore.load().jobs.some((job) => job.annotation_id === annotationId && (job.state === "queued" || job.state === "running"));
+    if (active) throw new Error("この注釈のAI修正はすでに実行中です。");
+    validateEnqueueInput({ ...rawInput, annotation_ids: [annotationId] });
+    this.reviewStore.setStatus(annotationId, { actor: "human", status: "open" });
+    try {
+      const result = this.enqueue({ ...rawInput, annotation_ids: [annotationId] });
+      if (result.jobs.length !== 1) throw new Error("再実行するAIジョブを開始できませんでした。");
+      return result;
+    } catch (error) {
+      const current = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
+      if (current?.status === "open") this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
+      throw error;
+    }
   }
 
   cancel(id: string): ReviewJob {
