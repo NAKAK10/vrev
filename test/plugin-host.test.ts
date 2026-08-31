@@ -167,11 +167,10 @@ test("process supervisor invokes commands without a shell and captures stdout", 
   assert.deepEqual(completed, { exitCode: 0, reason: "exit", stdout: marker });
 });
 
-test("process supervisor enforces stdout and timeout limits", async () => {
+test("process supervisor retains only latest stdout and enforces timeout", async () => {
   const outputLimited = createProcessSupervisor({ stdoutLimit: 4, timeoutMs: 2_000, killGraceMs: 20 });
-  const outputResult = await outputLimited.run(nodeProcess("process.stdout.write('abcdefgh'); setInterval(() => {}, 1000)")).result;
-  assert.equal(outputResult.reason, "output-limit");
-  assert.equal(Buffer.byteLength(outputResult.stdout), 4);
+  const outputResult = await outputLimited.run(nodeProcess("process.stdout.write('abcdefgh')")).result;
+  assert.deepEqual(outputResult, { exitCode: 0, reason: "exit", stdout: "efgh" });
 
   const timed = createProcessSupervisor({ timeoutMs: 20, killGraceMs: 20 });
   const timeoutResult = await timed.run(nodeProcess("setInterval(() => {}, 1000)")).result;

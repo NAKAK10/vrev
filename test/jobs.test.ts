@@ -13,6 +13,7 @@ import {
   fileSha256,
   JobManager,
   JobStore,
+  MAX_COMMAND_OUTPUT,
   parseCustomCommand,
   ReviewStore,
   testCustomCommand,
@@ -86,13 +87,14 @@ async function runAnnotationCli(args: string[], stdin = ""): Promise<void> {
   });
 }
 
-test("builds fixed argv for all adapters without annotation comments", () => {
+test("builds concise fixed argv for all adapters without annotation comments", () => {
+  assert.equal(MAX_COMMAND_OUTPUT, 64 * 1024);
   const base = { prompt: "fixed prompt", projectRoot: "/repo", opencodeAttach: null };
-  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: null }).args, ["run", "--format", "json", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: "s:1", opencodeAttach: "http://127.0.0.1:4096" }).args, ["run", "--format", "json", "--session", "s:1", "--attach", "http://127.0.0.1:4096", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: null }).args, ["run", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: "s:1", opencodeAttach: "http://127.0.0.1:4096" }).args, ["run", "--session", "s:1", "--attach", "http://127.0.0.1:4096", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "claude", sessionId: "s.1" }).args, ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--resume", "s.1", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: null }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: "abc" }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", "abc", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: null }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: "abc" }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "abc", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "copilot", sessionId: null }).args, ["--prompt", "fixed prompt", "--allow-all-tools"]);
   assert.deepEqual(buildCommand({ ...base, cli: "pi", sessionId: null }).args, ["--print", "--no-session", "--approve", "--", "fixed prompt"]);
   const custom = buildCommand({ ...base, cli: "custom", sessionId: null, customCommand: "ollama launch claude --model model -- {prompt}" });
@@ -426,14 +428,14 @@ test("contains deleted, renamed, and unreadable targets as failed annotation job
   }
 });
 
-test("spawn executor enforces timeout, stdout limit, and cancellation without counting stderr", async () => {
+test("spawn executor keeps only latest stdout and supports timeout and cancellation", async () => {
   const run = (script: string, executor = createSpawnExecutor({ timeoutMs: 2_000, killGraceMs: 10 })) => executor({
     command: process.execPath as ReviewCli, args: ["-e", script], cwd: process.cwd(), env: { ...process.env },
   });
   const timeout = await run("setInterval(() => {}, 1000)", createSpawnExecutor({ timeoutMs: 20, killGraceMs: 10 }));
   assert.equal((await timeout.result).reason, "timeout");
-  const output = await run("process.stdout.write('x'.repeat(100))", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
-  assert.equal((await output.result).reason, "output-limit");
+  const output = await run("process.stdout.write('0123456789abcdefghij')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
+  assert.deepEqual(await output.result, { exitCode: 0, reason: "exit", output: "abcdefghij" });
   const diagnostics = await run("process.stderr.write('x'.repeat(100)); process.stdout.write('日本語')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
   assert.deepEqual(await diagnostics.result, { exitCode: 0, reason: "exit", output: "日本語" });
   const cancelled = await run("setInterval(() => {}, 1000)");

@@ -35,7 +35,7 @@ export interface ProcessSupervisorOptions {
   platform?: NodeJS.Platform;
 }
 
-/** Creates a shell-free supervisor with bounded stdout and process-tree shutdown. */
+/** Creates a shell-free supervisor that retains only recent stdout and supports process-tree shutdown. */
 export function createProcessSupervisor(options: ProcessSupervisorOptions = {}): ProcessSupervisorV1 {
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS;
   const stdoutLimit = options.stdoutLimit ?? DEFAULT_PROCESS_STDOUT_LIMIT;
@@ -104,14 +104,21 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
       }
 
       child.stdout.on("data", (value: Buffer | string) => {
-        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        const remaining = stdoutLimit - stdoutBytes;
-        if (remaining > 0) {
-          const accepted = chunk.subarray(0, remaining);
-          stdoutChunks.push(accepted);
-          stdoutBytes += accepted.length;
+        if (stdoutLimit === 0) return;
+        const chunk = Buffer.from(value);
+        stdoutChunks.push(chunk);
+        stdoutBytes += chunk.length;
+        while (stdoutBytes > stdoutLimit && stdoutChunks.length > 0) {
+          const overflow = stdoutBytes - stdoutLimit;
+          const oldest = stdoutChunks[0]!;
+          if (oldest.length <= overflow) {
+            stdoutChunks.shift();
+            stdoutBytes -= oldest.length;
+          } else {
+            stdoutChunks[0] = Buffer.from(oldest.subarray(overflow));
+            stdoutBytes -= overflow;
+          }
         }
-        if (chunk.length > remaining) terminate("output-limit");
       });
       child.stderr.resume();
       child.once("error", () => finish(null, requestedReason ?? "spawn-error"));

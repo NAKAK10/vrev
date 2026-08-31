@@ -10,6 +10,9 @@ const jobsSource = readFileSync(path.join(packageRoot, "src/ui/jobs.ts"), "utf8"
 const pluginSettingsHtml = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/index.html"), "utf8");
 const pluginSettingsSource = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/settings.js"), "utf8");
 const pluginSettingsCss = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/settings.css"), "utf8");
+const rendererSource = readFileSync(path.join(packageRoot, "src/ui/renderer.js"), "utf8");
+const rendererCss = readFileSync(path.join(packageRoot, "src/ui/renderer.css"), "utf8");
+const workflowSidebarSource = readFileSync(path.join(packageRoot, "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
 
 test("AI batch controls and compiled script are present", () => {
   for (const id of [
@@ -197,6 +200,35 @@ test("annotation marks use translucent fills instead of red outlines", () => {
   assert.match(reviewerSource, /if \(!isResolved && annotation\.kind === "dom"\) renderStalePin/);
   assert.match(css, /\.toast-region\s*\{[^}]*top:\s*18px;[^}]*right:\s*18px;/s);
   assert.match(css, /\.draft-region\s*\{[^}]*border-color:\s*transparent;[^}]*background:\s*rgb\(217 52 43 \/ 24%\);/s);
+});
+
+test("review target renders before nonessential sidebar resources finish", () => {
+  assert.match(rendererSource, /const main = surface\.contributions\.find\(\(\{ slot \}\) => slot === "review\.main"\)/);
+  assert.match(rendererSource, /if \(contribution === main\) await Promise\.all\(loads\)/);
+  assert.match(rendererSource, /rerender\(\);\s*if \(resourceLoads\.length\) void Promise\.all\(resourceLoads\)\.then\(\(\) => rerender\(\)\)/);
+});
+
+test("running AI shows only its start, latest status, and stop control", () => {
+  assert.match(workflowSidebarSource, /"ai-run-status"/);
+  assert.match(workflowSidebarSource, /"\/active\/started_at"/);
+  assert.match(workflowSidebarSource, /"\/active\/latest_info"/);
+  assert.match(workflowSidebarSource, /"command": "jobs\.cancel"/);
+  assert.match(workflowSidebarSource, /"AI修正を停止"/);
+});
+
+test("failed annotations keep both retry and human force-resolve escape routes", () => {
+  assert.match(workflowSidebarSource, /\["resolved", "failed"\][^]*"再オープン"/);
+  assert.match(workflowSidebarSource, /\["open", "in_progress", "failed"\][^]*"強制的に解決"/);
+});
+
+test("declarative toasts show their remaining time and can be dismissed", () => {
+  assert.match(rendererSource, /className = "toast-close"|element\("button", "toast-close"\)/);
+  assert.match(rendererSource, /aria-label", "通知を閉じる"/);
+  assert.match(rendererSource, /element\("span", "toast-progress"\)/);
+  assert.match(rendererSource, /setProperty\("--toast-duration"/);
+  assert.match(rendererSource, /setTimeout\(\(\) => dismissToast\(token\), duration\)/);
+  assert.match(rendererCss, /\.toast-progress\s*\{[^}]*animation:\s*toast-countdown var\(--toast-duration\) linear forwards;/s);
+  assert.match(rendererCss, /\.toast-close\s*\{[^}]*cursor:\s*pointer;/s);
 });
 
 test("active mode controls remain readable while hovered", () => {

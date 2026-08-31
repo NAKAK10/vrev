@@ -390,6 +390,12 @@ async function command(instruction, scope) {
   catch (error) { await execute(instruction.on_error || [], { ...scope, error: error instanceof Error ? { message: error.message } : error }); }
   finally { pending.delete(key); if (disabledControl?.isConnected) { disabledControl.disabled = false; disabledControl.removeAttribute("aria-busy"); } await execute(instruction.on_settled || [], scope); rerender(); }
 }
+function dismissToast(token) {
+  if (activeToast?.token !== token) return;
+  activeToast = null;
+  for (const region of document.querySelectorAll(".toast-region")) region.replaceChildren();
+  document.querySelector("#vr-toast-layer")?.remove();
+}
 function paintToast() {
   if (!activeToast) return;
   const dialogBody = document.querySelector("dialog[open] .vr-dialog-body");
@@ -401,18 +407,20 @@ function paintToast() {
     region = element("div", "toast-region"); region.id = "vr-toast-layer"; region.setAttribute("role", "status"); region.setAttribute("aria-live", "polite"); document.body.append(region);
   }
   if (!region) return;
-  const item = element("p", `toast toast-${activeToast.variant}`); item.textContent = activeToast.message; region.replaceChildren(item);
+  const { duration, message, token, variant } = activeToast;
+  const item = element("div", `toast toast-${variant}`);
+  const copy = element("p", "toast-message"); copy.textContent = message;
+  const close = element("button", "toast-close"); close.type = "button"; close.setAttribute("aria-label", "通知を閉じる"); close.textContent = "×";
+  close.addEventListener("click", () => dismissToast(token));
+  const progress = element("span", "toast-progress"); progress.setAttribute("aria-hidden", "true"); progress.style.setProperty("--toast-duration", `${duration}ms`);
+  item.append(copy, close, progress); region.replaceChildren(item);
 }
 function toast(message, variant = "info") {
   const token = crypto.randomUUID();
-  activeToast = { token, message, variant };
+  const duration = variant === "info" ? 7000 : 12000;
+  activeToast = { token, message, variant, duration };
   paintToast();
-  setTimeout(() => {
-    if (activeToast?.token !== token) return;
-    activeToast = null;
-    for (const region of document.querySelectorAll(".toast-region")) region.replaceChildren();
-    document.querySelector("#vr-toast-layer")?.remove();
-  }, variant === "info" ? 7000 : 12000);
+  setTimeout(() => dismissToast(token), duration);
 }
 function safeMarkdown(markdown) {
   const container = element("div", "vr-safe-markdown");
@@ -631,12 +639,17 @@ async function start() {
   if (location.pathname === "/settings/plugins") return renderSettings();
   root.dataset.page = "review";
   const response = await fetch("/api/plugin-host/v1/surfaces/review"); surface = await response.json(); applyTheme(surface.theme);
+  const resourceLoads = [];
+  const main = surface.contributions.find(({ slot }) => slot === "review.main");
   for (const contribution of surface.contributions) {
     const runtime = stateFor(contribution); documents.set(`${contribution.plugin_id}:${contribution.id}`, runtime);
     const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, slotContext: {} };
-    await Promise.all((contribution.document.resources || []).map((resource) => loadResource(contribution, resource.id, scope)));
+    const loads = (contribution.document.resources || []).map((resource) => loadResource(contribution, resource.id, scope, false));
+    if (contribution === main) await Promise.all(loads);
+    else resourceLoads.push(...loads);
   }
   rerender();
+  if (resourceLoads.length) void Promise.all(resourceLoads).then(() => rerender());
   const streams = new Map();
   for (const contribution of surface.contributions) if (!streams.has(contribution.plugin_id)) {
     const stream = new EventSource(`/api/plugin-host/v1/plugins/${encodeURIComponent(contribution.plugin_id)}/events`); streams.set(contribution.plugin_id, stream);

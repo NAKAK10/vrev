@@ -20,6 +20,14 @@
     { "type": "section", "props": { "title": { "literal": "AI一括修正" }, "variant": { "literal": "sidebar-ai" } }, "children": [
       { "type": "count", "props": { "value": { "resource": "annotations", "path": "/open_count" }, "label": { "literal": "未対応" } } },
       { "type": "link", "props": { "label": { "literal": "AI修正設定" }, "href": { "literal": "/settings/plugins#annotation-workflow" }, "variant": { "literal": "settings-link" } } },
+      { "type": "panel", "when": { "exists": { "resource": "jobs", "path": "/active" } }, "props": { "variant": { "literal": "ai-run-status" } }, "children": [
+        { "type": "row", "children": [
+          { "type": "text", "props": { "text": { "literal": "開始" } } },
+          { "type": "time", "props": { "value": { "resource": "jobs", "path": "/active/started_at" }, "format": { "literal": "localized" } } }
+        ] },
+        { "type": "text", "props": { "text": { "resource": "jobs", "path": "/active/latest_info" } } },
+        { "id": "stop-ai-run", "type": "button", "props": { "label": { "literal": "AI修正を停止" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.cancel", "input": { "job_id": { "resource": "jobs", "path": "/active/job_id" } }, "pending": { "disable": "stop-ai-run", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "resource.refresh", "resource": "annotations" }, { "type": "toast.show", "variant": "success", "message": { "literal": "AI修正を停止しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
+      ] },
       { "id": "batch-run", "type": "button", "when": { "eq": [{ "resource": "workflow-settings", "path": "/auto_run" }, { "literal": false }] }, "props": { "label": { "literal": "AIにまとめて修正依頼" }, "variant": { "literal": "primary" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.enqueue", "input": { "runner": { "resource": "workflow-settings", "path": "/runner" }, "max_parallel": { "resource": "workflow-settings", "path": "/max_parallel" } }, "pending": { "disable": "batch-run", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "toast.show", "variant": "success", "message": { "literal": "AI修正を開始しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
     ] },
     { "type": "section", "props": { "title": { "literal": "注釈" }, "variant": { "literal": "sidebar-annotations" } }, "children": [
@@ -50,7 +58,7 @@
           { "type": "row", "props": { "variant": { "literal": "annotation-actions" } }, "children": [
             { "type": "button", "when": { "in": [{ "item": "/status" }, { "literal": ["resolved", "failed"] }] }, "props": { "label": { "literal": "再オープン" } }, "on": { "click": [{ "type": "command.execute", "command": "annotation.status", "input": { "annotation_id": { "item": "/id" }, "status": { "literal": "open" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }] }] } },
             { "type": "button", "when": { "eq": [{ "item": "/status" }, { "literal": "addressed" }] }, "props": { "label": { "literal": "解決にする" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "command.execute", "command": "annotation.status", "input": { "annotation_id": { "item": "/id" }, "status": { "literal": "resolved" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }, { "type": "resource.refresh", "resource": "history" }] }] } },
-            { "type": "button", "when": { "in": [{ "item": "/status" }, { "literal": ["open", "in_progress"] }] }, "props": { "label": { "literal": "強制的に解決" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "dialog.open", "dialog": "force-resolve-dialog" }] } },
+            { "type": "button", "when": { "in": [{ "item": "/status" }, { "literal": ["open", "in_progress", "failed"] }] }, "props": { "label": { "literal": "強制的に解決" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "dialog.open", "dialog": "force-resolve-dialog" }] } },
             { "type": "slot", "props": { "name": { "literal": "review.annotation.actions" }, "context": { "item": "" } } }
           ] },
           { "id": "force-resolve-dialog", "type": "dialog", "props": { "title": { "literal": "この注釈を解決済みにしますか？" }, "description": { "literal": "AIの処理結果にかかわらず、人間の判断で解決済みに変更します。" }, "return_focus": { "literal": "" }, "dismissible": { "literal": true }, "mobile_presentation": { "literal": "fullscreen" } }, "children": [

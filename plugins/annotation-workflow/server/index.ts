@@ -74,8 +74,15 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
       }
       if (name === "jobs.list") {
         const data = manager.list();
-        const running = data.jobs.filter(({ state }) => state === "running" || state === "queued").length;
-        return { ok: true, data: { revision: data.revision, batches: data.batches.map(({ custom_command: _legacy, ...batch }) => batch), jobs: data.jobs.map(({ custom_name: _legacy, ...job }) => job), announcement: running ? `${running}件のAI修正を処理中です` : "AI修正は待機中です" } };
+        const runningJobs = data.jobs.filter(({ state }) => state === "running");
+        const queued = data.jobs.filter(({ state }) => state === "queued").length;
+        const active = runningJobs[0] ? {
+          job_id: runningJobs[0].id,
+          started_at: runningJobs.map(({ started, created }) => started ?? created).sort()[0]!,
+          latest_info: `${runningJobs.length}件のAI修正を実行中です`,
+        } : null;
+        const running = runningJobs.length + queued;
+        return { ok: true, data: { revision: data.revision, batches: data.batches.map(({ custom_command: _legacy, ...batch }) => batch), jobs: data.jobs.map(({ custom_name: _legacy, ...job }) => job), ...(active ? { active } : {}), announcement: running ? `${running}件のAI修正を処理中です` : "AI修正は待機中です" } };
       }
       if (name === "workflow.settings") return { ok: true, data: workflowSettingsProjection(review.store.target.projectRoot, await externalRunners()) };
       return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
@@ -91,6 +98,10 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
         return { ok: true, revision: `review:${store.load().revision}`, data: store.loadActive(), effects: [{ type: "resource.invalidate", resources: ["annotations", "history", "session"] }] };
       }
       if (name === "workflow.settings.update") return { ok: true, data: updateWorkflowSettings(review.store.target.projectRoot, input, await externalRunners()), effects: [{ type: "resource.invalidate", resources: ["workflow-settings"] }] };
+      if (name === "jobs.cancel" && typeof input.job_id === "string") {
+        manager.cancel(input.job_id);
+        return { ok: true, data: {}, effects: [{ type: "resource.invalidate", resources: ["jobs", "annotations"] }] };
+      }
       if (name === "jobs.enqueue") {
         const runners = await externalRunners();
         const settings = workflowSettingsProjection(review.store.target.projectRoot, runners);

@@ -20,7 +20,7 @@ jobs:
       - name: Check out the released tag
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -30,24 +30,70 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@nakak10'
 
-      - name: Validate release version
+      - name: Apply release tag version to every package
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
         run: |
-          package_version="$(node -p "require('./package.json').version")"
-          lock_version="$(node -p "require('./package-lock.json').version")"
-          lock_root_version="$(node -p "require('./package-lock.json').packages[''].version")"
-          expected_tag="v${package_version}"
-
-          if [ "$RELEASE_TAG" != "$expected_tag" ]; then
-            echo "Release tag $RELEASE_TAG does not match package version $package_version (expected $expected_tag)." >&2
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a semantic version such as v1.1.9: $RELEASE_TAG" >&2
             exit 1
           fi
 
-          if [ "$lock_version" != "$package_version" ] || [ "$lock_root_version" != "$package_version" ]; then
-            echo "package-lock.json versions ($lock_version, $lock_root_version) do not match package version $package_version." >&2
-            exit 1
-          fi
+          release_version="${RELEASE_TAG#v}"
+          npm version "$release_version" --no-git-tag-version --ignore-scripts --allow-same-version
+          RELEASE_VERSION="$release_version" node <<'NODE'
+          const fs = require("node:fs");
+          const files = [
+            "plugins/review/package.json",
+            "plugins/review/visual-review.plugin.json",
+            "plugins/github-issue/package.json",
+            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/custom-command/package.json",
+            "plugins/custom-command/visual-review.plugin.json",
+            "plugins/annotation-workflow/package.json",
+            "plugins/annotation-workflow/visual-review.plugin.json",
+            "plugins/firebase-storage/package.json",
+            "plugins/firebase-storage/visual-review.plugin.json",
+          ];
+          for (const file of files) {
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            data.version = process.env.RELEASE_VERSION;
+            fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+          }
+          NODE
+
+      - name: Validate synchronized release versions
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          expected_version="${RELEASE_TAG#v}"
+          RELEASE_VERSION="$expected_version" node <<'NODE'
+          const fs = require("node:fs");
+          const files = [
+            "package.json",
+            "package-lock.json",
+            "plugins/review/package.json",
+            "plugins/review/visual-review.plugin.json",
+            "plugins/github-issue/package.json",
+            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/custom-command/package.json",
+            "plugins/custom-command/visual-review.plugin.json",
+            "plugins/annotation-workflow/package.json",
+            "plugins/annotation-workflow/visual-review.plugin.json",
+            "plugins/firebase-storage/package.json",
+            "plugins/firebase-storage/visual-review.plugin.json",
+          ];
+          for (const file of files) {
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (data.version !== process.env.RELEASE_VERSION) {
+              throw new Error(`${file} has version ${data.version}; expected ${process.env.RELEASE_VERSION}`);
+            }
+          }
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          if (lock.packages?.[""]?.version !== process.env.RELEASE_VERSION) {
+            throw new Error(`package-lock root has version ${lock.packages?.[""]?.version}; expected ${process.env.RELEASE_VERSION}`);
+          }
+          NODE
 
       - name: Install dependencies
         run: npm ci

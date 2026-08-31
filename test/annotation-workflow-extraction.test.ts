@@ -87,9 +87,11 @@ test("workflow bridge persists shared settings and strips legacy custom commands
     },
   };
   let enqueueInput: unknown;
+  let cancelInput: unknown;
   const manager = {
-    list: () => ({ revision: 2, batches: [{ id: "legacy", max_parallel: 1, opencode_attach: null, runner_id: null, custom_command: "do-not-expose" }], jobs: [] }),
+    list: () => ({ revision: 2, batches: [{ id: "legacy", max_parallel: 1, opencode_attach: null, runner_id: null, custom_command: "do-not-expose" }], jobs: [{ id: "job-1", batch_id: "legacy", annotation_id: "annotation-1", page_path: "/", source_hash: "hash", cli: "codex", custom_name: null, session_id: null, state: "running", created: "2026-08-31T00:00:00.000Z", started: "2026-08-31T00:00:01.000Z", finished: null, exit_code: null, summary: "running" }] }),
     enqueue: (input: unknown) => { enqueueInput = input; return { batch_id: "batch", jobs: [] }; },
+    cancel: (input: unknown) => { cancelInput = input; },
   };
   const externalRunnerId = "00000000-0000-4000-8000-000000000001";
   const unverifiedRunnerId = "00000000-0000-4000-8000-000000000002";
@@ -122,7 +124,10 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   assert.deepEqual(enqueueInput, { cli: "custom", runner_id: externalRunnerId, max_parallel: 3 });
   const jobs = await bridge.query("jobs.list", { request_id: "jobs", input: {} });
   assert.equal(jobs.ok, true);
+  assert.deepEqual((jobs as { data: { active: unknown } }).data.active, { job_id: "job-1", started_at: "2026-08-31T00:00:01.000Z", latest_info: "1件のAI修正を実行中です" });
   assert.doesNotMatch(JSON.stringify(jobs), /custom_command|do-not-expose/);
+  await bridge.command("jobs.cancel", { request_id: "cancel", input: { job_id: "job-1" } });
+  assert.equal(cancelInput, "job-1");
 });
 
 test("disabling annotation-workflow rejects legacy job APIs while review stays available", async () => {

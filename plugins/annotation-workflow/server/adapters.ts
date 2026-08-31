@@ -4,7 +4,7 @@ export interface ProcessSupervisorPortV1 {
   run(spec: CommandSpec): { result: Promise<{ exitCode: number | null; reason: CommandResult["reason"]; stdout: string }>; cancel(): void };
 }
 
-export const MAX_COMMAND_OUTPUT = 1024 * 1024;
+export const MAX_COMMAND_OUTPUT = 64 * 1024;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface CommandSpec {
@@ -76,7 +76,7 @@ export function parseCustomCommand(value: string, prompt: string): { command: st
 export function buildCommand(input: AdapterInput): CommandSpec {
   let args: string[];
   if (input.cli === "opencode") {
-    args = ["run", "--format", "json"];
+    args = ["run"];
     if (input.sessionId !== null) args.push("--session", input.sessionId);
     if (input.opencodeAttach !== null) args.push("--attach", input.opencodeAttach);
     args.push(input.prompt);
@@ -85,9 +85,9 @@ export function buildCommand(input: AdapterInput): CommandSpec {
     if (input.sessionId !== null) args.push("--resume", input.sessionId);
     args.push(input.prompt);
   } else if (input.cli === "codex" && input.sessionId === null) {
-    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", input.prompt];
+    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", input.prompt];
   } else if (input.cli === "codex") {
-    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", input.sessionId!, input.prompt];
+    args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", input.sessionId!, input.prompt];
   } else if (input.cli === "copilot") {
     args = ["--prompt", input.prompt, "--allow-all-tools"];
   } else if (input.cli === "pi") {
