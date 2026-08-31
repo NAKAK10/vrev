@@ -1,7 +1,8 @@
 {
   "name": "@nakak10/visual-review-plugin-review",
   "version": "1.1.0",
-  "private": true,
+  "private": false,
+  "license": "UNLICENSED",
   "type": "module",
   "files": [
     "README.md",
@@ -12,5 +13,9 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
   }
 }

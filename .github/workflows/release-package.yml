@@ -3,6 +3,12 @@ name: Publish package
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to recover or republish missing packages
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -14,7 +20,7 @@ jobs:
       - name: Check out the released tag
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -26,7 +32,7 @@ jobs:
 
       - name: Validate release version
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
         run: |
           package_version="$(node -p "require('./package.json').version")"
           lock_version="$(node -p "require('./package-lock.json').version")"
@@ -64,8 +70,15 @@ jobs:
           fi
           echo "value=$dist_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Publish package
-        run: npm publish --tag "${{ steps.dist-tag.outputs.value }}"
+      - name: Publish package when its version is new
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "Skipping existing ${name}@${version}"
+          else
+            npm publish --tag "${{ steps.dist-tag.outputs.value }}"
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
