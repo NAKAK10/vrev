@@ -80,7 +80,7 @@ visual-review plugin run my-plugin hello world
 
 ## Installation and registry
 
-`visual-review serve`は、公式`review` 1.1.4、`github-issue` 1.1.4、`custom-command` 1.1.4、`annotation-workflow` 1.1.4がworkspaceに存在しない場合、CLI package内へ同梱したコピーから自動installする。networkやnpm認証には依存せず、`.vreview/plugins/`がGit管理外の新環境でも初回起動時に復元できる。同じbundled sourceから導入され、registry manifestとinstall先manifestが一致してprovenanceを確認できるtrusted copyだけは、同梱版のschemaまたはSemVerが新しい場合にserver/UIをまとめてatomic upgradeする。local sourceや第三者によるsame-ID plugin、manifestが改変されたcopyは上書きしない。その他の更新は引き続き明示操作とする。
+`visual-review serve`は、公式`review` 1.1.5、`github-issue` 1.1.5、`custom-command` 1.1.5、`annotation-workflow` 1.1.5がworkspaceに存在しない場合、CLI package内へ同梱したコピーから自動installする。networkやnpm認証には依存せず、`.vreview/plugins/`がGit管理外の新環境でも初回起動時に復元できる。同じbundled sourceから導入され、registry manifestとinstall先manifestが一致してprovenanceを確認できるtrusted copyだけは、同梱版のschemaまたはSemVerが新しい場合にserver/UIをまとめてatomic upgradeする。local sourceや第三者によるsame-ID plugin、manifestが改変されたcopyは上書きしない。その他の更新は引き続き明示操作とする。
 
 ```sh
 visual-review plugin install ./plugins/example
@@ -98,7 +98,7 @@ npm sourceではinstall scriptやdependency installを実行しない。公開pl
 
 ## Declarative UI and plugin management
 
-1.1.4ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。公式`review` pluginが既定のreview main contributionを提供し、workflow/custom-command/Issue pluginのdocumentをslotへ合成する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
+1.1.5ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。公式`review` pluginが既定のreview main contributionを提供し、workflow/custom-command/Issue pluginのdocumentをslotへ合成する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
 
 レビュー画面左上の「設定」と`/settings/plugins`は既定で公開する。`.vreview/settings.json`の`ui.plugin_management`がexactly `false`のworkspaceだけ非表示にする。UIからこのvisibility自体は変更できない。管理画面はinstall済みpluginをtitle・summary・即時保存toggle・「詳細」だけのcompact listで表示する。詳細buttonは共通modalを開き、version/capability、必要情報、plugin固有設定、外部AIコマンド登録、READMEを集約する。READMEはraw HTMLを実行せず、安全なMarkdown subsetをDOM nodeとして整形する。有効/無効toggleは設定保存buttonを要求せずworkspaceへ即時保存し、結果をtoastで通知する。`annotation-workflow`で「注釈を保存したら自動でAI修正を開始」が有効な場合、メイン画面の「AIにまとめて修正依頼」buttonは重複操作になるため非表示にする。`annotation-workflow`を無効化するとレビュー画面のAI一括修正領域とworkflow固有設定を非表示にし、新規job登録をserver側でも拒否する。`custom-command`を無効化すると登録データを残したまま設定UIとrunner候補から除外し、選択中のcustom runnerはClaude（利用不能なら先頭のbuilt-in）へfallbackする。workspace設定値はGit管理外の`.vreview/plugin-settings.json`へatomic保存し、disabled状態はpluginのinstall状態と分離して再起動後も維持する。
 

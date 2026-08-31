@@ -112,6 +112,9 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.match(css, /--vr-color-canvas:/);
   assert.match(css, /\.vr-plugin-row\s*\{/);
   assert.match(css, /\.vr-plugin-detail-content/);
+  for (const status of ["open", "in_progress", "failed", "addressed", "resolved"]) assert.match(css, new RegExp(`\\.vr-annotation-mark\\[data-status="${status}"\\]`));
+  assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
+  assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
   assert.match(source, /dialog\[open\] \.vr-dialog-body/);
   assert.match(source, /dialogBody\.prepend\(region\)/);
   assert.match(source, /requestAnimationFrame\(paintToast\)/);
@@ -143,6 +146,10 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(rendererSource, /vr-selection-mode-button/);
   assert.match(rendererSource, /stage\.__target\?\.live_url \? new URL\(proxiedPath, stage\.__target\.live_url\)\.toString\(\)/);
   assert.match(rendererSource, /reviewSelection\.annotation_id = binding\(instruction\.annotation_id, scope\)/);
+  assert.match(rendererSource, /resourceStores\.get\("annotation-workflow:annotations"\)\?\.data\?\.items/);
+  assert.match(rendererSource, /anchor\?\.bounds \|\| anchor\?\.rect/);
+  assert.match(rendererSource, /else if \(annotation\.anchor\?\.rect\)/);
+  assert.match(rendererSource, /if \(status\) mark\.dataset\.status = status/);
   assert.match(rendererSource, /aria-keyshortcuts/);
   assert.match(reviewRuntime, /\{ v: "browse", n: "node", r: "region" \}/);
   assert.match(reviewRuntime, /doc\.addEventListener\("keydown", keydown, true\)/);

@@ -2,7 +2,7 @@
 
 ## Core is a minimal Plugin Host (v4 beta)
 
-Status: accepted and implemented through migration Phase 10 for `1.1.4`.
+Status: accepted and implemented through migration Phase 10 for `1.1.5`.
 
 Review persistence and validation are owned by the bundled `review` plugin; job orchestration and the complete right sidebar by `annotation-workflow`; verified external runners by `custom-command`; and Issue behavior by `github-issue`. Core retains bootstrap, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned SDK contracts.
 
@@ -99,7 +99,7 @@ annotationにはviewport寸法だけでなく`viewport_mode`も保存し、AI co
 
 ## Phase 10 release and publication policy
 
-`1.1.4` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
+`1.1.5` ships the Core-owned declarative renderer as the default with the bundled `review` plugin providing the default review surface. Release acceptance requires matching root/lock versions, `npm test`, `npm pack --dry-run`, `git diff --check`, desktop/tablet/mobile browser verification, and verification of both legacy routes and the environment rollback switch. A dry-run pack is inspected only; no tarball is retained in the repository.
 
 Root and standalone plugin publication is non-atomic. Because the root package bundles compatible default server/UI copies, a standalone registry failure does not break initial startup. Recovery is to retain the published root, rerun publication after fixing the failed plugin, and let the workflow skip package versions already present. Never republish or overwrite an existing version.
 
@@ -137,7 +137,7 @@ review treeの部分patchではtarget iframe以外のoverlay DOMが置換され�
 
 ## Annotation target visibility
 
-active annotationはnode/regionともcurrent target上へ、選択時と同じaccent border＋translucent fillで常時表示する。live proxyのcurrent pageは`/live/...`ではなく元の`live_url`を基準にcanonical URLへ戻してannotationの`page_path`と比較する。sidebarのannotation titleと「対象を表示」はどちらもtarget focus actionとし、クリックしたannotation IDをselected markとして強調して対象位置へscrollする。
+sidebarの現在のstatus/kind filterを通過したannotationだけを、node/regionともcurrent target上へborder＋translucent fillで表示する。右側一覧から除外されたannotationはtargetにも描画しない。状態色は未対応=amber、AI対応中=blue、失敗=red、AI対応済み=green、解決済み=grayとし、node hoverはblue、region previewはpurpleに分離する。live proxyのcurrent pageは`/live/...`ではなく元の`live_url`を基準にcanonical URLへ戻してannotationの`page_path`と比較する。sidebarのannotation titleと「対象を表示」はどちらもtarget focus actionとし、クリックしたannotation IDを同じ状態色の太いselected markとして強調して対象位置へscrollする。
 
 ## Auto-run and manual batch exclusivity
 

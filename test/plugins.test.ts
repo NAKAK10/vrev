@@ -296,14 +296,14 @@ test("CLI creates and immediately installs a plugin base", () => {
 
 test("automatically installs bundled default plugins once per workspace", async () => {
   const root = workspace();
-  assert.deepEqual(await ensureDefaultPlugins(root), ["review@1.1.4", "github-issue@1.1.4", "custom-command@1.1.4", "annotation-workflow@1.1.4"]);
+  assert.deepEqual(await ensureDefaultPlugins(root), ["review@1.1.5", "github-issue@1.1.5", "custom-command@1.1.5", "annotation-workflow@1.1.5"]);
   const defaults = listPlugins(root);
   assert.deepEqual(defaults.map(({ id }) => id), ["review", "github-issue", "custom-command", "annotation-workflow"]);
   const expectedVersions = new Map([
-    ["review", "1.1.4"],
-    ["github-issue", "1.1.4"],
-    ["custom-command", "1.1.4"],
-    ["annotation-workflow", "1.1.4"],
+    ["review", "1.1.5"],
+    ["github-issue", "1.1.5"],
+    ["custom-command", "1.1.5"],
+    ["annotation-workflow", "1.1.5"],
   ]);
   for (const plugin of defaults) {
     const packageJson = JSON.parse(readFileSync(path.join(root, ".vreview/plugins", plugin.id, "package.json"), "utf8")) as { version: string };
@@ -344,7 +344,7 @@ test("upgrades proven schema-v3 bundled defaults while preserving workspace data
   writeFileSync(path.join(root, ".vreview/custom-commands.json"), commandsBefore);
 
   for (const id of ["github-issue", "custom-command", "annotation-workflow"]) restoreBundledPlugin(bundledRoot, id);
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["github-issue@1.1.4", "custom-command@1.1.4", "annotation-workflow@1.1.4"]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["github-issue@1.1.5", "custom-command@1.1.5", "annotation-workflow@1.1.5"]);
   assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [4, 4, 4]);
   assert.equal(readFileSync(path.join(root, ".vreview/plugin-settings.json"), "utf8"), settingsBefore);
   assert.equal(readFileSync(path.join(root, ".vreview/custom-commands.json"), "utf8"), commandsBefore);
@@ -365,14 +365,14 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   writeFileSync(packagePath, `${JSON.stringify(oldPackage, null, 2)}\n`);
   writeFileSync(uiPath, `${JSON.stringify({ schema_version: 1, root: { type: "text", props: { text: { literal: "stale bundled UI" } } } }, null, 2)}\n`);
 
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", "github-issue@1.1.4", "custom-command@1.1.4", "annotation-workflow@1.1.4"]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", "github-issue@1.1.5", "custom-command@1.1.5", "annotation-workflow@1.1.5"]);
   assert.match(readFileSync(path.join(root, ".vreview/plugins/review/ui/review.ui.json"), "utf8"), /stale bundled UI/);
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 
   restoreBundledPlugin(bundledRoot, "review");
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.1.4"]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.1.5"]);
   assert.equal(readFileSync(path.join(root, ".vreview/plugins/review/ui/review.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/review.ui.json"), "utf8"));
-  assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, "1.1.4");
+  assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, "1.1.5");
 });
 
 test("preserves a local same-ID install instead of treating it as a bundled default", async () => {
@@ -407,7 +407,7 @@ test("fails closed for a tampered installed manifest and never evaluates a tampe
   const marker = path.join(moduleRoot, "tampered-module-evaluated");
   const modulePath = path.join(moduleRoot, ".vreview/plugins/annotation-workflow/index.js");
   writeFileSync(modulePath, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "bad");\nexport default {};\n`);
-  assert.deepEqual(await ensureDefaultPlugins(moduleRoot, moduleBundle), ["annotation-workflow@1.1.4"]);
+  assert.deepEqual(await ensureDefaultPlugins(moduleRoot, moduleBundle), ["annotation-workflow@1.1.5"]);
   assert.equal(existsSync(marker), false);
   assert.equal((JSON.parse(readFileSync(path.join(moduleRoot, ".vreview/plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { schema_version: number }).schema_version, 4);
 });
