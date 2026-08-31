@@ -196,8 +196,7 @@ a { color: inherit; }
 .vr-section[data-variant="sidebar-annotations"] > .vr-checkbox-group .vr-checkbox-option { min-height: 30px; padding: 5px 9px; background: var(--vr-color-surface-subtle); }
 .vr-list[data-variant="annotation-list"] { margin-top: 4px; border-top: 1px solid var(--vr-color-border); }
 .vr-panel[data-variant="annotation-card"] { position: relative; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--vr-color-border); }
-.vr-panel[data-variant="annotation-card"].is-clickable { cursor: pointer; transition: background 120ms ease, box-shadow 120ms ease; }
-.vr-panel[data-variant="annotation-card"].is-clickable:hover { background: var(--vr-color-surface-subtle); }
+.vr-panel[data-variant="annotation-card"].is-clickable { cursor: pointer; }
 .vr-panel[data-variant="annotation-card"].is-clickable:focus-visible { outline: 2px solid var(--vr-color-focus); outline-offset: -2px; }
 .vr-panel[data-variant="annotation-card"] > .vr-status { position: absolute; top: 13px; right: 16px; margin: 0; font-size: 10px; }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="open"] { color: #8b261f; background: var(--vr-color-danger-soft); }
@@ -207,7 +206,7 @@ a { color: inherit; }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="resolved"] { color: #596563; background: #eef2f1; }
 .vr-panel[data-variant="annotation-card"] > .vr-text { margin: 1px 86px 8px 0; font-size: 13px; font-weight: 700; line-height: 1.5; }
 .vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"] { display: block; width: calc(100% - 82px); min-height: 0; margin: 0 82px 8px 0; padding: 1px 0; color: var(--vr-color-text); font-size: 13px; font-weight: 800; line-height: 1.5; text-align: left; background: transparent; border: 0; border-radius: 3px; }
-.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:hover { color: var(--vr-color-accent); text-decoration: underline; text-underline-offset: 3px; background: var(--vr-color-accent-soft); }
+.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:hover { color: var(--vr-color-text); text-decoration: none; border-color: transparent; background: transparent; }
 .vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:focus-visible { outline: 2px solid var(--vr-color-focus); outline-offset: 2px; }
 .vr-row[data-variant="annotation-meta"] { display: grid; margin: 0 !important; color: var(--vr-color-text-muted); grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; }
 .vr-row[data-variant="annotation-meta"] .vr-badge { padding: 2px 6px; font-size: 9px; }

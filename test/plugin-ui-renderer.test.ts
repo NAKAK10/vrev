@@ -112,6 +112,8 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.match(css, /--vr-color-canvas:/);
   assert.match(css, /\.vr-plugin-row\s*\{/);
   assert.match(css, /\.vr-plugin-detail-content/);
+  assert.doesNotMatch(css, /annotation-card"\]\.is-clickable:hover/);
+  assert.match(css, /annotation-target"\]:hover[^}]*color: var\(--vr-color-text\)[^}]*background: transparent/s);
   for (const status of ["open", "in_progress", "failed", "addressed", "resolved"]) assert.match(css, new RegExp(`\\.vr-annotation-mark\\[data-status="${status}"\\]`));
   assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
   assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
