@@ -11,6 +11,7 @@
   <body>
     <div class="app-shell">
       <header class="app-header">
+        <a id="global-settings-link" class="global-settings-link" href="/settings/plugins" aria-label="プラグイン設定を開く" title="設定" hidden>⚙</a>
         <div class="target-heading">
           <span class="eyebrow">LOCAL VISUAL REVIEW</span>
           <h1 id="target-path">対象を読み込み中…</h1>
@@ -38,7 +39,7 @@
 
       <div id="hash-warning" class="warning-banner" role="status" hidden></div>
 
-      <main class="review-layout">
+      <main class="review-layout workflow-disabled">
         <section class="stage-panel" aria-label="レビュー対象">
           <div id="stage" class="stage" data-mode="browse">
             <iframe id="target-frame" title="レビュー対象ページ" sandbox="allow-same-origin allow-forms" hidden></iframe>
@@ -54,8 +55,8 @@
           </div>
         </section>
 
-        <aside class="review-sidebar" aria-label="レビュー注釈">
-          <section class="sidebar-section ai-jobs-section" aria-labelledby="ai-jobs-heading">
+        <aside class="review-sidebar" aria-label="レビュー注釈" hidden>
+          <section class="sidebar-section ai-jobs-section" aria-labelledby="ai-jobs-heading" hidden>
             <div class="section-heading-row">
               <h2 id="ai-jobs-heading">AI一括修正</h2>
               <div class="ai-heading-actions">
@@ -98,7 +99,7 @@
       </main>
     </div>
 
-    <dialog id="ai-settings-dialog" class="comment-dialog ai-settings-dialog">
+    <dialog id="ai-settings-dialog" class="comment-dialog ai-settings-dialog" hidden>
       <form id="ai-settings-form" method="dialog">
         <div class="dialog-heading">
           <div>
@@ -116,7 +117,7 @@
               <option value="codex">Codex</option>
               <option value="copilot">GitHub Copilot</option>
               <option value="pi">Pi</option>
-              <optgroup id="ai-custom-options" label="カスタムコマンド"></optgroup>
+              <optgroup id="ai-custom-options" label="外部AIコマンド"></optgroup>
             </select>
           </label>
           <label for="ai-max-parallel">
@@ -139,17 +140,7 @@
           <input id="ai-auto-run" type="checkbox" role="switch">
           <span>注釈を保存したら自動でAI修正を開始</span>
         </label>
-        <section class="custom-command-section" aria-labelledby="custom-command-heading">
-          <h3 id="custom-command-heading">カスタムコマンド</h3>
-          <p>shellを経由せず直接実行します。依頼文を渡す<code>{prompt}</code>を必ず1回記述してください。登録前に一時directoryで応答とtool利用を検証します。</p>
-          <div class="custom-command-fields">
-            <label for="custom-command-name"><span>表示名</span><input id="custom-command-name" type="text" maxlength="80" placeholder="Ollama Claude" aria-keyshortcuts="Meta+Enter Control+Enter"></label>
-            <label for="custom-command-value"><span>コマンド</span><input id="custom-command-value" type="text" maxlength="2000" placeholder="ollama launch claude --model deepseek-v4-flash:cloud -- -p {prompt}" aria-keyshortcuts="Meta+Enter Control+Enter"></label>
-          </div>
-          <button id="custom-command-add" class="secondary-button" type="button">テストして登録</button>
-          <p id="custom-command-status" class="custom-command-feedback" role="status" aria-live="polite"></p>
-          <div id="custom-command-list" class="custom-command-list"></div>
-        </section>
+        <p class="settings-moved-note">プラグイン固有の設定は、左上の設定画面に集約されています。</p>
         <div class="dialog-actions">
           <button class="primary-button" type="submit">設定を閉じる</button>
         </div>

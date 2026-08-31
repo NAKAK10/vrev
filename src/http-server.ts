@@ -6,22 +6,27 @@ import { BlockList } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { testCustomCommand } from "./custom-command-test.js";
+import { createBundledBridgeCatalog, type BundledBridgeAdapter } from "./bundled-plugin-catalog.js";
 import { fileSha256 } from "./file-utils.js";
-import { normalizeGitHubIssueDraft, type GitHubIssueDraft } from "./github-issue.js";
+import { createIssueTaskCapability, type GitHubIssueDraft } from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { resolveTarget } from "./paths.js";
-import { loadPluginIssueProvider, type PluginIssueResult } from "./plugin-runtime.js";
-import { ReviewStore } from "./review-store.js";
+import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
+import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, type PluginIssueResult } from "./plugin-runtime.js";
+import { effectivePluginSettings, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "./plugin-settings.js";
+import { createReviewCapability } from "./review-capability.js";
+import type { ReviewStore } from "./review-store.js";
+import { loadPluginUiSurface, resolvePluginBrowserModule } from "./plugin-ui-surface.js";
 import { acquireServerLease, type ServerLease } from "./server-lease.js";
 import type { AddMessageInput, CreateAnnotationInput, SetStatusInput } from "./types.js";
+import { loadWorkspaceSettings } from "./workspace-settings.js";
 
 export const MAX_REQUEST_BODY = 1024 * 1024;
 export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 
 const SECURITY_POLICY = [
   "default-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
@@ -103,6 +108,8 @@ export interface VisualReviewServerOptions {
   allowAiJobsWithScripts?: boolean;
   jobManager?: JobManagerOptions;
   issueCreator?: (draft: GitHubIssueDraft) => Promise<PluginIssueResult>;
+  /** One-beta rollback switch. Declarative UI is the default. */
+  legacyUi?: boolean;
 }
 
 export interface VisualReviewServer {
@@ -362,6 +369,65 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   return value as Record<string, unknown>;
 }
 
+const MAX_BRIDGE_ACTION_BODY = 32 * 1024;
+type BridgeAdapterResult = { ok: true; revision?: string; data: unknown; effects?: unknown[] } | { ok: false; revision?: string; error: { code: string; message: string; retryable: boolean; request_id: string; fields?: Record<string, string> } };
+
+async function readBridgeJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const declared = request.headers["content-length"];
+  if (declared !== undefined && Number(declared) > MAX_BRIDGE_ACTION_BODY) throw new HttpError(413, "plugin bridge request is too large");
+  const value = await readJson(request);
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_BRIDGE_ACTION_BODY) throw new HttpError(413, "plugin bridge request is too large");
+  if (value.protocol !== "plugin-bridge/1" || typeof value.request_id !== "string" || !value.request_id || typeof value.input !== "object" || value.input === null || Array.isArray(value.input)) {
+    throw new HttpError(400, "invalid plugin bridge envelope");
+  }
+  return value;
+}
+
+function bridgeError(request: Record<string, unknown>, code: string, message: string, retryable = false): BridgeAdapterResult {
+  return { ok: false, error: { code, message, retryable, request_id: typeof request.request_id === "string" ? request.request_id : "unknown" } };
+}
+
+function assertBridgeRequestOrigin(request: IncomingMessage): void {
+  const origin = request.headers.origin;
+  if (origin === "null") throw new HttpError(403, "sandboxed target cannot access plugin bridge actions");
+  if (typeof origin === "string") {
+    const host = request.headers.host;
+    if (!host || origin !== `http://${host}`) throw new HttpError(403, "plugin bridge origin is not allowed");
+  }
+}
+
+function bridgeStatus(code: string): number {
+  return ({ BAD_REQUEST: 400, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409, PAYLOAD_TOO_LARGE: 413, VALIDATION_FAILED: 422, RATE_LIMITED: 429, PLUGIN_PROTOCOL_ERROR: 502, PLUGIN_UNAVAILABLE: 503, TIMEOUT: 504 } as Record<string, number>)[code] ?? 500;
+}
+
+async function delegateBridge(
+  adapter: BundledBridgeAdapter | undefined,
+  kind: "query" | "command",
+  name: string,
+  request: Record<string, unknown>,
+): Promise<BridgeAdapterResult> {
+  if (!adapter) return bridgeError(request, "PLUGIN_UNAVAILABLE", "plugin is disabled or unavailable", true);
+  if (kind === "command" && (typeof request.idempotency_key !== "string" || !request.idempotency_key)) {
+    return bridgeError(request, "BAD_REQUEST", "idempotency_key is required");
+  }
+  try {
+    return await adapter[kind](name, request as unknown as Parameters<BundledBridgeAdapter[typeof kind]>[1]);
+  } catch (error) {
+    if (isAnnotationMissing(error)) return bridgeError(request, "NOT_FOUND", "annotation not found");
+    return bridgeError(request, "VALIDATION_FAILED", error instanceof Error ? error.message : "plugin operation failed");
+  }
+}
+
+function serveBridgeEvents(request: IncomingMessage, response: ServerResponse, pluginId: string, projectRoot: string): void {
+  if (!pluginEnabled(pluginId, projectRoot)) throw new HttpError(404, "plugin event stream is unavailable");
+  setSecurityHeaders(response);
+  response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive" });
+  response.write(`id: host:0\ndata: ${JSON.stringify({ protocol: "plugin-bridge/1", event_id: "host:0", seq: 0, plugin_id: pluginId, type: "resync.required", resources: [] })}\n\n`);
+  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000);
+  heartbeat.unref();
+  request.once("close", () => clearInterval(heartbeat));
+}
+
 function annotationId(pathname: string, suffix = ""): string | undefined {
   const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`^/api/annotations/([^/]+)${escapedSuffix}$`).exec(pathname);
@@ -385,6 +451,66 @@ function defaultUiRoot(): string {
   return fileURLToPath(new URL("./ui", import.meta.url));
 }
 
+function bundledAnnotationWorkflowRoot(): string {
+  return fileURLToPath(new URL("./bundled-plugins/annotation-workflow", import.meta.url));
+}
+
+function pluginSettingsUiRoot(): string {
+  return fileURLToPath(new URL("./plugin-settings-ui", import.meta.url));
+}
+
+function pluginCapabilities(manifest: ReturnType<typeof listPlugins>[number]["manifest"]): string[] {
+  return [
+    ...(manifest.commands?.length ? ["commands"] : []),
+    ...(manifest.storage_provider ? ["storage"] : []),
+    ...(manifest.issue_provider ? ["issue"] : []),
+    ...(manifest.annotation_flow_provider ? ["annotation-flow"] : []),
+  ];
+}
+
+function pluginEnabled(id: string, projectRoot: string): boolean {
+  const plugin = listPlugins(projectRoot).find((candidate) => candidate.id === id);
+  if (!plugin) return false;
+  const effective = effectivePluginSettings(plugin.manifest, projectRoot);
+  return effective.enabled && effective.missing.length === 0;
+}
+
+function pluginManagementPayload(projectRoot: string): object {
+  const settings = readPluginSettings(projectRoot);
+  return {
+    revision: pluginSettingsRevision(settings),
+    plugins: listPlugins(projectRoot).map(({ id, version, manifest }) => {
+      const effective = effectivePluginSettings(manifest, projectRoot);
+      const configuration = (manifest.configuration ?? []).map((field) => ({
+        ...field,
+        ...(field.source === "environment" ? { present: Boolean(field.environment && process.env[field.environment]) } : {}),
+        value: field.source === "workspace" ? effective.configuration[field.key] ?? null : null,
+      }));
+      return {
+        id,
+        version,
+        title: manifest.display?.title ?? id,
+        summary: manifest.display?.summary ?? `Visual Review plugin: ${id}`,
+        capabilities: pluginCapabilities(manifest),
+        enabled: effective.enabled,
+        missing: effective.missing,
+        configuration,
+        has_readme: Boolean(manifest.display?.readme ?? existsSync(path.join(installedPluginDirectory(id, projectRoot), "README.md"))),
+      };
+    }),
+  };
+}
+
+function readInstalledPluginReadme(id: string, projectRoot: string): string {
+  const plugin = listPlugins(projectRoot).find((candidate) => candidate.id === id);
+  if (!plugin) throw new HttpError(404, "plugin not found");
+  const relative = plugin.manifest.display?.readme ?? "./README.md";
+  const candidate = path.join(installedPluginDirectory(id, projectRoot), ...relative.slice(2).split("/"));
+  if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink() || !statSync(candidate).isFile()) throw new HttpError(404, "plugin README not found");
+  if (statSync(candidate).size > 256 * 1024) throw new HttpError(413, "plugin README is too large");
+  return readFileSync(candidate, "utf8");
+}
+
 async function createIssueWithInstalledPlugin(projectRoot: string, draft: GitHubIssueDraft): Promise<PluginIssueResult> {
   try {
     const { provider } = await loadPluginIssueProvider("github-issue", projectRoot);
@@ -402,40 +528,51 @@ export function assertLoopbackHost(host: string): void {
 }
 
 export function createVisualReviewServer(options: VisualReviewServerOptions): VisualReviewServer {
-  const store = new ReviewStore(options.target, { projectRoot: options.projectRoot, ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}) });
-  const jobManager = new JobManager(store, options.jobManager);
+  // Deprecated HTTP routes are transport adapters over the review plugin capability.
+  const reviewCapability = createReviewCapability(options.target, {
+    projectRoot: options.projectRoot,
+    ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}),
+  });
+  const store = reviewCapability.store;
+  const customCommandProvider = async () => (await loadPluginCustomCommandProvider("custom-command", store.target.projectRoot)).provider;
+  const jobManager = new JobManager(store, {
+    ...options.jobManager,
+    customCommandResolver: async (runnerId) => (await customCommandProvider()).resolve(store.target.projectRoot, runnerId),
+  });
   const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createIssueWithInstalledPlugin(store.target.projectRoot, draft));
-  const issueCreations = new Map<string, Promise<PluginIssueResult>>();
-  const createIssueOnce = (annotationId: string, draft: GitHubIssueDraft): Promise<PluginIssueResult> => {
-    const annotation = store.load().annotations.find(({ id }) => id === annotationId);
-    if (!annotation) throw new HttpError(404, `annotation not found: ${annotationId}`);
-    if (annotation.issue_state === "created" && annotation.issue_url) return Promise.resolve({ url: annotation.issue_url });
-    if (annotation.issue_state !== "ready" || annotation.status !== "addressed") {
-      throw new HttpError(409, "Issue draft is not ready for creation");
-    }
-    const existing = issueCreations.get(annotationId);
-    if (existing) return existing;
-    const creation = issueCreator(draft)
-      .then((result) => {
-        store.completeIssueDraft(annotationId, draft.title, result.url);
-        return result;
-      })
-      .finally(() => issueCreations.delete(annotationId));
-    issueCreations.set(annotationId, creation);
-    return creation;
-  };
+  const issueTask = createIssueTaskCapability(
+    { apiVersion: 1, store },
+    { provider: { createIssue: (_projectRoot, draft) => issueCreator(draft) } },
+  );
+  const commandJournal = new Map<string, { payload: string; result: Promise<BridgeAdapterResult>; at: number }>();
   const uiRoot = defaultUiRoot();
-  for (const name of ["index.html", "reviewer.css", "reviewer.js", "jobs.js"]) {
+  const settingsUiRoot = pluginSettingsUiRoot();
+  const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management === true;
+  for (const name of ["index.html", "renderer.html", "renderer.css", "renderer.js", "reviewer.css", "reviewer.js", "jobs.js"]) {
     if (!existsSync(path.join(uiRoot, name))) {
       throw new Error(`built UI asset missing: ${path.join(uiRoot, name)}; run npm run build first`);
     }
+  }
+  for (const name of ["index.html", "settings.css", "settings.js"]) {
+    if (!existsSync(path.join(settingsUiRoot, name))) throw new Error(`built plugin settings asset missing: ${path.join(settingsUiRoot, name)}; run npm run build first`);
   }
   const lease = acquireServerLease(store.path);
   const publicTarget = store.target.urlMode === "public";
   const allowScripts = !publicTarget && (options.allowScripts === true || store.target.liveUrl !== undefined);
   const aiJobsEnabled = !allowScripts || options.allowAiJobsWithScripts === true;
+  const bundledBridgeCatalog = createBundledBridgeCatalog({
+    review: reviewCapability,
+    workflowManager: jobManager,
+    customCommands: customCommandProvider,
+    issueTask,
+    allowScripts,
+    aiJobsEnabled,
+    pluginManagementVisible,
+  });
+  const bridgeAdapter = (pluginId: string): BundledBridgeAdapter | undefined =>
+    pluginEnabled(pluginId, store.target.projectRoot) ? bundledBridgeCatalog.get(pluginId) : undefined;
   try {
-    if (aiJobsEnabled) jobManager.start();
+    if (aiJobsEnabled && pluginEnabled("annotation-workflow", store.target.projectRoot)) jobManager.start();
   } catch (error) {
     lease.release();
     throw error;
@@ -445,11 +582,80 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
       try {
         const url = new URL(request.url ?? "/", "http://localhost");
         const pathname = url.pathname;
-        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname === "/api/jobs/custom-command/test" || pathname === "/api/issues/request" || pathname === "/api/issues" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
+        if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname.startsWith("/api/jobs/custom-command") || pathname === "/api/issues/request" || pathname === "/api/issues" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
           throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
-        if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, "index.html"));
-        if (request.method === "GET" && ["/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname)) {
+        const legacyUi = options.legacyUi === true || process.env.VISUAL_REVIEW_LEGACY_UI === "1";
+        if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, legacyUi ? "index.html" : "renderer.html"));
+        if (request.method === "GET" && pathname === "/legacy") return serveFile(response, path.join(uiRoot, "index.html"));
+        if (request.method === "GET" && pathname === "/api/plugin-host/v1/surfaces/review") {
+          return sendJson(response, 200, loadPluginUiSurface(store.target.projectRoot));
+        }
+        const browserModule = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/ui-modules\/([a-z][a-z0-9-]{0,62})$/.exec(pathname);
+        if (request.method === "GET" && browserModule?.[1] && browserModule[2]) {
+          try { return serveFile(response, resolvePluginBrowserModule(browserModule[1], browserModule[2], store.target.projectRoot)); }
+          catch { throw new HttpError(404, "plugin UI runtime is unavailable"); }
+        }
+        const bridgeQuery = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/queries\/([a-z][a-z0-9_.-]*)$/.exec(pathname);
+        if (request.method === "POST" && bridgeQuery?.[1] && bridgeQuery[2]) {
+          assertBridgeRequestOrigin(request);
+          const payload = await readBridgeJson(request);
+          const result = await delegateBridge(bridgeAdapter(bridgeQuery[1]), "query", bridgeQuery[2], payload);
+          return sendJson(response, result.ok ? 200 : bridgeStatus(result.error.code), result);
+        }
+        const bridgeCommand = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/commands\/([a-z][a-z0-9_.-]*)$/.exec(pathname);
+        if (request.method === "POST" && bridgeCommand?.[1] && bridgeCommand[2]) {
+          assertBridgeRequestOrigin(request);
+          const payload = await readBridgeJson(request);
+          const idempotencyKey = typeof payload.idempotency_key === "string" && payload.idempotency_key ? `${bridgeCommand[1]}:${payload.idempotency_key}` : null;
+          const payloadHash = JSON.stringify({ name: bridgeCommand[2], input: payload.input, expected_revision: payload.expected_revision ?? null });
+          let operation: Promise<BridgeAdapterResult>;
+          const recorded = idempotencyKey ? commandJournal.get(idempotencyKey) : undefined;
+          if (recorded && recorded.payload !== payloadHash) operation = Promise.resolve(bridgeError(payload, "CONFLICT", "idempotency key was reused with a different payload"));
+          else if (recorded) operation = recorded.result;
+          else {
+            operation = delegateBridge(bridgeAdapter(bridgeCommand[1]), "command", bridgeCommand[2], payload);
+            if (idempotencyKey) {
+              commandJournal.set(idempotencyKey, { payload: payloadHash, result: operation, at: Date.now() });
+              if (commandJournal.size > 10_000) commandJournal.delete(commandJournal.keys().next().value as string);
+            }
+          }
+          const result = await operation;
+          return sendJson(response, result.ok ? 200 : bridgeStatus(result.error.code), result);
+        }
+        const bridgeEvents = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/events$/.exec(pathname);
+        if (request.method === "GET" && bridgeEvents?.[1]) return serveBridgeEvents(request, response, bridgeEvents[1], store.target.projectRoot);
+        if (pathname.startsWith("/settings/") || pathname.startsWith("/api/settings/plugins")) {
+          if (!pluginManagementVisible) throw new HttpError(404, "plugin management is hidden by workspace settings");
+          if (request.method === "GET" && pathname === "/settings/plugins") return serveFile(response, legacyUi ? path.join(settingsUiRoot, "index.html") : path.join(uiRoot, "renderer.html"));
+          if (request.method === "GET" && pathname === "/settings/legacy") return serveFile(response, path.join(settingsUiRoot, "index.html"));
+          if (request.method === "GET" && ["/settings/settings.css", "/settings/settings.js"].includes(pathname)) {
+            return serveFile(response, path.join(settingsUiRoot, path.basename(pathname)));
+          }
+          if (request.method === "GET" && pathname === "/api/settings/plugins") return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+          const readmeMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/readme$/.exec(pathname);
+          if (request.method === "GET" && readmeMatch?.[1]) return sendJson(response, 200, { readme: readInstalledPluginReadme(readmeMatch[1], store.target.projectRoot) });
+          const updateMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)$/.exec(pathname);
+          if (request.method === "PUT" && updateMatch?.[1]) {
+            const plugin = listPlugins(store.target.projectRoot).find(({ id }) => id === updateMatch[1]);
+            if (!plugin) throw new HttpError(404, "plugin not found");
+            const payload = await readJson(request);
+            if (typeof payload.revision !== "string" || typeof payload.enabled !== "boolean" || typeof payload.configuration !== "object" || payload.configuration === null || Array.isArray(payload.configuration)) throw new HttpError(400, "plugin settings update is invalid");
+            try {
+              updatePluginSettings(plugin.id, plugin.manifest, { revision: payload.revision, enabled: payload.enabled, configuration: payload.configuration as Record<string, unknown> }, store.target.projectRoot);
+              if (plugin.id === "annotation-workflow") {
+                if (payload.enabled && aiJobsEnabled) jobManager.start();
+                else await jobManager.close();
+              }
+            } catch (error) {
+              if (error instanceof Error && error.message === "plugin settings revision conflict") throw new HttpError(409, error.message);
+              throw error;
+            }
+            return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+          }
+          throw new HttpError(404, "route not found");
+        }
+        if (request.method === "GET" && ["/renderer.css", "/renderer.js", "/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname)) {
           return serveFile(response, path.join(uiRoot, pathname.slice(1)));
         }
         if (request.method === "GET" && pathname === "/api/session") {
@@ -467,6 +673,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
             },
             review: store.loadActive(),
+            features: { plugin_management: pluginManagementVisible },
           });
         }
         if (request.method === "GET" && pathname === "/api/archive") {
@@ -504,32 +711,89 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             throw new HttpError(400, "path is outside the active session");
           }
         }
+        if (request.method === "GET" && pathname === "/api/plugins/annotation-flow") {
+          const installed = listPlugins(store.target.projectRoot).find(({ id }) => id === "annotation-workflow");
+          const customCommandEnabled = pluginEnabled("custom-command", store.target.projectRoot);
+          if (!installed) return sendJson(response, 200, { enabled: false, reason: "not-installed", policy: null, custom_command_enabled: customCommandEnabled });
+          if (!pluginEnabled("annotation-workflow", store.target.projectRoot)) {
+            return sendJson(response, 200, { enabled: false, reason: "disabled", policy: null, custom_command_enabled: customCommandEnabled });
+          }
+          const { policy } = await loadTrustedPluginAnnotationFlowProvider(
+            "annotation-workflow",
+            bundledAnnotationWorkflowRoot(),
+            store.target.projectRoot,
+          );
+          return sendJson(response, 200, { enabled: true, reason: null, policy, custom_command_enabled: customCommandEnabled });
+        }
+        if (pathname.startsWith("/api/jobs") && !pluginEnabled("annotation-workflow", store.target.projectRoot)) {
+          throw new HttpError(409, "annotation workflow plugin is disabled");
+        }
         if (request.method === "GET" && pathname === "/api/jobs") {
-          return sendJson(response, 200, jobManager.list());
+          const state = jobManager.list();
+          return sendJson(response, 200, {
+            ...state,
+            batches: state.batches.map(({ custom_command: _legacyTemplate, ...batch }) => batch),
+            jobs: state.jobs.map(({ custom_name: _legacyName, ...job }) => job),
+          });
+        }
+        if ((request.method === "GET" || request.method === "POST" || request.method === "DELETE") && pathname.startsWith("/api/jobs/custom-commands")
+          && !pluginEnabled("custom-command", store.target.projectRoot)) throw new HttpError(409, "custom command plugin is disabled");
+        if (request.method === "GET" && pathname === "/api/jobs/custom-commands") {
+          return sendJson(response, 200, { runners: (await customCommandProvider()).list(store.target.projectRoot) });
+        }
+        if (request.method === "POST" && pathname === "/api/jobs/custom-commands") {
+          const input = await readJson(request);
+          if (typeof input.name !== "string" || typeof input.command !== "string") throw new HttpError(400, "name and command must be strings");
+          return sendJson(response, 201, await (await customCommandProvider()).add(store.target.projectRoot, input.name, input.command));
+        }
+        const customRunnerMatch = /^\/api\/jobs\/custom-commands\/([^/]+)$/.exec(pathname);
+        const customRunnerTestMatch = /^\/api\/jobs\/custom-commands\/([^/]+)\/test$/.exec(pathname);
+        if (request.method === "POST" && customRunnerTestMatch?.[1]) {
+          const result = await (await customCommandProvider()).test(store.target.projectRoot, decodeURIComponent(customRunnerTestMatch[1]));
+          return sendJson(response, 200, { ok: true, ...result });
+        }
+        if (request.method === "DELETE" && customRunnerMatch?.[1]) {
+          (await customCommandProvider()).remove(store.target.projectRoot, decodeURIComponent(customRunnerMatch[1]));
+          return sendJson(response, 200, { ok: true });
         }
         if (request.method === "POST" && pathname === "/api/jobs/batch") {
-          return sendJson(response, 200, jobManager.enqueue(await readJson(request)));
+          const input = await readJson(request);
+          if (input.cli === "custom") {
+            if (!pluginEnabled("custom-command", store.target.projectRoot)) throw new HttpError(409, "custom command plugin is disabled");
+            if (typeof input.runner_id !== "string") throw new HttpError(400, "runner_id is required for custom commands");
+            (await customCommandProvider()).resolve(store.target.projectRoot, input.runner_id);
+          }
+          return sendJson(response, 200, jobManager.enqueue(input));
         }
         if (request.method === "POST" && pathname === "/api/jobs/custom-command/test") {
-          const input = await readJson(request);
-          if (typeof input.command !== "string") throw new HttpError(400, "command must be a string");
-          const probe = await testCustomCommand(input.command);
-          return sendJson(response, 200, { ok: true, duration_ms: probe.durationMs });
+          throw new HttpError(404, "route not found");
         }
         if (request.method === "POST" && pathname === "/api/issues/request") {
+          const installed = listPlugins(store.target.projectRoot).some(({ id }) => id === "github-issue");
+          if (installed && !pluginEnabled("github-issue", store.target.projectRoot)) throw new HttpError(409, "GitHub Issue plugin is disabled");
           const payload = await readJson(request);
           store.createIssueRequest(payload as unknown as CreateAnnotationInput);
           return sendJson(response, 200, store.loadActive());
         }
         if (request.method === "POST" && pathname === "/api/issues") {
+          const installed = listPlugins(store.target.projectRoot).some(({ id }) => id === "github-issue");
+          if (installed && !pluginEnabled("github-issue", store.target.projectRoot)) throw new HttpError(409, "GitHub Issue plugin is disabled");
           const payload = await readJson(request);
-          const draft = normalizeGitHubIssueDraft(payload);
           if (typeof payload.annotation_id !== "string" || !payload.annotation_id) throw new HttpError(400, "annotation_id is required");
-          const result = await createIssueOnce(payload.annotation_id, draft);
+          let result: PluginIssueResult;
+          try { result = await issueTask.create(payload.annotation_id, payload); }
+          catch (error) {
+            if (isAnnotationMissing(error)) throw new HttpError(404, (error as Error).message);
+            if (error instanceof Error && error.message === "Issue draft is not ready for creation") throw new HttpError(409, error.message);
+            throw error;
+          }
           return sendJson(response, 200, { ...result, review: store.loadActive() });
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
-        if (cancelId !== undefined) return sendJson(response, 200, jobManager.cancel(cancelId));
+        if (cancelId !== undefined) {
+          const { custom_name: _legacyName, ...job } = jobManager.cancel(cancelId);
+          return sendJson(response, 200, job);
+        }
         if (store.target.liveUrl && (pathname === "/live" || pathname.startsWith("/live/"))) {
           await proxyLiveRequest(request, response, store.target.liveUrl, url, publicTarget);
           return;

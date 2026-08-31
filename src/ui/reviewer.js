@@ -33,6 +33,7 @@ const state = {
 };
 
 const elements = {
+  settingsLink: document.querySelector("#global-settings-link"),
   targetPath: document.querySelector("#target-path"),
   modeButtons: [...document.querySelectorAll(".mode-button[data-mode]")],
   viewportButtons: [...document.querySelectorAll(".viewport-button[data-viewport]")],
@@ -354,6 +355,7 @@ async function loadSession({ reloadTarget = false } = {}) {
     const previousUrl = state.session ? targetUrl() : null;
     state.session = session;
     state.review = session.review ?? { annotations: [], events: [] };
+    elements.settingsLink.hidden = session.features?.plugin_management !== true;
     if (targetKind() === "image") {
       state.currentFileState = {
         path: repositoryPath(session.target.entry_path),

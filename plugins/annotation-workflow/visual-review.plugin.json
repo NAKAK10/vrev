@@ -1,0 +1,67 @@
+{
+  "schema_version": 4,
+  "id": "annotation-workflow",
+  "version": "1.1.0",
+  "display": {
+    "title": "注釈ワークフロー",
+    "summary": "注釈保存後のAI自動実行と設定UIのポリシーを提供します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
+  "annotation_flow_provider": {
+    "api_version": 1,
+    "module": "./index.js"
+  },
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/index.js",
+    "contract": "./server.contract.json"
+  },
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "review-sidebar",
+        "slot": "review.sidebar",
+        "document": "./ui/sidebar.ui.json",
+        "order": 100
+      },
+      {
+        "id": "workflow-settings",
+        "slot": "settings.detail",
+        "document": "./ui/settings.ui.json",
+        "order": 100
+      }
+    ]
+  },
+  "requires": [
+    {
+      "capability": "review",
+      "api_version": 1,
+      "optional": false
+    },
+    {
+      "capability": "host.process-supervisor",
+      "api_version": 1,
+      "optional": false
+    },
+    {
+      "capability": "runner-registry",
+      "api_version": 1,
+      "optional": true
+    },
+    {
+      "capability": "issue-task",
+      "api_version": 1,
+      "optional": true
+    }
+  ],
+  "provides": [
+    {
+      "capability": "annotation-workflow",
+      "api_version": 1
+    }
+  ]
+}

@@ -1,8 +1,45 @@
 {
-  "schema_version": 1,
+  "schema_version": 4,
   "id": "github-issue",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "display": {
+    "title": "GitHub Issue",
+    "summary": "レビューから確認済みのGitHub Issueを作成します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
   "issue_provider": {
     "module": "./index.js"
-  }
+  },
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/index.js",
+    "contract": "./server.contract.json"
+  },
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "issue-actions",
+        "slot": "review.annotation.actions",
+        "document": "./ui/issue.ui.json",
+        "order": 200
+      }
+    ]
+  },
+  "requires": [
+    {
+      "capability": "review",
+      "api_version": 1,
+      "optional": false
+    }
+  ],
+  "provides": [
+    {
+      "capability": "issue-task",
+      "api_version": 1
+    }
+  ]
 }

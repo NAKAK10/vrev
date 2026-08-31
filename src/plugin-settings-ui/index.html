@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Visual Review plugin settings">
+  <title>プラグイン設定 | Visual Review</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/settings/settings.css">
+</head>
+<body>
+  <header class="settings-header">
+    <a class="back-link" href="/" aria-label="レビューへ戻る">←</a>
+    <div><span class="eyebrow">VISUAL REVIEW SETTINGS</span><h1>プラグイン</h1></div>
+  </header>
+  <main class="settings-layout">
+    <nav class="settings-nav" aria-label="設定カテゴリ">
+      <a href="/settings/plugins" aria-current="page">プラグイン</a>
+    </nav>
+    <section class="settings-content" aria-labelledby="plugins-heading">
+      <div class="section-heading">
+        <div><h2 id="plugins-heading">インストール済みプラグイン</h2><p>有効状態を切り替え、詳細画面から説明と設定を確認できます。</p></div>
+      </div>
+      <p id="page-status" class="status" role="status" aria-live="polite">読み込み中…</p>
+      <div id="plugin-list" class="plugin-list" role="list"></div>
+    </section>
+  </main>
+
+  <template id="plugin-row-template">
+    <article class="plugin-row" role="listitem">
+      <div class="plugin-row-copy">
+        <h3></h3>
+        <p class="plugin-summary"></p>
+      </div>
+      <label class="plugin-toggle">
+        <input type="checkbox" role="switch">
+        <span class="plugin-toggle-label">有効</span>
+      </label>
+      <button type="button" class="details-button" aria-haspopup="dialog" aria-controls="plugin-details-dialog">詳細</button>
+    </article>
+  </template>
+
+  <dialog id="plugin-details-dialog" class="plugin-dialog" aria-labelledby="plugin-dialog-title">
+    <div class="plugin-dialog-shell">
+      <header class="plugin-dialog-header">
+        <div class="plugin-dialog-heading">
+          <span class="eyebrow">PLUGIN DETAILS</span>
+          <h2 id="plugin-dialog-title"></h2>
+          <p id="plugin-dialog-summary"></p>
+        </div>
+        <button type="button" class="dialog-close" data-dialog-close aria-label="詳細を閉じる">×</button>
+      </header>
+      <div class="plugin-dialog-body">
+        <section class="plugin-metadata-section" aria-labelledby="plugin-status-heading">
+          <h3 id="plugin-status-heading">プラグイン情報</h3>
+          <dl class="plugin-metadata">
+            <div><dt>状態</dt><dd id="plugin-dialog-state"></dd></div>
+            <div><dt>バージョン</dt><dd><code id="plugin-dialog-version"></code></dd></div>
+            <div><dt>ID</dt><dd><code id="plugin-dialog-id"></code></dd></div>
+            <div><dt>機能</dt><dd id="plugin-dialog-capabilities"></dd></div>
+          </dl>
+        </section>
+
+        <section id="plugin-configuration-section" class="dialog-section" aria-labelledby="plugin-configuration-heading" hidden>
+          <h3 id="plugin-configuration-heading">設定</h3>
+          <form id="plugin-configuration-form" class="plugin-form"></form>
+          <div class="dialog-section-actions"><button id="plugin-configuration-save" type="button" class="primary-button">設定を保存</button></div>
+        </section>
+
+        <section id="workflow-settings" class="dialog-section workflow-settings" aria-labelledby="workflow-settings-heading" hidden>
+          <h3 id="workflow-settings-heading">AI修正設定</h3>
+          <p class="storage-note">このブラウザに自動保存されます。</p>
+          <div class="field-grid">
+            <label>CLI<select name="workflow-cli"></select></label>
+            <label>最大並列数<select name="workflow-parallel"></select></label>
+          </div>
+          <label class="plugin-toggle workflow-auto-toggle"><input name="workflow-auto-run" type="checkbox" role="switch"><span>注釈を保存したら自動でAI修正を開始</span></label>
+          <p class="workflow-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="custom-command-manager" class="dialog-section custom-command-manager" aria-labelledby="custom-command-heading" hidden>
+          <h3 id="custom-command-heading">外部AIコマンド</h3>
+          <p class="storage-note">このブラウザに保存されます。shellを経由せず実行し、<code>{prompt}</code>を1回だけ含めてください。</p>
+          <div class="field-grid"><label>表示名<input name="custom-name" maxlength="80"></label><label>コマンド<input name="custom-command" maxlength="2000"></label></div>
+          <button type="button" data-add-command>テストして登録</button>
+          <p class="command-status" role="status" aria-live="polite"></p>
+          <ul class="command-list"></ul>
+        </section>
+
+        <section class="dialog-section readme-section" aria-labelledby="readme-heading">
+          <h3 id="readme-heading">詳細説明</h3>
+          <p id="readme-status" class="status" role="status" aria-live="polite"></p>
+          <article id="readme-content" class="markdown-body"></article>
+        </section>
+      </div>
+      <footer class="plugin-dialog-footer">
+        <button type="button" class="secondary-button" data-dialog-close>閉じる</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/settings/settings.js"></script>
+</body>
+</html>

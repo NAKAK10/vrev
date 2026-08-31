@@ -14,17 +14,18 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 export const CONFIG_RELATIVE_PATH = ".vreview/custom-commands.json";
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_OUTPUT_LIMIT = 1024 * 1024;
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 const MAX_CONFIG_BYTES = 256 * 1024;
 const MAX_TEMPLATE_LENGTH = 2_000;
 const MAX_PROMPT_LENGTH = 256 * 1024;
 const NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
+const RUNNER_ID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|legacy-[0-9a-f]{32})$/;
 const PROBE_MARKER = ".visual-review-command-test";
 const PROBE_TOKEN = "VISUAL_REVIEW_OK";
 const SECRET_OPTION_PATTERN = /^(?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)(?:=|$)/i;
@@ -115,20 +116,27 @@ function assertRegularFile(file) {
 function normalizeConfig(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("custom command config must be an object");
   const keys = Object.keys(value);
-  if (keys.length !== 2 || !keys.includes("schema_version") || !keys.includes("commands") || value.schema_version !== CONFIG_VERSION) {
+  if (keys.length !== 2 || !keys.includes("schema_version") || !keys.includes("commands") || ![1, CONFIG_VERSION].includes(value.schema_version)) {
     throw new Error("custom command config has an unsupported schema");
   }
   if (typeof value.commands !== "object" || value.commands === null || Array.isArray(value.commands)) {
     throw new Error("custom command config commands must be an object");
   }
   const commands = Object.create(null);
-  for (const [name, record] of Object.entries(value.commands)) {
-    validateName(name);
-    if (typeof record !== "object" || record === null || Array.isArray(record) || Object.keys(record).length !== 1 || typeof record.template !== "string") {
-      throw new Error(`custom command ${name} is invalid`);
-    }
+  for (const [key, record] of Object.entries(value.commands)) {
+    if (typeof record !== "object" || record === null || Array.isArray(record) || typeof record.template !== "string") throw new Error(`custom command ${key} is invalid`);
     parseCommandTemplate(record.template, "validation");
-    commands[name] = { template: record.template };
+    if (value.schema_version === 1) {
+      validateName(key);
+      const runnerId = `legacy-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
+      commands[runnerId] = { name: key, template: record.template, verified: false, probe_ms: null, verified_at: null };
+      continue;
+    }
+    if (!RUNNER_ID_PATTERN.test(key) || Object.keys(record).some((field) => !["name", "template", "verified", "probe_ms", "verified_at"].includes(field))
+      || typeof record.name !== "string" || !record.name.trim() || record.name.length > 80 || typeof record.verified !== "boolean"
+      || (record.probe_ms !== null && (!Number.isFinite(record.probe_ms) || record.probe_ms < 0))
+      || (record.verified_at !== null && typeof record.verified_at !== "string")) throw new Error(`custom command ${key} is invalid`);
+    commands[key] = { name: record.name, template: record.template, verified: record.verified, probe_ms: record.probe_ms, verified_at: record.verified_at };
   }
   return { schema_version: CONFIG_VERSION, commands };
 }
@@ -178,20 +186,43 @@ function withConfigLock(workspaceRoot, update) {
   }
 }
 
-export function addCommand(workspaceRoot, name, template) {
-  validateName(name);
-  parseCommandTemplate(template, "validation");
-  withConfigLock(workspaceRoot, (commands) => {
-    if (Object.hasOwn(commands, name)) throw new Error(`custom command already exists: ${name}`);
-    commands[name] = { template };
-  });
+function findRunner(commands, idOrName) {
+  if (Object.hasOwn(commands, idOrName)) return idOrName;
+  return Object.keys(commands).find((id) => commands[id].name === idOrName);
 }
 
-export function removeCommand(workspaceRoot, name) {
-  validateName(name);
+export function addCommand(workspaceRoot, name, template) {
+  if (typeof name !== "string" || !name.trim() || name.length > 80) throw new Error("command name must be 1 to 80 characters");
+  parseCommandTemplate(template, "validation");
+  const runnerId = randomUUID();
   withConfigLock(workspaceRoot, (commands) => {
-    if (!Object.hasOwn(commands, name)) throw new Error(`custom command does not exist: ${name}`);
-    delete commands[name];
+    if (Object.values(commands).some((record) => record.name === name)) throw new Error(`custom command already exists: ${name}`);
+    commands[runnerId] = { name, template, verified: false, probe_ms: null, verified_at: null };
+  });
+  return runnerId;
+}
+
+export async function testAndAddCommand(workspaceRoot, name, template, limits = {}) {
+  if (typeof name !== "string" || !name.trim() || name.length > 80) throw new Error("command name must be 1 to 80 characters");
+  parseCommandTemplate(template, "validation");
+  const existing = Object.values(readConfig(workspaceRoot).commands).find((record) => record.name === name);
+  if (existing?.verified) throw new Error(`custom command already exists: ${name}`);
+  const { durationMs } = await probeTemplate(template, limits);
+  const runnerId = randomUUID();
+  withConfigLock(workspaceRoot, (commands) => {
+    const duplicates = Object.entries(commands).filter(([, record]) => record.name === name);
+    if (duplicates.some(([, record]) => record.verified)) throw new Error(`custom command already exists: ${name}`);
+    for (const [id] of duplicates) delete commands[id];
+    commands[runnerId] = { name, template, verified: true, probe_ms: durationMs, verified_at: new Date().toISOString() };
+  });
+  return { runnerId, durationMs };
+}
+
+export function removeCommand(workspaceRoot, idOrName) {
+  withConfigLock(workspaceRoot, (commands) => {
+    const runnerId = findRunner(commands, idOrName);
+    if (!runnerId) throw new Error(`custom command does not exist: ${idOrName}`);
+    delete commands[runnerId];
   });
 }
 
@@ -292,15 +323,21 @@ async function execute(template, prompt, cwd, limits) {
   }
 }
 
-function commandTemplate(workspaceRoot, name) {
-  validateName(name);
-  const record = readConfig(workspaceRoot).commands[name];
-  if (!record) throw new Error(`custom command does not exist: ${name}`);
-  return record.template;
+function commandRecord(workspaceRoot, idOrName) {
+  const commands = readConfig(workspaceRoot).commands;
+  const runnerId = findRunner(commands, idOrName);
+  if (!runnerId) throw new Error(`custom command does not exist: ${idOrName}`);
+  return { runnerId, record: commands[runnerId] };
+}
+
+function commandTemplate(workspaceRoot, idOrName) {
+  return commandRecord(workspaceRoot, idOrName).record.template;
 }
 
 export async function runCommand(workspaceRoot, name, prompt, limits) {
-  const result = await execute(commandTemplate(workspaceRoot, name), prompt, workspaceRoot, limits);
+  const { record } = commandRecord(workspaceRoot, name);
+  if (!record.verified) throw new Error("custom command has not passed its capability test");
+  const result = await execute(record.template, prompt, workspaceRoot, limits);
   if (result.output) process.stdout.write(result.output);
   if (result.reason !== "exit" || result.exitCode !== 0) {
     throw new Error(`custom command failed (${result.reason}, exit ${result.exitCode ?? "unknown"})`);
@@ -308,18 +345,18 @@ export async function runCommand(workspaceRoot, name, prompt, limits) {
   return result;
 }
 
-export async function testCommand(workspaceRoot, name, limits = {}) {
+async function probeTemplate(template, limits = {}) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "visual-review-command-test-"));
   const prompt = `This is a capability test. In the current working directory, create a file named ${PROBE_MARKER} containing exactly ${PROBE_TOKEN} using your file or shell tools. Then reply exactly ${PROBE_TOKEN}. Do not read or modify anything outside the current working directory.`;
   const startedAt = Date.now();
   try {
-    const result = await execute(commandTemplate(workspaceRoot, name), prompt, directory, {
-      timeoutMs: 45_000,
+    const result = await execute(template, prompt, directory, {
+      timeoutMs: 120_000,
       outputLimit: 64 * 1024,
       ...limits,
     });
     if (result.reason !== "exit" || result.exitCode !== 0) {
-      throw new Error(result.reason === "timeout" ? "command did not respond within 45 seconds" : `command test failed (${result.reason}, exit ${result.exitCode ?? "unknown"})`);
+      throw new Error(result.reason === "timeout" ? "コマンドのテストが2分以内に完了しませんでした。コマンドを直接実行できるか確認してください。" : `コマンドのテストに失敗しました（${result.reason}, exit ${result.exitCode ?? "unknown"}）`);
     }
     let marker = "";
     try {
@@ -327,7 +364,10 @@ export async function testCommand(workspaceRoot, name, limits = {}) {
       if (lstatSync(markerPath).isFile() && !lstatSync(markerPath).isSymbolicLink()) marker = readFileSync(markerPath, "utf8").trim();
     } catch { /* reported below */ }
     if (marker !== PROBE_TOKEN || !result.output.includes(PROBE_TOKEN)) {
-      throw new Error("the command responded, but its file-tool capability could not be verified");
+      if (/permission|not granted|blocked by the sandbox|requires approval/i.test(result.output)) {
+        throw new Error("コマンドは応答しましたが、ファイル操作が許可されていません。Claude CLIの場合は `-- --permission-mode bypassPermissions -p {prompt}` のように権限モードを指定してください。");
+      }
+      throw new Error("コマンドは応答しましたが、ファイル操作を確認できませんでした。コマンドが作業ディレクトリ内のファイルを変更できる設定か確認してください。");
     }
     return { durationMs: Date.now() - startedAt };
   } finally {
@@ -335,19 +375,99 @@ export async function testCommand(workspaceRoot, name, limits = {}) {
   }
 }
 
+export async function testCommand(workspaceRoot, name, limits = {}) {
+  const template = commandTemplate(workspaceRoot, name);
+  const { durationMs } = await probeTemplate(template, limits);
+  const { runnerId } = commandRecord(workspaceRoot, name);
+  withConfigLock(workspaceRoot, (commands) => {
+    const record = commands[runnerId];
+    if (!record) throw new Error(`custom command does not exist: ${name}`);
+    record.verified = true;
+    record.probe_ms = durationMs;
+    record.verified_at = new Date().toISOString();
+  });
+  return { durationMs };
+}
+
+export const customCommandProvider = Object.freeze({
+  apiVersion: 1,
+  list(workspaceRoot) {
+    return Object.entries(readConfig(workspaceRoot).commands)
+      .filter(([, record]) => record.verified)
+      .map(([runner_id, record]) => ({ runner_id, name: record.name, verified: true, probe_ms: record.probe_ms }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  },
+  listPending(workspaceRoot) {
+    return Object.entries(readConfig(workspaceRoot).commands)
+      .filter(([, record]) => !record.verified)
+      .map(([runner_id, record]) => ({ runner_id, name: record.name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  },
+  async add(workspaceRoot, name, template) {
+    const result = await testAndAddCommand(workspaceRoot, name, template);
+    return { runner_id: result.runnerId, duration_ms: result.durationMs };
+  },
+  remove(workspaceRoot, runnerId) { removeCommand(workspaceRoot, runnerId); },
+  async test(workspaceRoot, runnerId) {
+    const result = await testCommand(workspaceRoot, runnerId);
+    return { duration_ms: result.durationMs };
+  },
+  resolve(workspaceRoot, runnerId) {
+    const { record } = commandRecord(workspaceRoot, runnerId);
+    if (!record.verified) throw new Error("custom command has not passed its capability test");
+    return { name: record.name, template: record.template };
+  },
+});
+
+function bridgeError(request, code, message) {
+  return { ok: false, error: { code, message, retryable: false, request_id: request.request_id } };
+}
+
+/** Plugin-owned bridge projection; raw templates never leave this provider. */
+export function createCustomCommandBridgeAdapter(workspaceRoot, providerSource = customCommandProvider) {
+  const loadProvider = async () => typeof providerSource === "function" ? providerSource() : providerSource;
+  return Object.freeze({
+    async query(name, request) {
+      if (name === "runners.list") {
+        const provider = await loadProvider();
+        return { ok: true, data: {
+          runners: provider.list(workspaceRoot).map((runner) => ({ ...runner, status_label: "登録済み" })),
+          candidates: (provider.listPending?.(workspaceRoot) ?? []).map((runner) => ({ ...runner, status_label: "登録候補" })),
+        } };
+      }
+      return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
+    },
+    async command(name, request) {
+      const input = request.input;
+      const provider = await loadProvider();
+      if (name === "runner.add" && typeof input.name === "string" && typeof input.command === "string") {
+        return { ok: true, data: await provider.add(workspaceRoot, input.name, input.command), effects: [{ type: "resource.invalidate", resources: ["runners", "workflow-settings"] }] };
+      }
+      if (name === "runner.test" && typeof input.runner_id === "string") {
+        return { ok: true, data: await provider.test(workspaceRoot, input.runner_id), effects: [{ type: "resource.invalidate", resources: ["runners"] }] };
+      }
+      if (name === "runner.delete" && typeof input.runner_id === "string") {
+        provider.remove(workspaceRoot, input.runner_id);
+        return { ok: true, data: {}, effects: [{ type: "resource.invalidate", resources: ["runners"] }] };
+      }
+      return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
+    },
+  });
+}
+
 /** @param {{workspaceRoot: string, pluginDirectory: string, args: readonly string[]}} context */
 export async function handler(context) {
   const [subcommand, ...args] = context.args;
   if (subcommand === "add" && args.length >= 2) {
     const [name, ...templateParts] = args;
-    addCommand(context.workspaceRoot, name, templateParts.join(" "));
-    console.log(`Added ${name}`);
+    const result = await testAndAddCommand(context.workspaceRoot, name, templateParts.join(" "));
+    console.log(`Test passed and added ${name} (${result.durationMs} ms)`);
     return;
   }
   if (subcommand === "list" && args.length === 0) {
-    const entries = Object.entries(readConfig(context.workspaceRoot).commands).sort(([left], [right]) => left.localeCompare(right));
+    const entries = customCommandProvider.list(context.workspaceRoot);
     if (entries.length === 0) console.log("No custom commands configured.");
-    else for (const [name, record] of entries) console.log(`${name}\t${record.template}`);
+    else for (const entry of entries) console.log(`${entry.runner_id}\t${entry.name}\t${entry.verified ? "verified" : "unverified"}`);
     return;
   }
   if (subcommand === "remove" && args.length === 1) {

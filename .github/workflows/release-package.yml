@@ -30,6 +30,7 @@ jobs:
         run: |
           package_version="$(node -p "require('./package.json').version")"
           lock_version="$(node -p "require('./package-lock.json').version")"
+          lock_root_version="$(node -p "require('./package-lock.json').packages[''].version")"
           expected_tag="v${package_version}"
 
           if [ "$RELEASE_TAG" != "$expected_tag" ]; then
@@ -37,8 +38,8 @@ jobs:
             exit 1
           fi
 
-          if [ "$lock_version" != "$package_version" ]; then
-            echo "package-lock.json version $lock_version does not match package version $package_version." >&2
+          if [ "$lock_version" != "$package_version" ] || [ "$lock_root_version" != "$package_version" ]; then
+            echo "package-lock.json versions ($lock_version, $lock_root_version) do not match package version $package_version." >&2
             exit 1
           fi
 
@@ -47,6 +48,9 @@ jobs:
 
       - name: Test and build
         run: npm test
+
+      - name: Inspect publish contents
+        run: npm pack --dry-run
 
       - name: Select npm dist-tag
         id: dist-tag
@@ -67,7 +71,7 @@ jobs:
 
       - name: Publish plugin packages when their version is new
         run: |
-          for directory in plugins/firebase-storage plugins/custom-command plugins/github-issue; do
+          for directory in plugins/review plugins/github-issue plugins/custom-command plugins/annotation-workflow plugins/firebase-storage; do
             name="$(node -p "require('./${directory}/package.json').name")"
             version="$(node -p "require('./${directory}/package.json').version")"
             if npm view "${name}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then

@@ -14,7 +14,7 @@ import {
   MAX_REQUEST_BODY,
   type VisualReviewServer,
 } from "../src/index.js";
-import { listenOnAvailablePort, parseCliArguments } from "../src/cli.js";
+import { ensureDefaultPlugins, listenOnAvailablePort, parseCliArguments } from "../src/cli.js";
 
 let root: string;
 let visualReview: VisualReviewServer;
@@ -38,6 +38,7 @@ before(async () => {
   writeFileSync(path.join(root, ".code/htmls/pages/secret-token.js"), "secret");
   writeFileSync(path.join(root, ".code/visual-reviews/review.json"), "{}");
   writeFileSync(path.join(root, "assets/logo.png"), "png-data");
+  await ensureDefaultPlugins(root);
   visualReview = createVisualReviewServer({
     projectRoot: root,
     target: ".code/htmls/pages/index.html",
@@ -76,12 +77,123 @@ test("serves built UI and compatible session/security headers", async () => {
   assert.equal(sessionResponse.headers.get("x-frame-options"), "SAMEORIGIN");
   assert.match(sessionResponse.headers.get("content-security-policy") ?? "", /frame-ancestors 'self'/);
 
-  for (const asset of ["/", "/reviewer.css", "/reviewer.js", "/jobs.js"]) {
+  for (const asset of ["/", "/renderer.css", "/reviewer.css", "/reviewer.js", "/jobs.js"]) {
     const response = await fetch(`${baseUrl}${asset}`);
     assert.equal(response.status, 200);
     assert.ok((await response.text()).length > 10);
   }
   assert.ok(existsSync(new URL("../src/ui/index.html", import.meta.url)));
+  const pluginRuntime = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/review/ui-modules/review-main`);
+  assert.equal(pluginRuntime.status, 200);
+  assert.match(pluginRuntime.headers.get("content-type") ?? "", /javascript/);
+  assert.match(await pluginRuntime.text(), /export function mount/);
+
+  const flowResponse = await fetch(`${baseUrl}/api/plugins/annotation-flow`);
+  assert.equal(flowResponse.status, 200);
+  const flowPayload = await flowResponse.json() as {
+    enabled: boolean;
+    custom_command_enabled: boolean;
+    policy: { events: string[]; debounceMs: number; settings: { runner: { label: string }; maxParallel: { max: number }; autoRun: { label: string } } };
+  };
+  assert.equal(flowPayload.enabled, true);
+  assert.equal(flowPayload.custom_command_enabled, true);
+  assert.deepEqual(flowPayload.policy.events, ["annotation-created", "annotation-reopened"]);
+  assert.equal(flowPayload.policy.debounceMs, 300);
+  assert.equal(flowPayload.policy.settings.runner.label, "CLI");
+  assert.equal(flowPayload.policy.settings.maxParallel.max, 10);
+  assert.match(flowPayload.policy.settings.autoRun.label, /自動/);
+});
+
+test("plugin management is hidden by default and enabled only by workspace settings", async () => {
+  assert.equal((await fetch(`${baseUrl}/settings/plugins`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/settings/plugins`)).status, 404);
+
+  const settingsRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-settings-"));
+  mkdirSync(path.join(settingsRoot, ".git"));
+  mkdirSync(path.join(settingsRoot, ".code/htmls"), { recursive: true });
+  mkdirSync(path.join(settingsRoot, ".vreview"), { recursive: true });
+  writeFileSync(path.join(settingsRoot, ".code/htmls/index.html"), "<h1>Settings</h1>");
+  writeFileSync(path.join(settingsRoot, ".vreview/settings.json"), JSON.stringify({
+    schema_version: 1,
+    workspace: { root: ".", monorepo: false },
+    ui: { plugin_management: true },
+    projects: [],
+  }));
+  await ensureDefaultPlugins(settingsRoot);
+  const server = createVisualReviewServer({ projectRoot: settingsRoot, target: ".code/htmls/index.html" });
+  await new Promise<void>((resolve) => server.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.server.address();
+    assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}`;
+    assert.equal((await fetch(`${url}/settings/plugins`)).status, 200);
+    const listed = await (await fetch(`${url}/api/settings/plugins`)).json() as { revision: string; plugins: Array<{ id: string; title: string; enabled: boolean; has_readme: boolean }> };
+    const custom = listed.plugins.find(({ id }) => id === "custom-command");
+    assert.equal(custom?.title, "外部AIコマンド");
+    assert.equal(custom?.enabled, true);
+    assert.equal(custom?.has_readme, true);
+    const readme = await (await fetch(`${url}/api/settings/plugins/custom-command/readme`)).json() as { readme: string };
+    assert.match(readme.readme, /custom-command plugin/);
+
+    const probeScript = `require("node:fs").writeFileSync(".visual-review-command-test","VISUAL_REVIEW_OK");process.stdout.write("VISUAL_REVIEW_OK")`;
+    const addedResponse = await fetch(`${url}/api/jobs/custom-commands`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Server runner", command: `${process.execPath} -e '${probeScript}' {prompt}` }),
+    });
+    assert.equal(addedResponse.status, 201);
+    const added = await addedResponse.json() as { runner_id: string; duration_ms: number };
+    assert.equal(typeof added.duration_ms, "number");
+    const verifiedEnqueue = await fetch(`${url}/api/jobs/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cli: "custom", runner_id: added.runner_id, max_parallel: 1 }),
+    });
+    assert.equal(verifiedEnqueue.status, 200);
+    const failedRegistration = await fetch(`${url}/api/jobs/custom-commands`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Broken runner", command: `${process.execPath} -e 'process.exit(2)' {prompt}` }),
+    });
+    assert.notEqual(failedRegistration.status, 201);
+    const runnersPayload = await (await fetch(`${url}/api/jobs/custom-commands`)).json() as { runners: Array<Record<string, unknown>> };
+    assert.equal(runnersPayload.runners[0]?.runner_id, added.runner_id);
+    assert.equal(runnersPayload.runners[0]?.verified, true);
+    assert.equal("command" in runnersPayload.runners[0]! || "template" in runnersPayload.runners[0]!, false);
+    assert.equal((await fetch(`${url}/api/jobs/custom-commands/${encodeURIComponent(added.runner_id)}`, { method: "DELETE" })).status, 200);
+
+    const updated = await fetch(`${url}/api/settings/plugins/custom-command`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: listed.revision, enabled: false, configuration: {} }),
+    });
+    assert.equal(updated.status, 200);
+    const payload = await updated.json() as { revision: string; plugins: Array<{ id: string; enabled: boolean }> };
+    assert.equal(payload.plugins.find(({ id }) => id === "custom-command")?.enabled, false);
+    const customDisabledFlow = await (await fetch(`${url}/api/plugins/annotation-flow`)).json() as { enabled: boolean; custom_command_enabled: boolean };
+    assert.equal(customDisabledFlow.enabled, true);
+    assert.equal(customDisabledFlow.custom_command_enabled, false);
+    assert.equal((await fetch(`${url}/api/jobs/custom-commands`)).status, 409);
+    assert.equal((await fetch(`${url}/api/jobs/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "custom", runner_id: "unknown", max_parallel: 1 }),
+    })).status, 409);
+    assert.equal((await fetch(`${url}/api/jobs/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "claude", max_parallel: 1 }),
+    })).status, 200);
+
+    const annotationUpdated = await fetch(`${url}/api/settings/plugins/annotation-workflow`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: payload.revision, enabled: false, configuration: {} }),
+    });
+    assert.equal(annotationUpdated.status, 200);
+    const disabledFlowResponse = await fetch(`${url}/api/plugins/annotation-flow`);
+    assert.equal(disabledFlowResponse.status, 200);
+    const disabledFlow = await disabledFlowResponse.json() as { enabled: boolean; reason: string; policy: unknown };
+    assert.deepEqual(disabledFlow, { enabled: false, reason: "disabled", policy: null, custom_command_enabled: false });
+    assert.equal((await fetch(`${url}/api/jobs/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "claude", max_parallel: 1 }),
+    })).status, 409);
+  } finally {
+    await server.close();
+  }
 });
 
 test("safe mode preserves source bytes and relies on the compatible iframe sandbox", async () => {
@@ -216,7 +328,7 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
     const address = trusted.server.address();
     assert.ok(address && typeof address !== "string");
     const url = `http://127.0.0.1:${address.port}`;
-    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["POST", "/api/jobs/custom-command/test"], ["POST", "/api/issues/request"], ["POST", "/api/issues"], ["POST", "/api/jobs/anything/cancel"]] as const) {
+    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["GET", "/api/jobs/custom-commands"], ["POST", "/api/issues/request"], ["POST", "/api/issues"], ["POST", "/api/jobs/anything/cancel"]] as const) {
       const response = await fetch(`${url}${route}`, { method });
       assert.equal(response.status, 403, `${method} ${route}`);
     }
@@ -243,13 +355,11 @@ test("trusted script mode enables jobs only with explicit AI consent", async () 
     assert.equal(session.target.allow_scripts, true);
     assert.equal(session.target.ai_jobs_enabled, true);
     assert.equal((await fetch(`${url}/api/jobs`)).status, 200);
-    const invalidProbe = await fetch(`${url}/api/jobs/custom-command/test`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: "runner without-placeholder" }),
+    assert.equal((await fetch(`${url}/api/jobs/custom-commands`)).status, 200);
+    const rawLegacyProbe = await fetch(`${url}/api/jobs/custom-command/test`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: "runner {prompt}" }),
     });
-    assert.equal(invalidProbe.status, 400);
-    assert.match(await invalidProbe.text(), /include.*prompt.*exactly once/);
+    assert.equal(rawLegacyProbe.status, 404);
   } finally {
     await trusted.close();
   }
@@ -486,8 +596,8 @@ test("CLI entrypoint runs when invoked through a package-bin symlink", async () 
     child.once("error", reject);
     child.once("close", (code) => resolve({ code, stderr: Buffer.concat(stderr).toString() }));
   });
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /usage: visual-review serve/);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
 });
 
 test("server increments from an occupied port", async () => {

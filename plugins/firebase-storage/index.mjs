@@ -73,6 +73,13 @@ function validateRelativePath(relativePath) {
   return relativePath;
 }
 
+function validateStorageKey(key) {
+  if (typeof key !== "string" || !key || key.includes("\\") || path.posix.isAbsolute(key)) throw new Error("storage key must be a canonical relative POSIX path");
+  const segments = key.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || SECRET_SEGMENT.test(segment))) throw new Error("storage key is unsafe");
+  return key;
+}
+
 function safeLocalPath(workspaceRoot, relativePath, forWrite = false) {
   validateRelativePath(relativePath);
   const root = normalizeWorkspaceRoot(workspaceRoot);
@@ -489,7 +496,51 @@ export function createStorageProvider(defaultOptions = {}) {
   };
 }
 
+function storageConflict(message = "storage version conflict") {
+  const error = new Error(message);
+  error.name = "StorageConflictError";
+  return error;
+}
+
+export function createWorkspaceStorageProvider(defaultOptions = {}) {
+  return {
+    apiVersion: 1,
+    async list(prefix) {
+      if (typeof prefix !== "string") throw new Error("storage prefix must be a string");
+      const remote = await readRemoteForWrite(defaultOptions);
+      if (!remote) return [];
+      return remote.snapshot.files.map(({ path: filePath }) => filePath).filter((filePath) => filePath.startsWith(prefix)).sort();
+    },
+    async read(relativePath) {
+      validateStorageKey(relativePath);
+      const remote = await readRemoteForWrite(defaultOptions);
+      const file = remote?.snapshot.files.find((candidate) => candidate.path === relativePath);
+      return file && remote ? { version: remote.updateTime, value: structuredClone(file.value) } : null;
+    },
+    async compareAndSwap(relativePath, expectedVersion, value) {
+      validateStorageKey(relativePath);
+      const remote = await readRemoteForWrite(defaultOptions);
+      const current = remote?.snapshot.files.find((candidate) => candidate.path === relativePath);
+      if ((current ? remote?.updateTime ?? null : null) !== expectedVersion) throw storageConflict();
+      const files = (remote?.snapshot.files ?? []).filter((file) => file.path !== relativePath);
+      files.push({ path: relativePath, value: structuredClone(value) });
+      files.sort((left, right) => left.path.localeCompare(right.path));
+      const written = await writeWithPrecondition({ schema_version: SNAPSHOT_SCHEMA_VERSION, files }, defaultOptions, remote);
+      return { version: written.updateTime };
+    },
+    async delete(relativePath, expectedVersion) {
+      validateStorageKey(relativePath);
+      const remote = await readRemoteForWrite(defaultOptions);
+      const current = remote?.snapshot.files.find((candidate) => candidate.path === relativePath);
+      if (!current || remote?.updateTime !== expectedVersion) throw storageConflict();
+      const files = remote.snapshot.files.filter((file) => file.path !== relativePath);
+      await writeWithPrecondition({ schema_version: SNAPSHOT_SCHEMA_VERSION, files }, defaultOptions, remote);
+    },
+  };
+}
+
 export const storageProvider = createStorageProvider();
+export const workspaceStorageProvider = createWorkspaceStorageProvider();
 export const list = storageProvider.list;
 export const read = storageProvider.read;
 export const write = storageProvider.write;

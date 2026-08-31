@@ -7,6 +7,9 @@ const packageRoot = process.cwd();
 const sourceHtml = readFileSync(path.join(packageRoot, "src/ui/index.html"), "utf8");
 const reviewerSource = readFileSync(path.join(packageRoot, "src/ui/reviewer.js"), "utf8");
 const jobsSource = readFileSync(path.join(packageRoot, "src/ui/jobs.ts"), "utf8");
+const pluginSettingsHtml = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/index.html"), "utf8");
+const pluginSettingsSource = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/settings.js"), "utf8");
+const pluginSettingsCss = readFileSync(path.join(packageRoot, "src/plugin-settings-ui/settings.css"), "utf8");
 
 test("AI batch controls and compiled script are present", () => {
   for (const id of [
@@ -24,7 +27,10 @@ test("AI batch controls and compiled script are present", () => {
   assert.match(sourceHtml, /<option value="10">10<\/option>/);
   assert.match(sourceHtml, /<option value="copilot">GitHub Copilot<\/option>/);
   assert.match(sourceHtml, /<option value="pi">Pi<\/option>/);
-  assert.match(sourceHtml, /id="custom-command-add"/);
+  assert.match(sourceHtml, /id="global-settings-link"[^>]*hidden/);
+  assert.match(sourceHtml, /class="sidebar-section ai-jobs-section"[^>]*hidden/);
+  assert.match(sourceHtml, /class="review-layout workflow-disabled"/);
+  assert.match(sourceHtml, /class="review-sidebar"[^>]*hidden/);
   assert.match(sourceHtml, /name="annotation-status" value="in_progress" checked/);
   assert.match(sourceHtml, /name="annotation-status" value="failed" checked/);
   assert.match(sourceHtml, /name="annotation-kind" value="dom" checked/);
@@ -53,31 +59,54 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /target\?\.allow_scripts !== true/);
   assert.match(jobsSource, /visual-review:annotation-created/);
   assert.match(jobsSource, /visual-review:annotation-reopened/);
+  assert.match(jobsSource, /requestJson\("\/api\/plugins\/annotation-flow"/);
+  assert.match(jobsSource, /annotationFlowPolicy\.debounceMs/);
   assert.match(reviewerSource, /visual-review:annotation-reopened[^]*reason: "human-reply"/);
   assert.match(reviewerSource, /visual-review:annotation-reopened[^]*reason: "manual-reopen"/);
   assert.match(jobsSource, /enqueueOpenAnnotations\(true\)/);
   assert.match(jobsSource, /visual-review:auto-run/);
-  assert.match(jobsSource, /settingsDialog\.showModal\(\)/);
+  assert.match(jobsSource, /window\.location\.href = "\/settings\/plugins#annotation-workflow"/);
   assert.match(jobsSource, /form\.hidden = autoRunCheckbox\.checked/);
-  assert.match(jobsSource, /visual-review:custom-commands/);
-  assert.match(jobsSource, /custom_name: custom\.name, custom_command: custom\.command/);
-  assert.match(jobsSource, /\/api\/jobs\/custom-command\/test/);
-  assert.match(jobsSource, /duration_ms/);
-  assert.match(jobsSource, /実際の修正も遅くなる可能性があります/);
-  assert.match(jobsSource, /command\.match\(\/\\\{prompt\\\}\/g/);
-  assert.match(jobsSource, /verified: item\.verified === true/);
-  assert.match(jobsSource, /selectedUnverifiedCustom/);
-  assert.match(jobsSource, /安全のため自動実行を無効にしました/);
-  assert.match(sourceHtml, /id="custom-command-status"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(jobsSource, /setCustomStatus\(`登録できません/);
-  assert.match(sourceHtml, /テストして登録/);
-  assert.match(sourceHtml, /\{prompt\}.*必ず1回/);
+  assert.match(jobsSource, /requestJson\("\/api\/jobs\/custom-commands"\)/);
+  assert.match(jobsSource, /return \{ cli: "custom", runner_id: custom\.runner_id \}/);
+  assert.doesNotMatch(jobsSource, /\bcustom_name\b|\bcustom_command\b|visual-review:custom-commands/);
+  assert.match(jobsSource, /response\.enabled === false[^]*aiJobsSection\.hidden = true;[^]*reviewSidebar\.hidden = true;[^]*workflow-disabled/);
+  assert.match(jobsSource, /annotationWorkflowEnabled = true;[^]*aiJobsSection\.hidden = false;[^]*reviewSidebar\.hidden = false;[^]*classList\.remove\("workflow-disabled"\)/);
+  assert.match(jobsSource, /builtInValues\.has\("claude"\) \? "claude"/);
+  assert.match(jobsSource, /renderCustomCommands\(allowCustomCommands\)/);
+  assert.match(sourceHtml, /プラグイン固有の設定は、左上の設定画面/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-attach-url["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-job-status["']/);
   assert.doesNotMatch(jobsSource, /sessionInput|session_id:|attachInput|opencode_attach:/);
   assert.doesNotMatch(sourceHtml, /セッションは選択したCLIが自動作成します/);
+});
+
+test("legacy plugin settings UI stays generic while declarative contributions own plugin details", () => {
+  assert.match(pluginSettingsHtml, /id="plugin-row-template"/);
+  assert.match(pluginSettingsHtml, /class="plugin-row"[^>]*role="listitem"/);
+  assert.match(pluginSettingsHtml, /class="details-button"[^>]*aria-haspopup="dialog"/);
+  assert.match(pluginSettingsHtml, /id="plugin-details-dialog"/);
+  assert.match(pluginSettingsHtml, /id="readme-content" class="markdown-body"/);
+  assert.match(pluginSettingsHtml, /class="dialog-section custom-command-manager"/);
+  assert.match(pluginSettingsHtml, /class="dialog-section workflow-settings"/);
+  assert.match(pluginSettingsHtml, /id="toast-region"[^>]*aria-live="polite"/);
+  assert.match(pluginSettingsSource, /async function autosaveToggle/);
+  assert.match(pluginSettingsSource, /body: JSON\.stringify\(\{ revision, enabled, configuration: committedConfiguration\(plugin\) \}\)/);
+  assert.match(pluginSettingsSource, /dialog\.showModal\(\)/);
+  assert.match(pluginSettingsSource, /function renderMarkdown\(markdown\)/);
+  assert.match(pluginSettingsSource, /document\.createDocumentFragment\(\)/);
+  assert.match(pluginSettingsSource, /\["http:", "https:"\]\.includes\(parsed\.protocol\)/);
+  assert.doesNotMatch(pluginSettingsSource, /annotation-workflow|custom-command|github-issue/);
+  assert.doesNotMatch(pluginSettingsSource, /\/api\/jobs\/custom-commands|\/api\/plugins\/annotation-flow/);
+  assert.doesNotMatch(pluginSettingsSource, /visual-review:custom-commands|saveCommands/);
+  assert.match(pluginSettingsCss, /\.plugin-row\{[^}]*grid-template-columns:minmax\(0,1fr\) auto auto/);
+  assert.match(pluginSettingsCss, /\.plugin-dialog\{[^}]*width:min\(820px/);
+  assert.match(pluginSettingsCss, /\.markdown-body\{[^}]*line-height:1\.7/);
+  assert.match(pluginSettingsCss, /input\[type=checkbox\]\[role=switch\][^{]*\{[^}]*width:40px;[^}]*height:22px;[^}]*appearance:none/s);
+  assert.match(pluginSettingsCss, /\.field-grid select\{[^}]*height:42px;[^}]*border:1px solid #c6d4d0;[^}]*border-radius:10px/s);
+  assert.doesNotMatch(pluginSettingsSource, /innerHTML|insertAdjacentHTML|outerHTML|DOMParser|document\.write/);
 });
 
 test("captures framework source hints for live applications", () => {
@@ -142,7 +171,8 @@ test("rough feedback becomes an editable AI draft before GitHub Issue creation",
 
 test("compact header and annotation rows maximize the review area", () => {
   const css = readFileSync(path.join(packageRoot, "src/ui/reviewer.css"), "utf8");
-  assert.match(css, /\.app-header\s*\{[^}]*min-height:\s*56px;[^}]*padding:\s*8px 20px;/s);
+  assert.match(css, /\.app-header\s*\{[^}]*min-height:\s*64px;[^}]*padding:\s*8px 20px;/s);
+  assert.match(css, /\.review-layout\.workflow-disabled\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
   assert.match(css, /section\.sidebar-section\.annotation-section\s*\{[^}]*padding:\s*0;/s);
   assert.match(css, /\.annotation-list\s*\{[^}]*gap:\s*0;/s);
   assert.match(css, /\.annotation-card\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
@@ -255,8 +285,8 @@ test("build copies legacy assets after TypeScript without deleting compiled jobs
   const copyScript = readFileSync(path.join(packageRoot, "scripts/copy-ui.mjs"), "utf8");
   assert.match(packageJson, /copy-ui\.mjs --clean && tsc -p tsconfig\.json && node scripts\/copy-ui\.mjs && node scripts\/make-cli-executable\.mjs/);
   assert.doesNotMatch(copyScript, /rmSync\(destination/);
-  for (const legacyAsset of ["index.html", "reviewer.css", "reviewer.js"]) {
-    assert.match(copyScript, new RegExp(`"${legacyAsset.replace(".", "\\.")}"`));
+  for (const uiAsset of ["index.html", "renderer.html", "renderer.css", "renderer.js", "reviewer.css", "reviewer.js"]) {
+    assert.match(copyScript, new RegExp(`"${uiAsset.replace(".", "\\.")}"`));
   }
   assert.doesNotMatch(copyScript, /"jobs\.js"/);
 });

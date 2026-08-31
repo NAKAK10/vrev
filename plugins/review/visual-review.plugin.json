@@ -1,0 +1,43 @@
+{
+  "schema_version": 4,
+  "id": "review",
+  "version": "1.1.0",
+  "display": {
+    "title": "レビュー",
+    "summary": "レビュー注釈、履歴、永続化を提供します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/review-capability.js",
+    "contract": "./server.contract.json"
+  },
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "review-main",
+        "slot": "review.main",
+        "document": "./ui/review.ui.json",
+        "browser_module": "./ui/review.js",
+        "order": 0
+      }
+    ]
+  },
+  "requires": [
+    {
+      "capability": "host.review-domain",
+      "api_version": 1,
+      "optional": false
+    }
+  ],
+  "provides": [
+    {
+      "capability": "review",
+      "api_version": 1
+    }
+  ]
+}

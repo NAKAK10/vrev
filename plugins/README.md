@@ -1,12 +1,14 @@
 # Visual Review plugins
 
-このdirectoryには、Visual Reviewプラグインの実装例をプラグインごとに一段ネストして収録しています。
+このdirectoryには、Visual Reviewプラグインの実装例をプラグインごとに一段ネストして収録しています。beta.7の既定はschema v4 Plugin HostとCore-owned declarative rendererで、first-party pluginはserver contract、capability、検証済みJSON UI contributionを分担します。browserでplugin JavaScriptや任意HTMLは実行しません。
 
 ```text
 plugins/
+├── annotation-workflow/
 ├── custom-command/
 ├── firebase-storage/
-└── github-issue/
+├── github-issue/
+└── review/
 ```
 
 ## 新しいプラグインのbaseを作る
@@ -28,7 +30,7 @@ visual-review plugin run my-plugin hello world
 visual-review plugin create my-plugin --install
 ```
 
-生成後は`visual-review.plugin.json`へcommandやproviderを追加し、`index.js`を実装します。既存directoryを上書きせず、不正なplugin IDやsymlinkされた`plugins/` directoryは拒否します。
+生成後は`visual-review.plugin.json`へcommandやproviderを追加し、`index.js`を実装します。scaffoldはcommand/provider向けのschema v3互換baseです。server capabilityや宣言的UIを提供する場合はschema v4へ更新し、`server`/`ui`/`requires`/`provides`を宣言してください。既存directoryを上書きせず、不正なplugin IDやsymlinkされた`plugins/` directoryは拒否します。
 
 ## 第三者が公開したプラグインをinstallする
 
@@ -82,7 +84,7 @@ visual-review plugin run <plugin-id> <command> [args...]
 visual-review plugin remove <plugin-id>
 ```
 
-同じplugin IDは自動で上書きされません。更新するときは既存pluginを削除してから、新しいversionをinstallします。
+手動導入した同じplugin IDは自動で上書きされません。更新するときは既存pluginを削除してから、新しいversionをinstallします。例外はCLI packageから自動導入されたfirst-party bundled copyだけです。registry manifestとinstall先manifestが一致してprovenanceを確認でき、同梱schemaまたはSemVerが新しい場合に限りatomic upgradeします。local/third-partyのsame-IDや改変済みcopyは上書きも自動実行もしません。
 
 ```sh
 visual-review plugin remove example

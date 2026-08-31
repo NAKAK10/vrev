@@ -33,13 +33,14 @@ function repository(): string {
   return root;
 }
 
-test("accepts supported and custom command configurations", () => {
+test("accepts supported and opaque custom runner configurations", () => {
   assert.equal(validateEnqueueInput({ cli: "opencode", max_parallel: 10 }).max_parallel, 10);
   assert.equal(validateEnqueueInput({ cli: "copilot", max_parallel: 2 }).cli, "copilot");
   assert.equal(validateEnqueueInput({ cli: "pi", max_parallel: 2 }).cli, "pi");
-  const custom = validateEnqueueInput({ cli: "custom", max_parallel: 2, custom_name: "Cloud model", custom_command: "runner --prompt {prompt}" });
-  assert.equal(custom.custom_command, "runner --prompt {prompt}");
-  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2 }), /custom_name/);
+  const custom = validateEnqueueInput({ cli: "custom", max_parallel: 2, runner_id: "opaque-runner" });
+  assert.equal(custom.runner_id, "opaque-runner");
+  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2 }), /runner_id/);
+  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2, runner_id: "x", custom_command: "runner {prompt}" }), /unknown field/);
   assert.throws(() => validateEnqueueInput({ cli: "opencode", max_parallel: 11 }), /1 to 10/);
 });
 
@@ -93,7 +94,7 @@ test("builds fixed argv for all adapters without annotation comments", () => {
   assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: null }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "--json", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: "abc" }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "--json", "abc", "fixed prompt"]);
   assert.deepEqual(buildCommand({ ...base, cli: "copilot", sessionId: null }).args, ["--prompt", "fixed prompt", "--allow-all-tools"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "pi", sessionId: null }).args, ["--print", "--mode", "json", "--no-session", "--approve", "fixed prompt"]);
+  assert.deepEqual(buildCommand({ ...base, cli: "pi", sessionId: null }).args, ["--print", "--no-session", "--approve", "--", "fixed prompt"]);
   const custom = buildCommand({ ...base, cli: "custom", sessionId: null, customCommand: "ollama launch claude --model model -- {prompt}" });
   assert.equal(custom.command, "ollama");
   assert.deepEqual(custom.args, ["launch", "claude", "--model", "model", "--", "fixed prompt"]);
@@ -130,9 +131,12 @@ test("custom CLI Issue output is persisted by the host without requiring annotat
   });
   const annotationId = review.annotations.at(-1)!.id;
   const control = controlledExecutor();
-  const manager = new JobManager(store, { executor: control.executor });
+  const manager = new JobManager(store, { executor: control.executor, customCommandResolver: () => ({ template: "runner {prompt}" }) });
   manager.start();
-  const enqueued = manager.enqueue({ cli: "custom", max_parallel: 1, custom_name: "Cloud model", custom_command: "runner {prompt}" });
+  const enqueued = manager.enqueue({ cli: "custom", max_parallel: 1, runner_id: "opaque-runner" });
+  const storedBatch = manager.jobStore.load().batches.at(-1)!;
+  assert.equal(storedBatch.runner_id, "opaque-runner");
+  assert.equal(storedBatch.custom_command, null);
   await waitFor(() => control.pending.length === 1);
   const block = [
     "VISUAL_REVIEW_ISSUE_DRAFT_START",
@@ -206,6 +210,24 @@ test("treats normal coordinator exit as success and adds a verification message 
   await manager.close();
 });
 
+test("durable completion wins over a later coordinator timeout", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const annotationId = annotate(store, store.entryPath, "completed before timeout");
+  const control = controlledExecutor();
+  const manager = new JobManager(store, { executor: control.executor });
+  manager.start();
+  manager.enqueue({ cli: "claude", max_parallel: 1 });
+  await waitFor(() => control.pending.length === 1);
+  store.addMessage(annotationId, { actor: "ai", body: "implemented and verified" });
+  store.setStatus(annotationId, { actor: "ai", status: "addressed" });
+  control.pending[0]!.resolve({ exitCode: null, reason: "timeout" });
+  await waitFor(() => manager.list().jobs[0]?.state === "succeeded");
+  assert.match(manager.list().jobs[0]?.summary ?? "", /completion persisted before coordinator timeout/);
+  assert.equal(store.load().annotations.find(({ id }) => id === annotationId)?.status, "addressed");
+  await manager.close();
+});
+
 test("keeps a human-resolved annotation archived when its coordinator later exits zero", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
@@ -273,9 +295,39 @@ test("fails a job when its page target is deleted while the coordinator runs", a
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
   await waitFor(() => manager.list().jobs[0]?.state === "failed");
   assert.match(manager.list().jobs[0]?.summary ?? "", /page unavailable after coordinator exit/);
-  const failed = store.load().annotations.find(({ id }) => id === annotationId);
-  assert.equal(failed?.status, "failed");
-  assert.match(failed?.thread.at(-1)?.body ?? "", /対象ページを確認できなかった/);
+  const completed = store.load().annotations.find(({ id }) => id === annotationId);
+  assert.equal(completed?.status, "addressed");
+  assert.equal(completed?.thread.at(-1)?.body, "implemented and verified");
+  await manager.close();
+});
+
+test("refreshes a deferred checkpoint after an earlier managed edit on the same page", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  const firstId = annotate(store, ".code/htmls/pages/a.html", "first managed edit");
+  const control = controlledExecutor();
+  const manager = new JobManager(store, { executor: control.executor });
+  manager.start();
+  manager.enqueue({ cli: "codex", max_parallel: 1 });
+  await waitFor(() => control.pending.length === 1);
+
+  const secondId = annotate(store, ".code/htmls/pages/a.html", "queued behind first");
+  const second = manager.enqueue({ cli: "codex", max_parallel: 1 }).jobs.find(({ annotation_id }) => annotation_id === secondId)!;
+  assert.equal(second.deferred_checkpoint, true);
+  writeFileSync(store.targetPath, "<h1>Managed result</h1>");
+  store.addMessage(firstId, { actor: "ai", body: "first completed" });
+  store.setStatus(firstId, { actor: "ai", status: "addressed" });
+  control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
+
+  await waitFor(() => control.pending.length === 2);
+  const running = manager.list().jobs.find(({ id }) => id === second.id)!;
+  assert.equal(running.state, "running");
+  assert.equal(running.deferred_checkpoint, false);
+  assert.equal(running.source_hash, fileSha256(store.targetPath));
+  store.addMessage(secondId, { actor: "ai", body: "second completed" });
+  store.setStatus(secondId, { actor: "ai", status: "addressed" });
+  control.pending[1]!.resolve({ exitCode: 0, reason: "exit" });
+  await waitFor(() => manager.list().jobs.find(({ id }) => id === second.id)?.state === "succeeded");
   await manager.close();
 });
 
@@ -374,7 +426,7 @@ test("contains deleted, renamed, and unreadable targets as failed annotation job
   }
 });
 
-test("spawn executor enforces timeout, combined output limit, and cancellation", async () => {
+test("spawn executor enforces timeout, stdout limit, and cancellation without counting stderr", async () => {
   const run = (script: string, executor = createSpawnExecutor({ timeoutMs: 2_000, killGraceMs: 10 })) => executor({
     command: process.execPath as ReviewCli, args: ["-e", script], cwd: process.cwd(), env: { ...process.env },
   });
@@ -382,6 +434,8 @@ test("spawn executor enforces timeout, combined output limit, and cancellation",
   assert.equal((await timeout.result).reason, "timeout");
   const output = await run("process.stdout.write('x'.repeat(100))", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
   assert.equal((await output.result).reason, "output-limit");
+  const diagnostics = await run("process.stderr.write('x'.repeat(100)); process.stdout.write('日本語')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
+  assert.deepEqual(await diagnostics.result, { exitCode: 0, reason: "exit", output: "日本語" });
   const cancelled = await run("setInterval(() => {}, 1000)");
   cancelled.cancel();
   assert.equal((await cancelled.result).reason, "cancelled");

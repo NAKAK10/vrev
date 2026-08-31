@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "name": "session.get",
+      "permission": "review.read",
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "output_schema": { "type": "object", "properties": {
+        "target": { "type": "object", "properties": {}, "additionalProperties": false },
+        "review": { "type": "object", "properties": {}, "additionalProperties": false },
+        "features": { "type": "object", "properties": {}, "additionalProperties": false }
+      }, "required": ["target", "review", "features"], "additionalProperties": false },
+      "resources": ["session"]
+    }
+  ],
+  "commands": [
+    {
+      "name": "annotation.create",
+      "permission": "review.write",
+      "input_schema": { "type": "object", "properties": {
+        "anchor": { "type": "object", "properties": {}, "additionalProperties": false },
+        "comment": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }, "required": ["anchor", "comment"], "additionalProperties": false },
+      "output_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "invalidates": ["session", "annotations", "history"]
+    }
+  ]
+}

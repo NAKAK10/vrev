@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "plugins/review/**/*.ts", "plugins/annotation-workflow/**/*.ts", "plugins/github-issue/**/*.ts", "test/**/*.ts"]
 }

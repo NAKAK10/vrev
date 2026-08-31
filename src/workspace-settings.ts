@@ -18,6 +18,7 @@ export interface WorkspaceReviewReference {
 export interface WorkspaceSettings {
   schema_version: 1;
   workspace: { root: "."; monorepo: boolean };
+  ui?: { plugin_management: boolean };
   projects: Array<{ id: string; path: string; reviews: WorkspaceReviewReference[] }>;
 }
 
@@ -46,7 +47,14 @@ function loadSettings(settingsPath: string, monorepo: boolean): WorkspaceSetting
   if (!existsSync(settingsPath)) return { schema_version: 1, workspace: { root: ".", monorepo }, projects: [] };
   const value = readJson(settingsPath) as Partial<WorkspaceSettings>;
   if (value.schema_version !== 1 || !value.workspace || !Array.isArray(value.projects)) throw new Error("unsupported .vreview/settings.json schema");
+  if (value.ui !== undefined && (typeof value.ui !== "object" || value.ui === null || typeof value.ui.plugin_management !== "boolean")) throw new Error("unsupported .vreview/settings.json ui schema");
   return value as WorkspaceSettings;
+}
+
+export function loadWorkspaceSettings(workspaceRoot: string): WorkspaceSettings {
+  const settingsPath = path.join(workspaceRoot, ".vreview", "settings.json");
+  if (existsSync(settingsPath) && lstatSync(settingsPath).isSymbolicLink()) throw new Error(".vreview/settings.json must not be a symbolic link");
+  return loadSettings(settingsPath, hasWorkspaceDeclaration(workspaceRoot));
 }
 
 export function registerWorkspaceReview(target: ResolvedTarget, projectDirectory: string, reviewPath: string, resolvedPath: string): WorkspaceSettings {

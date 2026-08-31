@@ -13,7 +13,6 @@ interface ReviewJob {
   batch_id: string;
   annotation_id: string;
   cli: ReviewCli;
-  custom_name: string | null;
   state: JobState;
   summary: string;
   exit_code: number | null;
@@ -26,16 +25,25 @@ interface JobListPayload {
 }
 
 interface CustomCommand {
-  id: string;
+  runner_id: string;
   name: string;
-  command: string;
   verified: boolean;
-  probe_ms?: number;
+  probe_ms: number | null;
 }
 
 interface EnqueuePayload {
   batch_id: string;
   jobs: ReviewJob[];
+}
+
+interface AnnotationFlowPolicy {
+  events: Array<"annotation-created" | "annotation-reopened">;
+  debounceMs: number;
+  settings: {
+    runner: { label: string; options: Array<{ value: Exclude<ReviewCli, "custom">; label: string }> };
+    maxParallel: { label: string; min: number; max: number; defaultValue: number };
+    autoRun: { label: string };
+  };
 }
 
 const ACTIVE_STATES: ReadonlySet<JobState> = new Set(["queued", "running"]);
@@ -54,17 +62,15 @@ function element<T extends Element>(selector: string, type: { new (): T }): T {
   return value;
 }
 
+const reviewLayout = element(".review-layout", HTMLElement);
+const reviewSidebar = element(".review-sidebar", HTMLElement);
+const aiJobsSection = element(".ai-jobs-section", HTMLElement);
 const form = element("#ai-batch-form", HTMLFormElement);
 const settingsOpenButton = element("#ai-settings-open", HTMLButtonElement);
 const settingsDialog = element("#ai-settings-dialog", HTMLDialogElement);
 const settingsCloseButton = element("[data-ai-settings-close]", HTMLButtonElement);
 const cliSelect = element("#ai-cli", HTMLSelectElement);
 const customOptions = element("#ai-custom-options", HTMLOptGroupElement);
-const customNameInput = element("#custom-command-name", HTMLInputElement);
-const customCommandInput = element("#custom-command-value", HTMLInputElement);
-const customAddButton = element("#custom-command-add", HTMLButtonElement);
-const customStatusElement = element("#custom-command-status", HTMLParagraphElement);
-const customCommandList = element("#custom-command-list", HTMLDivElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
 const submitButton = element("#ai-batch-submit", HTMLButtonElement);
@@ -79,150 +85,41 @@ let activeBatchIds = new Set<string>();
 let sessionTimer: number | undefined;
 let jobsTimer: number | undefined;
 let autoRunTimer: number | undefined;
+let annotationFlowPolicy: AnnotationFlowPolicy | null = null;
+let annotationFlowLoading = true;
+let annotationWorkflowEnabled = false;
+let customCommandEnabled = false;
+const pendingAnnotationFlowEvents = new Set<"annotation-created" | "annotation-reopened">();
 let destroyed = false;
 
 const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
 const CLI_STORAGE_KEY = "visual-review:cli";
 const PARALLEL_STORAGE_KEY = "visual-review:max-parallel";
-const CUSTOM_COMMANDS_STORAGE_KEY = "visual-review:custom-commands";
-let customCommands = loadCustomCommands();
-renderCustomCommands();
-const storedCli = window.localStorage.getItem(CLI_STORAGE_KEY);
+let customCommands: CustomCommand[] = [];
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
-const selectedUnverifiedCustom = storedCli?.startsWith("custom:") === true
-  && customCommands.some(({ id, verified }) => !verified && storedCli === `custom:${id}`);
-if (storedCli !== null && (isCli(storedCli) || customCommands.some(({ id, verified }) => verified && storedCli === `custom:${id}`))) cliSelect.value = storedCli;
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
-autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true" && !selectedUnverifiedCustom;
-if (selectedUnverifiedCustom) {
-  window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, "false");
-  setCustomStatus("既存のカスタムコマンドは再テストが必要です。安全のため自動実行を無効にしました。", true);
-}
+autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
 form.hidden = autoRunCheckbox.checked;
 
-function isCli(value: string): value is ReviewCli {
+function isCli(value: string): value is Exclude<ReviewCli, "custom"> {
   return value === "opencode" || value === "claude" || value === "codex" || value === "copilot" || value === "pi";
 }
 
-function loadCustomCommands(): CustomCommand[] {
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(CUSTOM_COMMANDS_STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(value)) return [];
-    return value.filter((item): item is Omit<CustomCommand, "verified"> & { verified?: boolean } => typeof item === "object" && item !== null
-      && typeof (item as CustomCommand).id === "string" && typeof (item as CustomCommand).name === "string" && typeof (item as CustomCommand).command === "string")
-      .map((item) => ({
-        id: item.id,
-        name: item.name,
-        command: item.command,
-        verified: item.verified === true,
-        ...(typeof item.probe_ms === "number" && Number.isFinite(item.probe_ms) ? { probe_ms: item.probe_ms } : {}),
-      }));
-  } catch { return []; }
-}
-
-function saveCustomCommands(): void {
-  window.localStorage.setItem(CUSTOM_COMMANDS_STORAGE_KEY, JSON.stringify(customCommands));
-}
-
-function validateCustomCommandTemplate(command: string): void {
-  if ((command.match(/\{prompt\}/g) ?? []).length !== 1) throw new Error("コマンドには{prompt}を1回だけ記述してください。");
-}
-
-function setCustomStatus(message: string, error = false): void {
-  customStatusElement.textContent = message;
-  customStatusElement.classList.toggle("is-error", error);
-}
-
-async function verifyCustomCommand(item: CustomCommand, button: HTMLButtonElement): Promise<void> {
-  try {
-    validateCustomCommandTemplate(item.command);
-  } catch (error) {
-    setCustomStatus(error instanceof Error ? error.message : String(error), true);
-    return;
-  }
-  button.disabled = true;
-  setCustomStatus(`${item.name}の応答とtool利用をテストしています（最大45秒）…`);
-  try {
-    const probe = await requestJson("/api/jobs/custom-command/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: item.command }),
-    });
-    const durationMs = typeof probe === "object" && probe !== null && typeof (probe as { duration_ms?: unknown }).duration_ms === "number"
-      ? (probe as { duration_ms: number }).duration_ms : 0;
-    item.verified = true;
-    item.probe_ms = durationMs;
-    if (!customCommands.some(({ id }) => id === item.id)) customCommands.push(item);
-    saveCustomCommands();
-    renderCustomCommands();
-    cliSelect.value = `custom:${item.id}`;
-    window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
-    setCustomStatus(durationMs >= 15_000
-      ? `${item.name}を登録しました。test応答に${Math.ceil(durationMs / 1000)}秒かかったため、実際の修正も遅くなる可能性があります。`
-      : `${item.name}の応答とtool利用を確認し、登録しました。`);
-  } catch (error) {
-    item.verified = false;
-    if (customCommands.some(({ id }) => id === item.id)) {
-      saveCustomCommands();
-      renderCustomCommands();
-    }
-    setCustomStatus(`登録できません：${error instanceof Error ? error.message : String(error)}`, true);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function renderCustomCommands(): void {
-  customOptions.replaceChildren(...customCommands.filter(({ verified }) => verified).map((item) => {
+function renderCustomCommands(enabled = customCommandEnabled): void {
+  customOptions.replaceChildren(...customCommands.filter(({ verified }) => enabled && verified).map((item) => {
     const option = document.createElement("option");
-    option.value = `custom:${item.id}`;
+    option.value = `custom:${item.runner_id}`;
     option.textContent = item.name;
     return option;
   }));
-  customCommandList.replaceChildren(...customCommands.map((item) => {
-    const row = document.createElement("div");
-    row.className = "custom-command-row";
-    const text = document.createElement("div");
-    const name = document.createElement("strong");
-    name.textContent = item.name;
-    const command = document.createElement("code");
-    command.textContent = item.command;
-    text.append(name, command);
-    const status = document.createElement("span");
-    status.className = "custom-command-status";
-    status.textContent = item.verified
-      ? `テスト済み${item.probe_ms ? `（${Math.ceil(item.probe_ms / 1000)}秒）` : ""}`
-      : "未テスト";
-    text.append(status);
-    const test = document.createElement("button");
-    test.type = "button";
-    test.className = "custom-command-test";
-    test.textContent = item.verified ? "再テスト" : "テスト";
-    test.addEventListener("click", () => void verifyCustomCommand(item, test));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "custom-command-remove";
-    remove.textContent = "削除";
-    remove.addEventListener("click", () => {
-      customCommands = customCommands.filter(({ id }) => id !== item.id);
-      if (cliSelect.value === `custom:${item.id}`) {
-        cliSelect.value = "opencode";
-        window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value);
-      }
-      saveCustomCommands();
-      renderCustomCommands();
-    });
-    row.append(text, test, remove);
-    return row;
-  }));
 }
 
-function selectedConfiguration(): { cli: ReviewCli; custom_name?: string; custom_command?: string } {
+function selectedConfiguration(): { cli: ReviewCli; runner_id?: string } {
   if (isCli(cliSelect.value)) return { cli: cliSelect.value };
-  const id = cliSelect.value.startsWith("custom:") ? cliSelect.value.slice(7) : "";
-  const custom = customCommands.find((item) => item.id === id);
-  if (!custom?.verified) throw new Error("カスタムコマンドは登録前にテストしてください。");
-  return { cli: "custom", custom_name: custom.name, custom_command: custom.command };
+  const runnerId = cliSelect.value.startsWith("custom:") ? cliSelect.value.slice(7) : "";
+  const custom = customCommands.find((item) => item.runner_id === runnerId);
+  if (!custom?.verified) throw new Error("外部AIコマンドは登録前にテストしてください。");
+  return { cli: "custom", runner_id: custom.runner_id };
 }
 
 function setStatus(message: string, error = false): void {
@@ -341,7 +238,7 @@ async function refreshJobs(): Promise<void> {
 }
 
 async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
-  if (submitting || (!automatic && hasActiveJobs)) return;
+  if (!annotationWorkflowEnabled || submitting || (!automatic && hasActiveJobs)) return;
   await refreshSession(true);
   if (openCount === 0) {
     if (!automatic) setStatus("依頼できる未対応注釈はありません。", true);
@@ -354,7 +251,9 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
     setStatus("最大並列数は1〜10で選択してください。", true);
     return;
   }
-  const cliLabel = configuration.custom_name ?? CLI_LABELS[configuration.cli];
+  const cliLabel = configuration.runner_id
+    ? customCommands.find(({ runner_id }) => runner_id === configuration.runner_id)?.name ?? CLI_LABELS.custom
+    : CLI_LABELS[configuration.cli];
   if (!automatic && !window.confirm(`${openCount}件の未対応注釈を${cliLabel}（最大並列${maxParallel}）へ依頼しますか？`)) return;
 
   submitting = true;
@@ -388,14 +287,129 @@ async function submitBatch(event: SubmitEvent): Promise<void> {
   await enqueueOpenAnnotations(false);
 }
 
-function scheduleAutoRun(): void {
-  if (!autoRunCheckbox.checked || destroyed) return;
+function validAnnotationFlowPolicy(value: unknown): value is AnnotationFlowPolicy {
+  if (typeof value !== "object" || value === null) return false;
+  const policy = value as Partial<AnnotationFlowPolicy>;
+  const allowed = new Set(["annotation-created", "annotation-reopened"]);
+  const settings = policy.settings;
+  return Array.isArray(policy.events) && policy.events.length > 0 && policy.events.every((event) => allowed.has(event))
+    && Number.isInteger(policy.debounceMs) && Number(policy.debounceMs) >= 0 && Number(policy.debounceMs) <= 5_000
+    && typeof settings?.runner?.label === "string" && Array.isArray(settings.runner.options) && settings.runner.options.length > 0
+    && settings.runner.options.every(({ value, label }) => isCli(value) && typeof label === "string" && Boolean(label.trim()))
+    && typeof settings.maxParallel?.label === "string" && Number.isInteger(settings.maxParallel.min) && Number.isInteger(settings.maxParallel.max)
+    && Number.isInteger(settings.maxParallel.defaultValue) && settings.maxParallel.min >= 1 && settings.maxParallel.max <= 10
+    && settings.maxParallel.defaultValue >= settings.maxParallel.min && settings.maxParallel.defaultValue <= settings.maxParallel.max
+    && typeof settings.autoRun?.label === "string" && Boolean(settings.autoRun.label.trim());
+}
+
+function applyAnnotationFlowSettings(policy: AnnotationFlowPolicy, allowCustomCommands: boolean): void {
+  const runnerLabel = document.querySelector('label[for="ai-cli"] > span');
+  const parallelLabel = document.querySelector('label[for="ai-max-parallel"] > span');
+  const autoRunLabel = document.querySelector('label[for="ai-auto-run"] > span');
+  if (!(runnerLabel instanceof HTMLSpanElement) || !(parallelLabel instanceof HTMLSpanElement) || !(autoRunLabel instanceof HTMLSpanElement)) {
+    throw new Error("annotation workflow settings slots are missing");
+  }
+  runnerLabel.textContent = policy.settings.runner.label;
+  parallelLabel.textContent = policy.settings.maxParallel.label;
+  autoRunLabel.textContent = policy.settings.autoRun.label;
+  for (const option of [...cliSelect.querySelectorAll(":scope > option")]) option.remove();
+  for (const item of policy.settings.runner.options) {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.label;
+    cliSelect.insertBefore(option, customOptions);
+  }
+  customCommandEnabled = allowCustomCommands;
+  renderCustomCommands(allowCustomCommands);
+  parallelSelect.replaceChildren(...Array.from(
+    { length: policy.settings.maxParallel.max - policy.settings.maxParallel.min + 1 },
+    (_, offset) => {
+      const value = String(policy.settings.maxParallel.min + offset);
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      return option;
+    },
+  ));
+  const configuredCli = window.localStorage.getItem(CLI_STORAGE_KEY);
+  const builtInValues = new Set(policy.settings.runner.options.map(({ value }) => value));
+  const customAvailable = allowCustomCommands && customCommands.some(({ runner_id, verified }) => verified && configuredCli === `custom:${runner_id}`);
+  const fallback = builtInValues.has("claude") ? "claude" : policy.settings.runner.options[0]!.value;
+  const effectiveCli = configuredCli && ((isCli(configuredCli) && builtInValues.has(configuredCli)) || customAvailable) ? configuredCli : fallback;
+  cliSelect.value = effectiveCli;
+  window.localStorage.setItem(CLI_STORAGE_KEY, effectiveCli);
+  const configuredParallel = Number(window.localStorage.getItem(PARALLEL_STORAGE_KEY));
+  parallelSelect.value = Number.isInteger(configuredParallel) && configuredParallel >= policy.settings.maxParallel.min && configuredParallel <= policy.settings.maxParallel.max
+    ? String(configuredParallel)
+    : String(policy.settings.maxParallel.defaultValue);
+}
+
+async function loadAnnotationFlowPolicy(): Promise<void> {
+  try {
+    const payload = await requestJson("/api/plugins/annotation-flow");
+    const response = typeof payload === "object" && payload !== null
+      ? payload as { enabled?: unknown; reason?: unknown; policy?: unknown; custom_command_enabled?: unknown }
+      : {};
+    if (response.enabled === false) {
+      annotationWorkflowEnabled = false;
+      annotationFlowPolicy = null;
+      annotationFlowLoading = false;
+      customCommandEnabled = response.custom_command_enabled === true;
+      pendingAnnotationFlowEvents.clear();
+      if (autoRunTimer !== undefined) window.clearTimeout(autoRunTimer);
+      autoRunTimer = undefined;
+      autoRunCheckbox.checked = false;
+      autoRunCheckbox.disabled = true;
+      window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, "false");
+      if (settingsDialog.open) settingsDialog.close();
+      setStatus("");
+      aiJobsSection.hidden = true;
+      reviewSidebar.hidden = true;
+      reviewLayout.classList.add("workflow-disabled");
+      return;
+    }
+    if (response.enabled !== true || !validAnnotationFlowPolicy(response.policy)) throw new Error("annotation workflow plugin is unavailable");
+    customCommands = response.custom_command_enabled === true
+      ? ((await requestJson("/api/jobs/custom-commands")) as { runners?: CustomCommand[] }).runners ?? []
+      : [];
+    applyAnnotationFlowSettings(response.policy, response.custom_command_enabled === true);
+    annotationFlowPolicy = response.policy;
+    annotationFlowLoading = false;
+    annotationWorkflowEnabled = true;
+    autoRunCheckbox.disabled = false;
+    aiJobsSection.hidden = false;
+    reviewSidebar.hidden = false;
+    reviewLayout.classList.remove("workflow-disabled");
+    for (const eventName of pendingAnnotationFlowEvents) scheduleAutoRun(eventName);
+    pendingAnnotationFlowEvents.clear();
+  } catch (error) {
+    annotationWorkflowEnabled = false;
+    annotationFlowPolicy = null;
+    annotationFlowLoading = false;
+    pendingAnnotationFlowEvents.clear();
+    autoRunCheckbox.checked = false;
+    autoRunCheckbox.disabled = true;
+    aiJobsSection.hidden = true;
+    reviewSidebar.hidden = true;
+    reviewLayout.classList.add("workflow-disabled");
+    window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, "false");
+    console.error(`annotation workflow plugin unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function scheduleAutoRun(eventName: "annotation-created" | "annotation-reopened"): void {
+  if (!annotationWorkflowEnabled || !autoRunCheckbox.checked || destroyed) return;
+  if (annotationFlowLoading) {
+    pendingAnnotationFlowEvents.add(eventName);
+    return;
+  }
+  if (!annotationFlowPolicy?.events.includes(eventName)) return;
   if (autoRunTimer !== undefined) window.clearTimeout(autoRunTimer);
   autoRunTimer = window.setTimeout(() => {
     autoRunTimer = undefined;
-    if (submitting) scheduleAutoRun();
+    if (submitting) scheduleAutoRun(eventName);
     else void enqueueOpenAnnotations(true);
-  }, 300);
+  }, annotationFlowPolicy.debounceMs);
 }
 
 function destroy(): void {
@@ -406,38 +420,22 @@ function destroy(): void {
 }
 
 form.addEventListener("submit", (event) => void submitBatch(event));
-settingsOpenButton.addEventListener("click", () => settingsDialog.showModal());
+settingsOpenButton.addEventListener("click", () => { window.location.href = "/settings/plugins#annotation-workflow"; });
 settingsCloseButton.addEventListener("click", () => settingsDialog.close());
 cliSelect.addEventListener("change", () => window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value));
-customAddButton.addEventListener("click", () => {
-  const name = customNameInput.value.trim();
-  const command = customCommandInput.value.trim();
-  if (!name || !command) { setCustomStatus("表示名とコマンドを入力してください。", true); return; }
-  if (/[\0\r\n]/.test(command)) { setCustomStatus("カスタムコマンドは1行で入力してください。", true); return; }
-  try { validateCustomCommandTemplate(command); } catch (error) {
-    setCustomStatus(error instanceof Error ? error.message : String(error), true);
-    return;
-  }
-  const item = { id: window.crypto.randomUUID(), name, command, verified: false };
-  void verifyCustomCommand(item, customAddButton).then(() => {
-    if (!item.verified) return;
-    customNameInput.value = "";
-    customCommandInput.value = "";
-  });
-});
 parallelSelect.addEventListener("change", () => window.localStorage.setItem(PARALLEL_STORAGE_KEY, parallelSelect.value));
 autoRunCheckbox.addEventListener("change", () => {
   window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, String(autoRunCheckbox.checked));
   form.hidden = autoRunCheckbox.checked;
   setStatus(autoRunCheckbox.checked ? "自動実行を有効にしました。次に保存した注釈からAI修正を開始します。" : "自動実行を無効にしました。");
 });
-window.addEventListener("visual-review:annotation-created", scheduleAutoRun);
-window.addEventListener("visual-review:annotation-reopened", scheduleAutoRun);
-window.addEventListener("focus", () => void Promise.all([refreshSession(), refreshJobs()]));
+window.addEventListener("visual-review:annotation-created", () => scheduleAutoRun("annotation-created"));
+window.addEventListener("visual-review:annotation-reopened", () => scheduleAutoRun("annotation-reopened"));
+window.addEventListener("focus", () => void Promise.all([refreshSession(), refreshJobs(), loadAnnotationFlowPolicy()]));
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void Promise.all([refreshSession(), refreshJobs()]);
+  if (!document.hidden) void Promise.all([refreshSession(), refreshJobs(), loadAnnotationFlowPolicy()]);
 });
 window.addEventListener("pagehide", destroy, { once: true });
 
-void Promise.all([refreshSession(true), refreshJobs()]);
+void Promise.all([refreshSession(true), refreshJobs(), loadAnnotationFlowPolicy()]);
 scheduleSessionPoll();

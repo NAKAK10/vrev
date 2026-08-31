@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url";
 import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
-import { installPlugin, installedPluginDirectory, listPlugins, removePlugin } from "./plugin-registry.js";
+import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, upgradeBundledPlugin } from "./plugin-registry.js";
 import { loadPluginCommand } from "./plugin-runtime.js";
 import { createPluginScaffold } from "./plugin-scaffold.js";
-import { ReviewStore } from "./review-store.js";
+import { createReviewCapability } from "./review-capability.js";
+import type { ReviewStore } from "./review-store.js";
 
 interface ServeArguments {
   projectRoot: string;
@@ -135,7 +136,7 @@ function reviewStoreForPath(args: AnnotationArguments): ReviewStore {
   if (typeof target !== "object" || target === null || Array.isArray(target) || typeof (target as { entry_path?: unknown }).entry_path !== "string") {
     throw new Error("review file target.entry_path is invalid");
   }
-  const store = new ReviewStore((target as { entry_path: string }).entry_path, { projectRoot: args.projectRoot });
+  const store = createReviewCapability((target as { entry_path: string }).entry_path, { projectRoot: args.projectRoot }).store;
   const canonical = path.relative(store.target.projectRoot, store.path).split(path.sep).join("/");
   if (canonical !== args.reviewPath || realpathSync(store.path) !== realpathSync(supplied)) throw new Error("review-path does not match the canonical ReviewStore path");
   store.load();
@@ -155,6 +156,36 @@ async function readStdinBody(): Promise<string> {
   const body = Buffer.concat(chunks).toString("utf8");
   if (!body.trim()) throw new Error("stdin body must be nonblank");
   return body;
+}
+
+const DEFAULT_PLUGIN_IDS = ["review", "github-issue", "custom-command", "annotation-workflow"] as const;
+
+export async function ensureDefaultPlugins(
+  workspaceRoot: string,
+  bundledPluginsRoot = fileURLToPath(new URL("./bundled-plugins", import.meta.url)),
+): Promise<string[]> {
+  const installedIds = new Set(listPlugins(workspaceRoot).map(({ id }) => id));
+  const installed: string[] = [];
+  for (const id of DEFAULT_PLUGIN_IDS) {
+    const bundledSource = path.resolve(bundledPluginsRoot, id);
+    if (installedIds.has(id)) {
+      const result = upgradeBundledPlugin(bundledSource, workspaceRoot);
+      if (result) installed.push(`${result.plugin.id}@${result.plugin.version}`);
+      continue;
+    }
+    try {
+      const result = await installPlugin(bundledSource, workspaceRoot);
+      installed.push(`${result.plugin.id}@${result.plugin.version}`);
+      installedIds.add(result.plugin.id);
+    } catch (error) {
+      const concurrentWinner = listPlugins(workspaceRoot).find((plugin) => plugin.id === id);
+      if (!concurrentWinner || !(error instanceof Error) || !error.message.startsWith("plugin is already installed:")) throw error;
+      installedIds.add(id);
+      const result = upgradeBundledPlugin(bundledSource, workspaceRoot);
+      if (result) installed.push(`${result.plugin.id}@${result.plugin.version}`);
+    }
+  }
+  return installed;
 }
 
 function openBrowser(url: string): void {
@@ -248,12 +279,35 @@ function runLifecycleCommand(command: string | null, cwd: string): Promise<void>
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+    console.log("usage: visual-review serve --target <path|url> [options]\n       visual-review plugin <create|install|list|remove|run> ...\n       visual-review annotation <add-message|set-status|set-issue-draft> ...\n\nRun 'visual-review plugin --help' or 'visual-review plugin create --help' for plugin development help.");
+    return;
+  }
   if (argv[0] === "plugin") {
     const action = argv[1];
-    if (action === "create" && (argv.length === 3 || (argv.length === 4 && argv[3] === "--install"))) {
-      const scaffold = createPluginScaffold(argv[2]!);
+    if (action === undefined || action === "--help" || action === "-h") {
+      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n       visual-review plugin install <source>\n       visual-review plugin list\n       visual-review plugin remove <id>\n       visual-review plugin run <id> <command> [args...]\n\n'create' generates a schema-v3 manifest, README, configuration template, command, package, and test.");
+      return;
+    }
+    if (action === "create" && (argv[2] === "--help" || argv[2] === "-h")) {
+      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n\nCreates plugins/<id>/ with:\n  visual-review.plugin.json  schema v3 display/configuration template\n  README.md                  detailed description shown in plugin settings\n  index.js                   example command\n  package.json               Node.js 20+ package metadata\n  test.js                    zero-dependency Node test\n\nConfiguration fields are declarative; use source=environment for credentials.");
+      return;
+    }
+    if (action === "create" && argv[2]) {
+      let install = false;
+      let title: string | undefined;
+      let summary: string | undefined;
+      for (let index = 3; index < argv.length; index += 1) {
+        const argument = argv[index]!;
+        if (argument === "--install") { install = true; continue; }
+        if (argument !== "--title" && argument !== "--summary") throw new Error("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]");
+        const value = argv[++index];
+        if (!value) throw new Error(`${argument} requires a value`);
+        if (argument === "--title") title = value; else summary = value;
+      }
+      const scaffold = createPluginScaffold(argv[2], process.cwd(), { ...(title ? { title } : {}), ...(summary ? { summary } : {}) });
       console.log(`Created ${scaffold.id} at ${scaffold.directory}`);
-      if (argv[3] === "--install") {
+      if (install) {
         const result = await installPlugin(scaffold.directory);
         console.log(`Installed ${result.plugin.id}@${result.plugin.version}`);
       }
@@ -301,6 +355,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   const args = parseCliArguments(argv);
+  const installedDefaults = await ensureDefaultPlugins(args.projectRoot);
+  for (const plugin of installedDefaults) console.log(`Installed bundled plugin ${plugin}`);
   const startedProcess = args.startCommand === null ? null : spawn(args.startCommand, {
     cwd: args.projectDirectory,
     shell: true,

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "queries": [],
+  "commands": [
+    { "name": "issue.draft", "permission": "issue.create", "input_schema": { "type": "object", "properties": { "annotation_id": { "type": "string", "minLength": 1, "maxLength": 128 } }, "required": ["annotation_id"], "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "title": { "type": "string", "maxLength": 256 }, "body": { "type": "string", "maxLength": 65536 } }, "required": ["title", "body"], "additionalProperties": false }, "invalidates": ["session", "annotations"] },
+    { "name": "issue.create", "permission": "issue.create", "input_schema": { "type": "object", "properties": { "annotation_id": { "type": "string", "minLength": 1, "maxLength": 128 }, "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "body": { "type": "string", "minLength": 1, "maxLength": 65536 } }, "required": ["annotation_id", "title", "body"], "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "url": { "type": "string", "maxLength": 2048 } }, "required": ["url"], "additionalProperties": false }, "invalidates": ["session", "annotations"] }
+  ]
+}

@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { gunzipSync } from "node:zlib";
 
 import { atomicWriteJson, readJson, withFileLock } from "./file-utils.js";
@@ -37,6 +38,10 @@ export interface PluginRegistry {
 export interface PluginInstallResult {
   plugin: InstalledPlugin;
   directory: string;
+}
+
+export interface BundledPluginUpgradeResult extends PluginInstallResult {
+  previousVersion: string;
 }
 
 interface TarEntry { name: string; data?: Buffer }
@@ -67,7 +72,7 @@ function ensurePluginIgnores(vreview: string): void {
   mkdirSync(vreview, { recursive: true });
   const ignorePath = path.join(vreview, ".gitignore");
   if (existsSync(ignorePath) && lstatSync(ignorePath).isSymbolicLink()) throw new Error("plugin storage ignore file must not be a symbolic link");
-  const required = ["plugins/", "plugins.json", "custom-commands.json"];
+  const required = ["plugins/", "plugins.json", "plugin-settings.json", "custom-commands.json"];
   const current = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
   writeFileSync(ignorePath, `${[...new Set([...current, ...required])].join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
 }
@@ -256,6 +261,110 @@ export async function installPlugin(source: string, workspace = process.cwd()): 
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+function compareSemver(left: string, right: string): number {
+  const parse = (value: string): { core: bigint[]; prerelease: string[] | null } => {
+    const buildIndex = value.indexOf("+");
+    const withoutBuild = buildIndex < 0 ? value : value.slice(0, buildIndex);
+    const prereleaseIndex = withoutBuild.indexOf("-");
+    const coreText = prereleaseIndex < 0 ? withoutBuild : withoutBuild.slice(0, prereleaseIndex);
+    const prereleaseText = prereleaseIndex < 0 ? null : withoutBuild.slice(prereleaseIndex + 1);
+    return {
+      core: coreText.split(".").map(BigInt),
+      prerelease: prereleaseText === null ? null : prereleaseText.split("."),
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index]! !== b.core[index]!) return a.core[index]! < b.core[index]! ? -1 : 1;
+  }
+  if (a.prerelease === null || b.prerelease === null) return a.prerelease === b.prerelease ? 0 : a.prerelease === null ? 1 : -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const aPart = a.prerelease[index];
+    const bPart = b.prerelease[index];
+    if (aPart === undefined || bPart === undefined) return aPart === bPart ? 0 : aPart === undefined ? -1 : 1;
+    if (aPart === bPart) continue;
+    const aNumeric = /^\d+$/.test(aPart);
+    const bNumeric = /^\d+$/.test(bPart);
+    if (aNumeric && bNumeric) return BigInt(aPart) < BigInt(bPart) ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return aPart < bPart ? -1 : 1;
+  }
+  return 0;
+}
+
+function isOlderBundledManifest(installed: VisualReviewPluginManifest, bundled: VisualReviewPluginManifest): boolean {
+  const schemaComparison = installed.schema_version - bundled.schema_version;
+  const versionComparison = compareSemver(installed.version, bundled.version);
+  return schemaComparison <= 0 && versionComparison <= 0 && (schemaComparison < 0 || versionComparison < 0);
+}
+
+/**
+ * Replaces an outdated bundled copy only when the registry and on-disk state
+ * still prove that it was installed from this exact bundled source.
+ */
+export function upgradeBundledPlugin(
+  source: string,
+  workspace = process.cwd(),
+): BundledPluginUpgradeResult | null {
+  if (!path.isAbsolute(source)) throw new Error("bundled plugin source must be absolute");
+  assertSafeTree(source);
+  const bundledManifest = readPluginManifest(source, true);
+  if (path.basename(source) !== bundledManifest.id) throw new Error("bundled plugin directory and manifest id do not match");
+  const paths = storagePaths(workspace);
+
+  return withFileLock(paths.registry, () => {
+    const registry = readRegistry(paths.registry);
+    const index = registry.plugins.findIndex(({ id }) => id === bundledManifest.id);
+    if (index < 0) return null;
+    const existing = registry.plugins[index]!;
+    if (!path.isAbsolute(existing.source) || path.resolve(existing.source) !== path.resolve(source)) return null;
+
+    const destination = path.join(paths.plugins, existing.id);
+    let installedManifest: VisualReviewPluginManifest;
+    try {
+      if (!existsSync(destination)) return null;
+      assertSafeTree(destination);
+      installedManifest = readPluginManifest(destination, true);
+    } catch {
+      return null;
+    }
+    if (installedManifest.id !== existing.id
+      || bundledManifest.id !== existing.id
+      || !isDeepStrictEqual(installedManifest, existing.manifest)
+      || !isOlderBundledManifest(installedManifest, bundledManifest)) return null;
+
+    const staging = path.join(paths.plugins, `.${existing.id}.${randomUUID()}.upgrade`);
+    const backup = path.join(paths.plugins, `.${existing.id}.${randomUUID()}.backup`);
+    const plugin: InstalledPlugin = {
+      id: bundledManifest.id,
+      version: bundledManifest.version,
+      source,
+      installed_at: new Date().toISOString(),
+      manifest: bundledManifest,
+    };
+    let oldMoved = false;
+    let replacementMoved = false;
+    try {
+      copySafeTree(source, staging);
+      renameSync(destination, backup);
+      oldMoved = true;
+      renameSync(staging, destination);
+      replacementMoved = true;
+      const plugins = [...registry.plugins];
+      plugins[index] = plugin;
+      atomicWriteJson(paths.registry, { schema_version: 1, plugins });
+    } catch (error) {
+      if (replacementMoved) rmSync(destination, { recursive: true, force: true });
+      if (oldMoved) renameSync(backup, destination);
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+    rmSync(backup, { recursive: true, force: true });
+    return { plugin, directory: destination, previousVersion: existing.version };
+  });
 }
 
 export function listPlugins(workspace = process.cwd()): InstalledPlugin[] {

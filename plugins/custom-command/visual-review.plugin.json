@@ -1,12 +1,47 @@
 {
-  "schema_version": 1,
+  "schema_version": 4,
   "id": "custom-command",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "display": {
+    "title": "外部AIコマンド",
+    "summary": "ClaudeやOllamaなど、外部のcoding agentコマンドを登録・検証してAI修正に利用します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/index.js",
+    "contract": "./server.contract.json"
+  },
+  "custom_command_provider": {
+    "module": "./index.js",
+    "export": "customCommandProvider",
+    "api_version": 1
+  },
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "custom-command-settings",
+        "slot": "settings.detail",
+        "document": "./ui/settings.ui.json",
+        "order": 200
+      }
+    ]
+  },
   "commands": [
     {
       "name": "custom-command",
       "module": "./index.js",
       "export": "handler"
+    }
+  ],
+  "provides": [
+    {
+      "capability": "runner-registry",
+      "api_version": 1
     }
   ]
 }

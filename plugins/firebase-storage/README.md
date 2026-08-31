@@ -81,26 +81,28 @@ payload は schema、path、JSON 型、重複、sort 順、digest、file 数・s
 
 ## Storage provider API
 
-`index.mjs` は default の `storageProvider` object と、同じ `list` / `read` / `write` named export を公開します。
+manifestはbackend-neutralな`WorkspaceStorageProviderV1`を公開します。Firestore documentの`updateTime`をopaque `version`として扱い、local・MySQL・PostgreSQL providerと同じcompare-and-swap契約へ揃えています。
 
 ```js
-import { storageProvider } from "./index.mjs";
-
-await storageProvider.list(options);
-await storageProvider.read(".vreview/reviews/page/review.json", options);
-await storageProvider.write(".vreview/reviews/page/review.json", jsonValue, options);
+const { provider } = await loadWorkspaceStorageProviderV1("firebase-storage", workspaceRoot);
+const key = ".vreview/reviews/page/review.json";
+const current = await provider.read(key);
+const written = await provider.compareAndSwap(
+  key,
+  current?.version ?? null,
+  jsonValue,
+);
+await provider.delete(key, written.version);
 ```
 
-- `list(options?) -> Promise<Array<{ path, digest }>>`
-- `read(path, options?) -> Promise<JSONValue | undefined>`
-- `write(path, JSONValue, options?) -> Promise<{ path, digest, updatedAt }>`
+- `list(prefix) -> Promise<string[]>`
+- `read(key) -> Promise<{ version, value } | null>`
+- `compareAndSwap(key, expectedVersion, value) -> Promise<{ version }>`
+- `delete(key, expectedVersion) -> Promise<void>`
 
-`options` では環境変数に対応する `projectId`、`accessToken`、`collectionId`、`documentId`、`databaseId` を上書きできます。`write` は既存 document の `updateTime` precondition を付け、同時更新を黙って上書きしません。host application は storage provider を型指定して load できます。
+stale versionは`StorageConflictError`として失敗し、無条件上書きしません。plugin生成時に`projectId`、`accessToken`、`collectionId`、`documentId`、`databaseId`を固定したい場合は`createWorkspaceStorageProvider(options)`を使えます。
 
-```js
-const { provider } = await loadPluginStorageProvider("firebase-storage", workspaceRoot);
-const files = await provider.list();
-```
+従来の`storageProvider`（`list/read/write`）もcommand内部・移行互換用にexportしますが、manifestからは公開しません。`pull`は現時点では明示的なlegacy同期操作であり、running serverのauthoritative storageを差し替える用途には使わないでください。
 
 ## Security / operations
 

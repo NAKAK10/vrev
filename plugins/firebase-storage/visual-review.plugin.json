@@ -1,14 +1,61 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "id": "firebase-storage",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "display": {
+    "title": "Firebase Storage",
+    "summary": "Firestoreを介してVisual Reviewデータを同期します。",
+    "readme": "./README.md"
+  },
+  "configuration": [
+    {
+      "key": "project_id",
+      "title": "Firebase project ID",
+      "description": "Visual Review起動時の環境変数で指定します。",
+      "type": "string",
+      "source": "environment",
+      "environment": "FIREBASE_PROJECT_ID",
+      "required": true
+    },
+    {
+      "key": "access_token",
+      "title": "Firebase access token",
+      "description": "値は画面や設定ファイルへ保存しません。",
+      "type": "string",
+      "source": "environment",
+      "environment": "FIREBASE_ACCESS_TOKEN",
+      "required": false
+    },
+    {
+      "key": "document_id",
+      "title": "Document ID",
+      "description": "同期先documentを識別します。",
+      "type": "string",
+      "source": "workspace",
+      "required": false,
+      "default": "default"
+    }
+  ],
   "commands": [
-    { "name": "push", "module": "./index.mjs", "export": "pushCommand" },
-    { "name": "pull", "module": "./index.mjs", "export": "pullCommand" },
-    { "name": "status", "module": "./index.mjs", "export": "statusCommand" }
+    {
+      "name": "push",
+      "module": "./index.mjs",
+      "export": "pushCommand"
+    },
+    {
+      "name": "pull",
+      "module": "./index.mjs",
+      "export": "pullCommand"
+    },
+    {
+      "name": "status",
+      "module": "./index.mjs",
+      "export": "statusCommand"
+    }
   ],
   "storage_provider": {
+    "api_version": 1,
     "module": "./index.mjs",
-    "export": "storageProvider"
+    "export": "workspaceStorageProvider"
   }
 }

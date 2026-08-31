@@ -9,9 +9,11 @@ import {
   collectLocalSnapshot,
   compareSnapshots,
   createStorageProvider,
+  createWorkspaceStorageProvider,
   pushCommand,
   readRemoteSnapshot,
   storageProvider,
+  workspaceStorageProvider,
   validateSnapshot,
   writeRemoteSnapshot,
 } from "./index.mjs";
@@ -64,15 +66,19 @@ function firestoreMemory() {
   };
 }
 
-test("manifest and package expose commands and the list/read/write provider API", () => {
+test("manifest and package expose commands and the backend-neutral storage provider API", () => {
   const manifest = JSON.parse(readFileSync(new URL("./visual-review.plugin.json", import.meta.url), "utf8"));
   const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
   assert.deepEqual(manifest.commands.map(({ name }) => name), ["push", "pull", "status"]);
-  assert.equal(manifest.storage_provider.export, "storageProvider");
+  assert.equal(manifest.schema_version, 3);
+  assert.equal(manifest.storage_provider.api_version, 1);
+  assert.equal(manifest.storage_provider.export, "workspaceStorageProvider");
   assert.equal(pkg.dependencies, undefined);
   assert.equal(typeof storageProvider.list, "function");
   assert.equal(typeof storageProvider.read, "function");
   assert.equal(typeof storageProvider.write, "function");
+  assert.equal(workspaceStorageProvider.apiVersion, 1);
+  for (const method of ["list", "read", "compareAndSwap", "delete"]) assert.equal(typeof workspaceStorageProvider[method], "function");
 });
 
 test("local collection includes only settings and review JSON and is deterministic", () => {
@@ -217,7 +223,21 @@ test("pull rolls back earlier files when a later commit fails", { skip: process.
   }
 });
 
-test("status comparison and provider list/read/write work against an in-memory Firestore", async () => {
+test("workspace provider maps Firestore updateTime to compare-and-swap", async () => {
+  const memory = firestoreMemory();
+  const provider = createWorkspaceStorageProvider({ env, fetch: memory.fetch, documentId: "cas-provider" });
+  const key = ".vreview/reviews/home/review.json";
+  const created = await provider.compareAndSwap(key, null, { revision: 1 });
+  assert.match(created.version, /^2025-/);
+  assert.deepEqual(await provider.read(key), { version: created.version, value: { revision: 1 } });
+  await assert.rejects(provider.compareAndSwap(key, null, { revision: 2 }), { name: "StorageConflictError" });
+  const updated = await provider.compareAndSwap(key, created.version, { revision: 2 });
+  assert.deepEqual(await provider.list(".vreview/reviews/"), [key]);
+  await provider.delete(key, updated.version);
+  assert.equal(await provider.read(key), null);
+});
+
+test("status comparison and legacy provider list/read/write work against an in-memory Firestore", async () => {
   const memory = firestoreMemory();
   const provider = createStorageProvider({ env, fetch: memory.fetch, documentId: "provider" });
   const filePath = ".vreview/reviews/home/review.json";

@@ -9,6 +9,11 @@ export interface PluginScaffoldResult {
   directory: string;
 }
 
+export interface PluginScaffoldOptions {
+  title?: string;
+  summary?: string;
+}
+
 function packageName(id: string): string {
   const safe = id.replace(/[._]+/g, "-").replace(/-+/g, "-");
   return `visual-review-plugin-${safe}`;
@@ -18,11 +23,15 @@ function writeNew(file: string, contents: string): void {
   writeFileSync(file, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
 }
 
-export function createPluginScaffold(id: string, workspace = process.cwd()): PluginScaffoldResult {
+export function createPluginScaffold(id: string, workspace = process.cwd(), options: PluginScaffoldOptions = {}): PluginScaffoldResult {
+  const title = options.title?.trim() || id;
+  const summary = options.summary?.trim() || `Visual Review plugin: ${id}`;
   const manifest = parsePluginManifest({
-    schema_version: 1,
+    schema_version: 3,
     id,
     version: "0.1.0",
+    display: { title, summary, readme: "./README.md" },
+    configuration: [],
     commands: [{ name: "hello", module: "./index.js", export: "hello" }],
   });
   const root = findWorkspaceRoot(workspace);
@@ -48,7 +57,7 @@ export function createPluginScaffold(id: string, workspace = process.cwd()): Plu
     }, null, 2)}\n`);
     writeNew(path.join(directory, "index.js"), `/** @param {{ workspaceRoot: string, pluginDirectory: string, args: readonly string[] }} context */\nexport async function hello(context) {\n  console.log(\`Hello from ${manifest.id}: \${context.args.join(" ")}\`);\n}\n`);
     writeNew(path.join(directory, "test.js"), `import assert from "node:assert/strict";\nimport test from "node:test";\nimport { hello } from "./index.js";\n\ntest("exports the hello command", () => {\n  assert.equal(typeof hello, "function");\n});\n`);
-    writeNew(path.join(directory, "README.md"), `# ${manifest.id}\n\nGenerated Visual Review plugin.\n\n## Development\n\n\`\`\`sh\nnpm test\nvisual-review plugin install ./${path.relative(root, directory).split(path.sep).join("/")}\nvisual-review plugin run ${manifest.id} hello world\n\`\`\`\n\nSet \`private\` to \`false\`, choose a publishable package name, add a license, and review the source before publishing.\n`);
+    writeNew(path.join(directory, "README.md"), `# ${title}\n\n${summary}\n\n## Configuration template\n\nAdd declarative fields to the manifest's \`configuration\` array. Supported field types are \`string\`, \`integer\`, \`boolean\`, and \`select\`; sources are \`workspace\` and \`environment\`. Secret values must use environment fields and are never persisted.\n\n## Development\n\n\`\`\`sh\nnpm test\nvisual-review plugin install ./${path.relative(root, directory).split(path.sep).join("/")}\nvisual-review plugin run ${manifest.id} hello world\n\`\`\`\n\nSet \`private\` to \`false\`, choose a publishable package name, add a license, and review the source before publishing.\n`);
   } catch (error) {
     rmSync(directory, { recursive: true, force: true });
     throw error;

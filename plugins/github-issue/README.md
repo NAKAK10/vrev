@@ -1,6 +1,6 @@
 # Visual Review GitHub Issue plugin
 
-Visual ReviewのIssue draftを、対象repositoryでGitHub CLI (`gh`)を使ってGitHub Issueとして作成するproviderです。
+Visual ReviewのIssue draftを、対象repositoryでGitHub CLI (`gh`)を使ってGitHub Issueとして作成するproviderです。schema-v4 serverは`issue-task` capabilityとしてdraft codec、検証、workflow出力取込、provider呼出、annotation単位single-flightを提供します。結果不明の外部side effectは自動retryしません。
 
 ## Installation
 

@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { ensureDefaultPlugins } from "../src/cli.js";
+import { installPlugin, loadPluginUiSurface, parsePluginUiDocument, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "../src/index.js";
+
+function workspace(): string {
+  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-renderer-"));
+  mkdirSync(path.join(root, ".git"));
+  return root;
+}
+
+test("normalizes enabled JSON contributions without evaluating plugin server modules", async () => {
+  const root = workspace();
+  const source = path.join(root, "fixture");
+  mkdirSync(path.join(source, "ui"), { recursive: true });
+  mkdirSync(path.join(source, "server"), { recursive: true });
+  writeFileSync(path.join(source, "README.md"), "# Fixture\n");
+  writeFileSync(path.join(source, "server/contract.json"), JSON.stringify({ schema_version: 1, queries: [], commands: [] }));
+  writeFileSync(path.join(source, "server/index.js"), "import {writeFileSync} from 'node:fs'; writeFileSync(new URL('./evaluated', import.meta.url),'yes'); export default {};\n");
+  writeFileSync(path.join(source, "ui/main.json"), JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } }));
+  writeFileSync(path.join(source, "ui/runtime.js"), "export function mount(){ return () => {}; }\n");
+  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+    schema_version: 4, id: "fixture", version: "1.0.0",
+    display: { title: "Fixture", summary: "Static UI fixture", readme: "./README.md" }, configuration: [],
+    server: { api_version: 1, bridge_api_version: 1, module: "./server/index.js", contract: "./server/contract.json" },
+    ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "main", slot: "review.main", document: "./ui/main.json", browser_module: "./ui/runtime.js", order: 0 }] },
+  }));
+  const installed = await installPlugin(source, root);
+  const surface = loadPluginUiSurface(root);
+  assert.equal(surface.contributions.length, 1);
+  assert.equal(surface.contributions[0]?.plugin_id, "fixture");
+  assert.equal(surface.layout.stage, "expanded");
+  assert.equal(surface.contributions[0]?.browser_module_url, "/api/plugin-host/v1/plugins/fixture/ui-modules/main");
+  assert.equal(existsSync(path.join(installed.directory, "server/evaluated")), false);
+});
+
+test("disabled workflow contribution is absent and expands the target stage", async () => {
+  const root = workspace();
+  await ensureDefaultPlugins(root);
+  const initial = loadPluginUiSurface(root);
+  assert.equal(initial.contributions.some(({ slot }) => slot === "review.sidebar"), true);
+  const workflow = (await import("../src/plugin-registry.js")).listPlugins(root).find(({ id }) => id === "annotation-workflow")!;
+  updatePluginSettings("annotation-workflow", workflow.manifest, {
+    revision: pluginSettingsRevision(readPluginSettings(root)), enabled: false, configuration: {},
+  }, root);
+  const disabled = loadPluginUiSurface(root);
+  assert.equal(disabled.contributions.some(({ slot }) => slot === "review.sidebar"), false);
+  assert.deepEqual(disabled.layout, { sidebar: "absent", stage: "expanded" });
+});
+
+test("renderer documents reject executable and unknown component properties", () => {
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "text", props: { style: { literal: "position:fixed" } } } }), /forbidden/);
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", props: { arbitrary: { literal: true } } } }), /unsupported field/);
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: Array.from({ length: 17 }, () => ({ type: "local.toggle", path: "/open" })) } } }), /at most 16/);
+});
+
+test("browser runtime keeps declarative DOM Core-owned and mounts only declared plugin modules", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  assert.match(source, /document\.createElement/);
+  assert.match(source, /textContent/);
+  assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|DOMParser|document\.write|\beval\s*\(|new Function/);
+  assert.doesNotMatch(source, /document\.createElement\(["']script|src\s*=\s*[^;]*plugin/);
+  assert.match(source, /import\(contribution\.browser_module_url\)/);
+  assert.match(source, /typeof runtime\.mount !== "function"/);
+  assert.match(source, /pluginRuntimeCleanups/);
+  assert.match(source, /event\.isComposing/);
+  assert.match(source, /aria-live/);
+  assert.match(source, /focus\(\{ preventScroll: true \}\)/);
+  assert.doesNotMatch(source, /allow-same-origin allow-forms allow-scripts/);
+});
+
+test("renderer acceptance paths scope repeated annotation actions and implement target regions, focus, dialogs, and pending controls", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  assert.match(source, /definition\.repeat\.key/);
+  assert.match(source, /instanceKey: \[scope\.instanceKey, repeatKey\]/);
+  assert.match(source, /scope\.instanceKey \|\| "root".*instruction\.command/);
+  assert.match(source, /pending\?\.disable/);
+  assert.match(source, /installHtmlSelection/);
+  assert.match(source, /doc\.__vrSelectionCleanup\?\.\(\)/);
+  assert.match(source, /doc\.removeEventListener\("pointerdown", pointerdown, true\)/);
+  assert.match(source, /doc\.removeEventListener\("click", click, true\)/);
+  assert.match(source, /mode !== "region"/);
+  assert.match(source, /targetUrlForPage/);
+  assert.match(source, /target\.focus\.failed/);
+  assert.match(source, /aria-labelledby/);
+  assert.match(source, /aria-describedby/);
+  assert.match(source, /dialogOpeners/);
+  assert.match(source, /formDrafts/);
+  assert.match(source, /previous\?\.events.*result\.data\?\.events/s);
+  assert.match(source, /function patchReviewTree\(nextTree\)/);
+  assert.match(source, /targetIdentity\(currentStage\) !== targetIdentity\(nextStage\)/);
+  assert.match(source, /if \(patchReviewTree\(nextTree\)\)/);
+  assert.match(source, /main\?\.browser_module_url.*mountPluginRuntime\(main, connectedMain\)/s);
+  assert.match(source, /if \(rendered\.isConnected\) void mountPluginRuntime/);
+});
+
+test("Core styles plugin documents through semantic renderer tokens", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  const html = readFileSync(path.join(process.cwd(), "src/ui/renderer.html"), "utf8");
+  assert.match(html, /href="\/renderer\.css"/);
+  assert.match(source, /const THEME_TOKENS = new Map/);
+  assert.match(source, /rendered\.dataset\.pluginId = contribution\.plugin_id/);
+  assert.match(source, /vr-field vr-field-\$\{type\}/);
+  assert.match(css, /--vr-color-canvas:/);
+  assert.match(css, /\.vr-plugin-row\s*\{/);
+  assert.match(css, /\.vr-plugin-detail-content/);
+  assert.match(source, /dialog\[open\] \.vr-dialog-body/);
+  assert.match(source, /dialogBody\.prepend\(region\)/);
+  assert.match(source, /requestAnimationFrame\(paintToast\)/);
+  assert.match(source, /variant === "info" \? 7000 : 12000/);
+  assert.match(source, /let activeToast = null/);
+  assert.match(source, /queueMicrotask\(paintToast\)/);
+  assert.doesNotMatch(source, /style\.cssText|insertRule|adoptedStyleSheets/);
+});
+
+test("bundled review documents bind localized annotation content, filters, overlays, and scoped Issue dialogs", () => {
+  const review = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/review.ui.json"), "utf8")) as unknown;
+  const rendererSource = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const reviewRuntime = readFileSync(path.join(process.cwd(), "plugins/review/ui/review.js"), "utf8");
+  const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
+  const issueText = readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/issue.ui.json"), "utf8");
+  assert.doesNotThrow(() => parsePluginUiDocument(review));
+  assert.match(sidebarText, /"text": \{ "item": "\/comment" \}/);
+  assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
+  assert.match(sidebarText, /"kind_label"|\/kind_label/);
+  assert.match(sidebarText, /"type": "checkbox-group"/);
+  assert.match(sidebarText, /"limit": \{ "literal": 24 \}/);
+  assert.match(sidebarText, /"type": "target\.focus", "target": \{ "item": "\/page_path" \}/);
+  assert.match(sidebarText, /"id": "force-resolve-dialog"/);
+  assert.match(issueText, /"id": "issue-dialog"/);
+  assert.match(issueText, /"label": \{ "literal": "キャンセル" \}/);
+  assert.match(rendererSource, /vr-selection-mode-button/);
+  assert.match(rendererSource, /aria-keyshortcuts/);
+  assert.match(reviewRuntime, /\{ v: "browse", n: "node", r: "region" \}/);
+  assert.match(reviewRuntime, /doc\.addEventListener\("keydown", keydown, true\)/);
+  assert.match(reviewRuntime, /function enableVisibleInertNavigation\(doc, win\)/);
+  assert.match(reviewRuntime, /node\.removeAttribute\("inert"\)/);
+  assert.match(reviewRuntime, /node\.setAttribute\("inert", ""\)/);
+  assert.match(reviewRuntime, /if \(!doc\.documentElement\)/);
+  assert.match(reviewRuntime, /window\.setTimeout\(install, 16\)/);
+});
+
+test("bundled plugin UI documents stay JSON while declared browser modules are explicit local assets", async () => {
+  const root = workspace();
+  await ensureDefaultPlugins(root);
+  const pluginsRoot = path.join(root, ".vreview/plugins");
+  for (const id of ["review", "annotation-workflow", "github-issue", "custom-command"]) {
+    const manifest = JSON.parse(readFileSync(path.join(pluginsRoot, id, "visual-review.plugin.json"), "utf8")) as { ui?: { contributions: Array<{ document: string; browser_module?: string }> } };
+    for (const contribution of manifest.ui?.contributions ?? []) {
+      assert.match(contribution.document, /^\.\/ui\/.*\.json$/);
+      assert.equal(existsSync(path.join(pluginsRoot, id, contribution.document.slice(2))), true);
+      if (contribution.browser_module) {
+        const browserModule = contribution.browser_module;
+        assert.match(browserModule, /^\.\/ui\/.*\.m?js$/);
+        assert.equal(existsSync(path.join(pluginsRoot, id, browserModule.slice(2))), true);
+      }
+    }
+  }
+});
