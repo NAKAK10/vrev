@@ -130,12 +130,12 @@ visual-review plugin install ./plugins/firebase-storage
 visual-review plugin list
 ```
 
-プラグイン管理画面はworkspace設定でのみ表示を切り替えます。UI内にこの表示切替はありません。
+プラグイン管理画面への「設定」メニューは左上に既定表示します。明示的に非表示へ切り替える場合だけworkspace設定へ`false`を指定します。UI内にこの表示切替はありません。
 
 ```json
 // .vreview/settings.json
 {
-  "ui": { "plugin_management": true }
+  "ui": { "plugin_management": false }
 }
 ```
 
@@ -196,7 +196,7 @@ npm run build
 GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-npm version 1.1.1 --no-git-tag-version
+npm version 1.1.2 --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check

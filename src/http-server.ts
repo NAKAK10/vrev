@@ -547,7 +547,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
   const commandJournal = new Map<string, { payload: string; result: Promise<BridgeAdapterResult>; at: number }>();
   const uiRoot = defaultUiRoot();
   const settingsUiRoot = pluginSettingsUiRoot();
-  const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management === true;
+  const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management !== false;
   for (const name of ["index.html", "renderer.html", "renderer.css", "renderer.js", "reviewer.css", "reviewer.js", "jobs.js"]) {
     if (!existsSync(path.join(uiRoot, name))) {
       throw new Error(`built UI asset missing: ${path.join(uiRoot, name)}; run npm run build first`);

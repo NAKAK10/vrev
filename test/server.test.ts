@@ -104,9 +104,33 @@ test("serves built UI and compatible session/security headers", async () => {
   assert.match(flowPayload.policy.settings.autoRun.label, /自動/);
 });
 
-test("plugin management is hidden by default and enabled only by workspace settings", async () => {
-  assert.equal((await fetch(`${baseUrl}/settings/plugins`)).status, 404);
-  assert.equal((await fetch(`${baseUrl}/api/settings/plugins`)).status, 404);
+test("plugin management is visible by default and can be explicitly hidden", async () => {
+  assert.equal((await fetch(`${baseUrl}/settings/plugins`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/settings/plugins`)).status, 200);
+
+  const hiddenRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-hidden-plugin-settings-"));
+  mkdirSync(path.join(hiddenRoot, ".git"));
+  mkdirSync(path.join(hiddenRoot, ".code/htmls"), { recursive: true });
+  mkdirSync(path.join(hiddenRoot, ".vreview"), { recursive: true });
+  writeFileSync(path.join(hiddenRoot, ".code/htmls/index.html"), "<h1>Hidden settings</h1>");
+  writeFileSync(path.join(hiddenRoot, ".vreview/settings.json"), JSON.stringify({
+    schema_version: 1,
+    workspace: { root: ".", monorepo: false },
+    ui: { plugin_management: false },
+    projects: [],
+  }));
+  await ensureDefaultPlugins(hiddenRoot);
+  const hiddenServer = createVisualReviewServer({ projectRoot: hiddenRoot, target: ".code/htmls/index.html" });
+  await new Promise<void>((resolve) => hiddenServer.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const hiddenAddress = hiddenServer.server.address();
+    assert.ok(hiddenAddress && typeof hiddenAddress !== "string");
+    const hiddenUrl = `http://127.0.0.1:${hiddenAddress.port}`;
+    assert.equal((await fetch(`${hiddenUrl}/settings/plugins`)).status, 404);
+    assert.equal((await fetch(`${hiddenUrl}/api/settings/plugins`)).status, 404);
+  } finally {
+    await hiddenServer.close();
+  }
 
   const settingsRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-settings-"));
   mkdirSync(path.join(settingsRoot, ".git"));
