@@ -185,7 +185,6 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
   if (contentTypeValue.includes("javascript")) {
     result = result.replace(/(\b(?:from|import)\s*(?:\(\s*)?)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
     result = result.replace(/(\b(?:fetch|EventSource|Worker|SharedWorker|URL)\s*\(\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
-    result = result.replaceAll("window.location.pathname", `(window.location.pathname.replace(/^\\/live(?=\\/|$)/, "") || "/")`);
     result = result.replace(/window\.location\.(replace|assign)\(([^()\n;]+)\)/g, "window.location.$1(window.__visualReviewUrl($2))");
     result = result.replace(/((?:window\.)?location\.href\s*=\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
   }

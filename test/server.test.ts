@@ -325,6 +325,11 @@ test("proxies loopback applications and persists URL annotations", async () => {
       response.end(`import "/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(route);\nfetch('/api/data');`);
       return;
     }
+    if (request.url === "/eval.js") {
+      response.writeHead(200, { "Content-Type": "application/javascript" });
+      response.end(`eval("const page = window.location.pathname;");`);
+      return;
+    }
     if (request.url === "/broken") {
       response.writeHead(500, { "Content-Type": "text/html" });
       response.end("<html><head></head><body>upstream failed</body></html>");
@@ -362,8 +367,11 @@ test("proxies loopback applications and persists URL annotations", async () => {
     assert.match(html, /href="\/live\/alias"/);
     assert.equal(
       await (await fetch(`${url}/live/app.js`)).text(),
-      `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = (window.location.pathname.replace(/^\\/live(?=\\/|$)/, "") || "/");\nwindow.location.replace(window.__visualReviewUrl(route));\nfetch('/live/api/data');`,
+      `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(window.__visualReviewUrl(route));\nfetch('/live/api/data');`,
     );
+    const evalScript = await (await fetch(`${url}/live/eval.js`)).text();
+    assert.equal(evalScript, `eval("const page = window.location.pathname;");`);
+    assert.doesNotThrow(() => new Function(evalScript));
     const brokenResponse = await fetch(`${url}/live/broken`);
     assert.equal(brokenResponse.status, 500);
     assert.match(await brokenResponse.text(), /upstream failed/);
