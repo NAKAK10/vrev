@@ -12,6 +12,25 @@ export class IssueCreationIndeterminateError extends Error {
   }
 }
 
+/**
+ * Failures GitHub reports before accepting the mutation. The Issue definitively does not exist,
+ * so telling the reviewer the outcome is unknown would be wrong: the cause is theirs to fix
+ * (wrong account, missing scope, no access to the repository).
+ */
+const REJECTED_BEFORE_CREATE = [
+  /Could not resolve to a Repository/i,
+  /Resource not accessible by/i,
+  /HTTP 40[13]\b/,
+  /gh auth login/i,
+  /must be authenticated/i,
+  /no git remotes found/i,
+  /not a git repository/i,
+];
+
+function rejectedBeforeCreate(stderr) {
+  return REJECTED_BEFORE_CREATE.some((pattern) => pattern.test(stderr));
+}
+
 /** Authoritative provider invocation. It never retries an external side effect. */
 export const provider = Object.freeze({
   async createIssue(projectRoot, draft) {
@@ -70,9 +89,11 @@ export const provider = Object.freeze({
       child.once("close", (code) => {
         if (killTimer) clearTimeout(killTimer);
         if (settled) return;
-        if (code !== 0) return finish(started
-          ? new IssueCreationIndeterminateError(`${stderr.trim() || `gh issue create failed with exit code ${code}`} (Issue作成結果は不明なため自動再試行しません)`)
-          : new Error(stderr.trim() || `gh issue create failed with exit code ${code}`));
+        if (code !== 0) {
+          const detail = stderr.trim() || `gh issue create failed with exit code ${code}`;
+          if (!started || rejectedBeforeCreate(detail)) return finish(new Error(detail));
+          return finish(new IssueCreationIndeterminateError(`${detail} (Issue作成結果は不明なため自動再試行しません)`));
+        }
         const url = stdout.trim().split(/\s+/).reverse().find((value) => ISSUE_URL_PATTERN.test(value));
         if (!url) return finish(new IssueCreationIndeterminateError("GitHub Issue URLを取得できず作成結果が不明です。自動再試行は行いません"));
         finish(undefined, { url });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +22,7 @@ import {
   type IssueProjectionAnnotationV1,
   type IssueTaskCapabilityV1,
 } from "../plugins/github-issue/server/index.js";
+import { provider } from "../plugins/github-issue/server/issue-provider.js";
 
 function repository(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-issue-extraction-"));
@@ -52,6 +53,36 @@ test("Issue task accepts only allowed annotation IDs and rejects internal refere
   assert.deepEqual(fixture.drafts, []);
   fixture.task.acceptCoordinatorOutput(block("allowed-id", "Standalone body"), new Set(["allowed-id"]));
   assert.deepEqual(fixture.drafts, [{ title: "Title", body: "Standalone body" }]);
+});
+
+test("a gh rejection before the mutation is a definite failure, not an indeterminate one", async () => {
+  const root = repository();
+  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "visual-review-gh-stub-"));
+  const writeStub = (stderr: string): void => {
+    const stub = path.join(stubDirectory, "gh");
+    writeFileSync(stub, `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' ${JSON.stringify(stderr)} >&2\nexit 1\n`);
+    chmodSync(stub, 0o755);
+  };
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${stubDirectory}${path.delimiter}${originalPath ?? ""}`;
+  try {
+    // GitHub answers "no such repository" before creating anything, so the reviewer must be told
+    // the Issue was not created rather than that the outcome is unknown.
+    writeStub("GraphQL: Could not resolve to a Repository with the name 'owner/repo'. (repository)");
+    const rejected = await provider.createIssue(root, { title: "t", body: "b" }).then(() => null, (error: unknown) => error);
+    assert.ok(rejected instanceof Error);
+    assert.equal((rejected as { indeterminate?: boolean }).indeterminate, undefined);
+    assert.match(rejected.message, /Could not resolve to a Repository/);
+    assert.doesNotMatch(rejected.message, /不明/);
+
+    // A failure that says nothing about whether the mutation landed stays indeterminate.
+    writeStub("connection reset by peer");
+    const unknown = await provider.createIssue(root, { title: "t", body: "b" }).then(() => null, (error: unknown) => error);
+    assert.equal((unknown as { indeterminate?: boolean }).indeterminate, true);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
 });
 
 test("Issue creation is single-flight and never automatically retries an indeterminate result", async () => {
