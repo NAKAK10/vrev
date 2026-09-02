@@ -17,6 +17,7 @@ import {
   updatePluginSettings,
 } from "../src/index.js";
 import {
+  createIssueBridgeAdapter,
   createIssueTaskCapability,
   ISSUE_TASK_CAPABILITY_ID,
   type IssueProjectionAnnotationV1,
@@ -83,6 +84,52 @@ test("a gh rejection before the mutation is a definite failure, not an indetermi
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
   }
+});
+
+test("resolveTarget reads the repo and account gh would use, and returns null on failure or garbage", async () => {
+  const root = repository();
+  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "visual-review-gh-target-stub-"));
+  const stubPath = path.join(stubDirectory, "gh");
+  const writeStub = (script: string): void => { writeFileSync(stubPath, script); chmodSync(stubPath, 0o755); };
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${stubDirectory}${path.delimiter}${originalPath ?? ""}`;
+  try {
+    writeStub(`#!/bin/sh\nif [ "$1" = "repo" ]; then printf '%s\\n' "example-org/example-repo"; exit 0; fi\nif [ "$1" = "api" ]; then printf '%s\\n' "example-user"; exit 0; fi\nexit 1\n`);
+    assert.deepEqual(await provider.resolveTarget!(root), { repo: "example-org/example-repo", account: "example-user" });
+
+    writeStub(`#!/bin/sh\nexit 1\n`);
+    assert.deepEqual(await provider.resolveTarget!(root), { repo: null, account: null });
+
+    // gh output that fails the validation regexes must never reach the DOM as-is.
+    writeStub(`#!/bin/sh\nprintf '%s\\n' "not a repo name!!"\nexit 0\n`);
+    assert.deepEqual(await provider.resolveTarget!(root), { repo: null, account: null });
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
+});
+
+test("issue.target bridge query is ok:true with fields omitted when the target is unknown", async () => {
+  const fixture = taskFixture({ createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }) });
+  const review = { store: { target: { projectRoot: "/workspace" } } };
+  const adapter = createIssueBridgeAdapter(review as never, fixture.task, {
+    provider: { createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }), resolveTarget: async () => ({ repo: null, account: null }) },
+  });
+  const result = await adapter.query("issue.target", { request_id: "r1", input: {} });
+  assert.deepEqual(result, { ok: true, data: {} });
+});
+
+test("issue.target bridge query returns the resolved repo and account", async () => {
+  const fixture = taskFixture({ createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }) });
+  const review = { store: { target: { projectRoot: "/workspace" } } };
+  const adapter = createIssueBridgeAdapter(review as never, fixture.task, {
+    provider: {
+      createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }),
+      resolveTarget: async () => ({ repo: "example-org/example-repo", account: "example-user" }),
+    },
+  });
+  const result = await adapter.query("issue.target", { request_id: "r1", input: {} });
+  assert.deepEqual(result, { ok: true, data: { repo: "example-org/example-repo", account: "example-user" } });
 });
 
 test("Issue creation is single-flight and never automatically retries an indeterminate result", async () => {

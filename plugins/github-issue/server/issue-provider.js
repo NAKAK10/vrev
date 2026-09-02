@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 
 const GH_OUTPUT_LIMIT = 64 * 1024;
 const GH_TIMEOUT_MS = 30_000;
+const GH_READ_TIMEOUT_MS = 5_000;
 const ISSUE_URL_PATTERN = /^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/;
+const REPO_NAME_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const ACCOUNT_LOGIN_PATTERN = /^[A-Za-z0-9-]{1,39}$/;
 
 export class IssueCreationIndeterminateError extends Error {
   constructor(message) {
@@ -31,6 +34,61 @@ function rejectedBeforeCreate(stderr) {
   return REJECTED_BEFORE_CREATE.some((pattern) => pattern.test(stderr));
 }
 
+function signalTree(child, signal) {
+  if (process.platform !== "win32" && child.pid) {
+    try { process.kill(-child.pid, signal); } catch (error) {
+      if (error?.code === "ESRCH") return;
+      child.kill(signal);
+    }
+  } else child.kill(signal);
+}
+
+/**
+ * Read-only gh invocation for the dialog's target hint. Hardened the same way as `createIssue`
+ * (no shell, output cap, tree kill on timeout) but with a short timeout since it blocks a dialog,
+ * and it never rejects — any failure just means the caller falls back to "unknown".
+ */
+function runGhReadOnly(projectRoot, args) {
+  return new Promise((resolve) => {
+    const child = spawn("gh", args, {
+      cwd: projectRoot,
+      env: process.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    let stdout = "";
+    let outputSize = 0;
+    let settled = false;
+    let killTimer;
+    const terminate = () => {
+      signalTree(child, "SIGTERM");
+      killTimer = setTimeout(() => signalTree(child, "SIGKILL"), 2_000);
+      killTimer.unref();
+    };
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => { terminate(); finish(null); }, GH_READ_TIMEOUT_MS);
+    const collect = (chunk) => {
+      outputSize += chunk.byteLength;
+      if (outputSize > GH_OUTPUT_LIMIT) { terminate(); finish(null); return; }
+      stdout += chunk.toString("utf8");
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", (chunk) => { outputSize += chunk.byteLength; if (outputSize > GH_OUTPUT_LIMIT) { terminate(); finish(null); } });
+    child.once("error", () => finish(null));
+    child.once("close", (code) => {
+      if (code !== 0) return finish(null);
+      finish(stdout.trim());
+    });
+  });
+}
+
 /** Authoritative provider invocation. It never retries an external side effect. */
 export const provider = Object.freeze({
   async createIssue(projectRoot, draft) {
@@ -48,17 +106,9 @@ export const provider = Object.freeze({
       let settled = false;
       let started = false;
       let killTimer;
-      const signalTree = (signal) => {
-        if (process.platform !== "win32" && child.pid) {
-          try { process.kill(-child.pid, signal); } catch (error) {
-            if (error?.code === "ESRCH") return;
-            child.kill(signal);
-          }
-        } else child.kill(signal);
-      };
       const terminate = () => {
-        signalTree("SIGTERM");
-        killTimer = setTimeout(() => signalTree("SIGKILL"), 2_000);
+        signalTree(child, "SIGTERM");
+        killTimer = setTimeout(() => signalTree(child, "SIGKILL"), 2_000);
         killTimer.unref();
       };
       const finish = (error, result) => {
@@ -100,6 +150,21 @@ export const provider = Object.freeze({
       });
       child.stdin.end(draft.body);
     });
+  },
+
+  /**
+   * Best-effort lookup of the repository and account `gh` would use if createIssue ran right now.
+   * The dialog shows this so a credential/remote mismatch is visible before the reviewer submits,
+   * instead of surfacing only as "Could not resolve to a Repository" after the fact. Never throws.
+   */
+  async resolveTarget(projectRoot) {
+    const [repoRaw, accountRaw] = await Promise.all([
+      runGhReadOnly(projectRoot, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]),
+      runGhReadOnly(projectRoot, ["api", "user", "--jq", ".login"]),
+    ]);
+    const repo = repoRaw && REPO_NAME_PATTERN.test(repoRaw) ? repoRaw : null;
+    const account = accountRaw && ACCOUNT_LOGIN_PATTERN.test(accountRaw) ? accountRaw : null;
+    return { repo, account };
   },
 });
 

@@ -86,10 +86,23 @@ function bridgeError(request, code, message) {
 }
 
 /** Plugin-owned bridge projection; the host only routes envelopes to it. */
-export function createIssueBridgeAdapter(review, issueTask) {
+export function createIssueBridgeAdapter(review, issueTask, options = {}) {
   const store = review.store;
+  const provider = options.provider ?? defaultIssueProvider;
   return Object.freeze({
-    async query(_name, request) { return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin"); },
+    async query(name, request) {
+      if (name === "issue.target") {
+        let target = { repo: null, account: null };
+        try {
+          target = (await provider.resolveTarget?.(store.target.projectRoot)) ?? target;
+        } catch {}
+        const data = {};
+        if (target.repo) data.repo = target.repo;
+        if (target.account) data.account = target.account;
+        return { ok: true, data };
+      }
+      return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
+    },
     async command(name, request) {
       const input = request.input;
       if (name === "issue.draft" && typeof input.annotation_id === "string") {

@@ -28,6 +28,17 @@ gh issue create --title <title> --body-file -
 
 Issue bodyはcommand line argumentではなく標準入力へ渡します。実行は30秒でtimeoutし、標準出力と標準エラーの合計を64 KiBに制限します。成功時は`https://github.com/<owner>/<repo>/issues/<number>`形式のURLだけを受理します。
 
+## Issue draft dialogのrepo/account表示
+
+Issue draft dialogは、タイトル欄の上に小さく薄い文字で
+
+```text
+repo: <owner>/<repo>
+account: <login>
+```
+
+を表示します。これは`gh repo view`と`gh api user`を対象repositoryのworking directoryで実行して得た値で、サーバプロセスが実際に引き継いでいる`gh`の認証・remote設定を反映します。ここに表示されるrepositoryとaccountが意図したものと違う場合、「GitHubにIssueを追加」を押しても`Could not resolve to a Repository`のようなエラーで作成に失敗するので、送信前にこの表示で気づけます。取得に失敗した場合（`gh`未認証、remoteなし、timeoutなど）はその行ごと表示されません。
+
 ## Annotation card status badges
 
 `issue-task` capabilityは`label(annotation)`を通じてannotation cardのstatus badgeを供給します。Issue依頼のflowに沿って「Issueラフ作成中」→「AI Issueラフ作成中」→「Issueラフ確認待ち」→「Issue作成済み」と遷移し、ラフ生成に失敗した場合は「Issueラフ作成失敗」を表示します。これらのbadgeはgithub-issue pluginがannotation-workflow pluginへ提供するもので、本pluginを無効化するとcardはworkflow側のdefault labelに戻ります。
