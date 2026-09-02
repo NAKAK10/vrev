@@ -13,6 +13,95 @@ function clearHover(layer) {
   layer.querySelector(":scope > .vr-node-hover-mark")?.remove();
 }
 
+function frameWrapper(stage, frame) {
+  const current = frame.parentElement;
+  if (current?.dataset.reviewViewportWrapper === "true") return current;
+  const wrapper = document.createElement("div");
+  wrapper.dataset.reviewViewportWrapper = "true";
+  wrapper.style.setProperty("position", "relative");
+  wrapper.style.setProperty("flex", "none");
+  wrapper.style.setProperty("overflow", "hidden");
+  frame.before(wrapper);
+  wrapper.append(frame);
+  return wrapper;
+}
+
+function restoreUnscaledFrame(frame) {
+  const wrapper = frame.parentElement?.dataset.reviewViewportWrapper === "true" ? frame.parentElement : null;
+  frame.style.removeProperty("position");
+  frame.style.removeProperty("inset");
+  frame.style.removeProperty("transform");
+  frame.style.removeProperty("transform-origin");
+  if (wrapper) { wrapper.before(frame); wrapper.remove(); }
+}
+
+function scaleAnnotationMarks(layer, stage, frame, scale) {
+  const stageRect = stage.getBoundingClientRect();
+  const frameRect = frame.getBoundingClientRect();
+  const frameLeft = frameRect.left - stageRect.left;
+  const frameTop = frameRect.top - stageRect.top;
+  for (const mark of layer.querySelectorAll(":scope > .vr-annotation-mark")) {
+    const original = mark.__reviewViewportOriginal ??= {
+      left: Number.parseFloat(mark.style.left), top: Number.parseFloat(mark.style.top),
+      width: Number.parseFloat(mark.style.width), height: Number.parseFloat(mark.style.height),
+    };
+    mark.style.left = `${frameLeft + (original.left - frameLeft) * scale}px`;
+    mark.style.top = `${frameTop + (original.top - frameTop) * scale}px`;
+    mark.style.width = `${original.width * scale}px`;
+    mark.style.height = `${original.height * scale}px`;
+  }
+}
+
+function installCustomViewportFit(root, stage, frame, layer) {
+  stage.__reviewViewportFitCleanup?.();
+  let lastSignature = "";
+  let frameScale = 1;
+  const sync = () => {
+    if (!stage.isConnected || !frame.isConnected) return;
+    if (stage.dataset.viewport !== "custom") {
+      restoreUnscaledFrame(frame);
+      frameScale = 1;
+      stage.dataset.reviewViewportScale = "1";
+      lastSignature = "";
+      scaleAnnotationMarks(layer, stage, frame, 1);
+      return;
+    }
+    const width = Number.parseFloat(frame.style.width) || frame.offsetWidth;
+    const height = Number.parseFloat(frame.style.height) || frame.offsetHeight;
+    const availableWidth = Math.max(1, stage.clientWidth - 32);
+    const availableHeight = Math.max(1, stage.clientHeight - 32);
+    const scale = Math.min(1, availableWidth / width, availableHeight / height);
+    const signature = `${width}:${height}:${availableWidth}:${availableHeight}:${scale}`;
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    frameScale = scale;
+    const wrapper = frameWrapper(stage, frame);
+    wrapper.style.width = `${width * scale}px`;
+    wrapper.style.height = `${height * scale}px`;
+    frame.style.setProperty("position", "absolute");
+    frame.style.setProperty("inset", "0");
+    frame.style.setProperty("transform-origin", "top left");
+    frame.style.setProperty("transform", `scale(${scale})`);
+    stage.dataset.reviewViewportScale = String(scale);
+    scaleAnnotationMarks(layer, stage, frame, scale);
+    frame.contentWindow?.dispatchEvent(new Event("resize"));
+  };
+  const resizeObserver = new ResizeObserver(() => sync());
+  const viewportObserver = new MutationObserver(() => sync());
+  const markObserver = new MutationObserver(() => scaleAnnotationMarks(layer, stage, frame, frameScale));
+  resizeObserver.observe(stage);
+  viewportObserver.observe(stage, { attributes: true, attributeFilter: ["data-viewport"] });
+  markObserver.observe(layer, { childList: true });
+  frame.addEventListener("load", sync);
+  requestAnimationFrame(sync);
+  const cleanup = () => {
+    resizeObserver.disconnect(); viewportObserver.disconnect(); markObserver.disconnect();
+    frame.removeEventListener("load", sync);
+  };
+  stage.__reviewViewportFitCleanup = cleanup;
+  return cleanup;
+}
+
 function enableVisibleInertNavigation(doc, win) {
   const changed = [];
   if (doc.defaultView?.frameElement?.closest?.(".vr-target-stage")?.dataset.mode !== "browse") return () => {};
@@ -80,10 +169,11 @@ export function mount({ root }) {
       const frameRect = frame.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
       const mark = hoverMark(layer);
-      mark.style.left = `${frameRect.left - stageRect.left + targetRect.left}px`;
-      mark.style.top = `${frameRect.top - stageRect.top + targetRect.top}px`;
-      mark.style.width = `${targetRect.width}px`;
-      mark.style.height = `${targetRect.height}px`;
+      const scale = Number(stage.dataset.reviewViewportScale || 1);
+      mark.style.left = `${frameRect.left - stageRect.left + targetRect.left * scale}px`;
+      mark.style.top = `${frameRect.top - stageRect.top + targetRect.top * scale}px`;
+      mark.style.width = `${targetRect.width * scale}px`;
+      mark.style.height = `${targetRect.height * scale}px`;
     };
     const leave = () => clearHover(layer);
     const click = () => clearHover(layer);
@@ -107,9 +197,12 @@ export function mount({ root }) {
 
   frame.addEventListener("load", install);
   install();
+  const viewportFitCleanup = installCustomViewportFit(root, stage, frame, layer);
   return () => {
     window.removeEventListener("keydown", keydown);
     frame.removeEventListener("load", install);
     frameCleanup();
+    viewportFitCleanup();
+    if (stage.__reviewViewportFitCleanup === viewportFitCleanup) delete stage.__reviewViewportFitCleanup;
   };
 }

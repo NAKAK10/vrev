@@ -119,7 +119,7 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /container\.dataset\.viewport === "custom"/);
   assert.match(source, /frame\.style\.width = `\$\{container\.__viewportWidth\}px`/);
   assert.match(source, /currentStage\.__viewportWidth = nextStage\.__viewportWidth/);
-  assert.doesNotMatch(source, /prepareExpandableText|expandedTextKeys|workflowExpandable/);
+  assert.doesNotMatch(source, /prepareExpandableText|expandedTextKeys|workflowExpandable|reviewViewportScale|installCustomViewportFit/);
   assert.match(source, /main\?\.browser_module_url.*mountPluginRuntime\(main, connectedMain\)/s);
   assert.match(source, /if \(rendered\.isConnected\) void mountPluginRuntime/);
 });
@@ -195,6 +195,11 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(issueText, /"id": "issue-dialog"/);
   assert.match(issueText, /"label": \{ "literal": "キャンセル" \}/);
   assert.match(rendererSource, /vr-selection-mode-button/);
+  assert.match(reviewRuntime, /function installCustomViewportFit\(root, stage, frame, layer\)/);
+  assert.match(reviewRuntime, /Math\.min\(1, availableWidth \/ width, availableHeight \/ height\)/);
+  assert.match(reviewRuntime, /frame\.style\.setProperty\("transform", `scale\(\$\{scale\}\)`\)/);
+  assert.match(reviewRuntime, /stage\.dataset\.reviewViewportScale/);
+  assert.match(reviewRuntime, /scaleAnnotationMarks\(layer, stage, frame, frameScale\)/);
   assert.match(rendererSource, /stage\.__target\?\.live_url \? new URL\(proxiedPath, stage\.__target\.live_url\)\.toString\(\)/);
   assert.match(rendererSource, /reviewSelection\.annotation_id = binding\(instruction\.annotation_id, scope\)/);
   assert.match(rendererSource, /resourceStores\.get\("annotation-workflow:annotations"\)\?\.data\?\.items/);
