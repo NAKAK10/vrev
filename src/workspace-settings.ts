@@ -93,7 +93,7 @@ export function registerWorkspaceReview(target: ResolvedTarget, projectDirectory
     project.reviews.sort((left, right) => left.id.localeCompare(right.id));
     atomicWriteJson(settingsPath, settings);
     const ignorePath = path.join(root, ".vreview", ".gitignore");
-    const requiredIgnores = ["**/job-state.json", "**/.server-lease.json", "**/.transaction.json", "**/*.lock"];
+    const requiredIgnores = ["**/job-state.json", "**/.server-lease.json", "**/.transaction.json", "**/*.lock", "credentials/"];
     const currentIgnores = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
     const mergedIgnores = [...new Set([...currentIgnores, ...requiredIgnores])];
     writeFileSync(ignorePath, `${mergedIgnores.join("\n")}\n`, "utf8");

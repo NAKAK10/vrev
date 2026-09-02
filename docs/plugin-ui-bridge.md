@@ -666,7 +666,7 @@ Browser `required`、`maxlength`、disabled controlはUX補助でありsecurity 
 | auto-run/max parallel/runner selection | annotation-workflow server（workspace non-secret settings） | annotation-workflow `settings.detail` |
 | external runner definition/verified state | custom-command server registry | custom-command `settings.detail` |
 | transient filter/viewport/drafts | Core renderer local-state namespace | owning contribution |
-| credentials | environment/credential handle only; workspaceへ保存しない | presence/status only |
+| credentials | environment変数（値をCoreへ渡さない）、またはCore管理のcredential store `.vreview/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vreview/plugin-settings.json`や`.vreview/.gitignore`外へ漏らさない）; `PUT`/`DELETE /api/settings/plugins/:id/credentials/:key`で登録・削除 | selected plugin `settings.detail`内のcredential field UI（presence/updated_at/fingerprintのみ表示、値は表示・保存しない） |
 
 Plugin detail surface receives typed host context（plugin metadata、enabled state、effective configuration、missing capability、README、revision）。Hash/deep-link initialization、modal close、opener focus restorationはCore管理。
 

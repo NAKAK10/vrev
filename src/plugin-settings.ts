@@ -5,6 +5,7 @@ import path from "node:path";
 import { atomicWriteJson, readJson, withFileLock } from "./file-utils.js";
 import type { PluginConfigurationField, VisualReviewPluginManifest } from "./plugin-manifest.js";
 import { findWorkspaceRoot } from "./paths.js";
+import { readPluginCredentialPresence } from "./plugin-credentials.js";
 
 export interface PluginSettingEntry {
   enabled: boolean;
@@ -69,12 +70,18 @@ function valueValid(field: PluginConfigurationField, value: unknown): boolean {
   return typeof value === "string" && Boolean(field.options?.some((option) => option.value === value));
 }
 
-function effectiveFrom(manifest: VisualReviewPluginManifest, stored: PluginSettingEntry | undefined, env: NodeJS.ProcessEnv): EffectivePluginSettings {
+function effectiveFrom(manifest: VisualReviewPluginManifest, stored: PluginSettingEntry | undefined, env: NodeJS.ProcessEnv, workspace: string): EffectivePluginSettings {
   const configuration = { ...(stored?.configuration ?? {}) };
   const missing: string[] = [];
+  const hasCredentialField = (manifest.configuration ?? []).some((field) => field.source === "credential");
+  const credentialPresence = hasCredentialField ? readPluginCredentialPresence(manifest.id, workspace) : {};
   for (const field of manifest.configuration ?? []) {
     if (field.source === "environment") {
       if (field.required && (!field.environment || !env[field.environment])) missing.push(field.key);
+      continue;
+    }
+    if (field.source === "credential") {
+      if (field.required && !credentialPresence[field.key]) missing.push(field.key);
       continue;
     }
     if (!(field.key in configuration) && field.default !== undefined) configuration[field.key] = field.default;
@@ -85,7 +92,7 @@ function effectiveFrom(manifest: VisualReviewPluginManifest, stored: PluginSetti
 }
 
 export function effectivePluginSettings(manifest: VisualReviewPluginManifest, workspace = process.cwd(), env: NodeJS.ProcessEnv = process.env): EffectivePluginSettings {
-  return effectiveFrom(manifest, readPluginSettings(workspace).plugins[manifest.id], env);
+  return effectiveFrom(manifest, readPluginSettings(workspace).plugins[manifest.id], env, workspace);
 }
 
 export function assertPluginEnabled(manifest: VisualReviewPluginManifest, workspace = process.cwd()): EffectivePluginSettings {
@@ -114,7 +121,7 @@ export function updatePluginSettings(
       configuration[key] = value as string | number | boolean;
     }
     const entry = { enabled: input.enabled, configuration };
-    const effective = effectiveFrom(manifest, entry, process.env);
+    const effective = effectiveFrom(manifest, entry, process.env, workspace);
     if (input.enabled && effective.missing.length > 0) throw new Error(`plugin configuration is incomplete: ${id} (${effective.missing.join(", ")})`);
     current.plugins[id] = entry;
     atomicWriteJson(filePath, current);

@@ -15,6 +15,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { createTokenSource } from "./auth.mjs";
+
 const SNAPSHOT_SCHEMA_VERSION = 1;
 const DEFAULT_COLLECTION_ID = "visual-review-workspaces";
 const DEFAULT_DOCUMENT_ID = "default";
@@ -190,24 +192,36 @@ function validateId(value, label) {
   return value;
 }
 
-function configuration(options = {}, requireToken = true) {
+async function configuration(options = {}, requireToken = true) {
   const env = options.env ?? process.env;
-  const projectId = options.projectId ?? env.FIREBASE_PROJECT_ID;
-  if (!projectId) throw new Error("FIREBASE_PROJECT_ID is required");
-  const accessToken = options.accessToken ?? env.FIREBASE_ACCESS_TOKEN;
-  if (requireToken && !accessToken) {
-    const suffix = env.GOOGLE_APPLICATION_CREDENTIALS ? "; GOOGLE_APPLICATION_CREDENTIALS is not supported by this plugin" : "";
-    throw new Error(`FIREBASE_ACCESS_TOKEN is required${suffix}`);
-  }
+  const configFields = ownObject(options.configuration) ? options.configuration : {};
+  const credentials = ownObject(options.credentials) ? options.credentials : {};
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const spawnImpl = options.spawn;
+  const now = options.now;
+  const authMode = options.mode ?? (typeof configFields.auth_mode === "string" ? configFields.auth_mode : "access_token");
+  const tokenSource = createTokenSource({
+    mode: authMode,
+    env,
+    credentials,
+    configuration: configFields,
+    fetch: fetchImpl,
+    ...(spawnImpl ? { spawn: spawnImpl } : {}),
+    ...(now ? { now } : {}),
+  });
+  const accessToken = options.accessToken ?? (requireToken ? await tokenSource.getAccessToken() : undefined);
+  const projectId = options.projectId ?? configFields.project_id ?? env.FIREBASE_PROJECT_ID ?? tokenSource.projectIdHint;
+  if (!projectId) throw new Error("Firebase project ID is required (project_id, FIREBASE_PROJECT_ID, or a value in the selected credential)");
   return {
     projectId: validateId(projectId, "Firebase project ID"),
     accessToken,
-    collectionId: validateId(options.collectionId ?? env.FIREBASE_COLLECTION_ID ?? DEFAULT_COLLECTION_ID, "Firestore collection ID"),
-    documentId: validateId(options.documentId ?? env.FIREBASE_DOCUMENT_ID ?? DEFAULT_DOCUMENT_ID, "Firestore document ID"),
-    databaseId: (options.databaseId ?? env.FIREBASE_DATABASE_ID ?? DEFAULT_DATABASE_ID) === DEFAULT_DATABASE_ID
+    collectionId: validateId(options.collectionId ?? configFields.collection_id ?? env.FIREBASE_COLLECTION_ID ?? DEFAULT_COLLECTION_ID, "Firestore collection ID"),
+    documentId: validateId(options.documentId ?? configFields.document_id ?? env.FIREBASE_DOCUMENT_ID ?? DEFAULT_DOCUMENT_ID, "Firestore document ID"),
+    databaseId: (options.databaseId ?? configFields.database_id ?? env.FIREBASE_DATABASE_ID ?? DEFAULT_DATABASE_ID) === DEFAULT_DATABASE_ID
       ? DEFAULT_DATABASE_ID
-      : validateId(options.databaseId ?? env.FIREBASE_DATABASE_ID, "Firestore database ID"),
-    fetch: options.fetch ?? globalThis.fetch,
+      : validateId(options.databaseId ?? configFields.database_id ?? env.FIREBASE_DATABASE_ID, "Firestore database ID"),
+    fetch: fetchImpl,
+    tokenSource,
   };
 }
 
@@ -217,15 +231,21 @@ function documentUrl(config) {
 
 async function firestoreRequest(config, method, body, query = "") {
   if (typeof config.fetch !== "function") throw new Error("Node.js fetch is unavailable");
-  const response = await config.fetch(`${documentUrl(config)}${query}`, {
+  const attempt = async (accessToken) => config.fetch(`${documentUrl(config)}${query}`, {
     method,
     headers: {
-      Authorization: `Bearer ${config.accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+  let response = await attempt(config.accessToken);
+  if (response.status === 401 && config.tokenSource) {
+    const refreshedToken = await config.tokenSource.getAccessToken({ forceRefresh: true });
+    config.accessToken = refreshedToken;
+    response = await attempt(refreshedToken);
+  }
   const text = await response.text();
   let value;
   if (text) {
@@ -273,12 +293,12 @@ function encodeDocument(snapshot) {
 }
 
 export async function readRemoteSnapshot(options = {}) {
-  const config = configuration(options);
+  const config = await configuration(options);
   return decodeDocument(await firestoreRequest(config, "GET"));
 }
 
 export async function writeRemoteSnapshot(snapshot, options = {}) {
-  const config = configuration(options);
+  const config = await configuration(options);
   if (options.updateTime && options.createOnly) throw new Error("updateTime and createOnly cannot be combined");
   const query = options.updateTime
     ? `?currentDocument.updateTime=${encodeURIComponent(options.updateTime)}`
@@ -436,13 +456,18 @@ function parseArgs(args) {
 
 function commandOptions(context) {
   if (!ownObject(context) || typeof context.workspaceRoot !== "string" || !Array.isArray(context.args)) throw new Error("invalid PluginCommandContext");
-  return { workspaceRoot: context.workspaceRoot, ...parseArgs(context.args) };
+  return {
+    workspaceRoot: context.workspaceRoot,
+    configuration: ownObject(context.configuration) ? context.configuration : {},
+    credentials: ownObject(context.credentials) ? context.credentials : {},
+    ...parseArgs(context.args),
+  };
 }
 
 export async function pushCommand(context) {
   const options = commandOptions(context);
   // Validate required project/config even for a no-network dry run.
-  configuration(options, !options.dryRun);
+  await configuration(options, !options.dryRun);
   const snapshot = collectLocalSnapshot(options.workspaceRoot);
   if (!options.dryRun) {
     const remote = await readRemoteForWrite(options);
@@ -539,7 +564,21 @@ export function createWorkspaceStorageProvider(defaultOptions = {}) {
   };
 }
 
+/**
+ * Factory export used by the manifest `storage_provider`. `loadPluginStorageProvider` calls this
+ * once with a `PluginRuntimeContextV1` (workspaceRoot, pluginDirectory, configuration, credentials,
+ * env) and uses the returned `WorkspaceStorageProviderV1` as the loaded provider.
+ */
+export function createWorkspaceStorageProviderFromContext(context = {}) {
+  return createWorkspaceStorageProvider({
+    env: ownObject(context) ? context.env : undefined,
+    configuration: ownObject(context) ? context.configuration : undefined,
+    credentials: ownObject(context) ? context.credentials : undefined,
+  });
+}
+
 export const storageProvider = createStorageProvider();
+/** Env-only provider kept for backward compatibility; new installs use `createWorkspaceStorageProviderFromContext`. */
 export const workspaceStorageProvider = createWorkspaceStorageProvider();
 export const list = storageProvider.list;
 export const read = storageProvider.read;

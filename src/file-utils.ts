@@ -22,13 +22,18 @@ export function readJson(filePath: string): unknown {
   return JSON.parse(readFileSync(filePath, "utf8")) as unknown;
 }
 
-export function atomicWriteJson(filePath: string, data: unknown): void {
+export interface AtomicWriteJsonOptions {
+  mode?: number;
+  dirMode?: number;
+}
+
+export function atomicWriteJson(filePath: string, data: unknown, options: AtomicWriteJsonOptions = {}): void {
   const directory = path.dirname(filePath);
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(directory, { recursive: true, mode: options.dirMode ?? 0o777 });
   const temporary = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(temporary, "wx", 0o600);
+    descriptor = openSync(temporary, "wx", options.mode ?? 0o600);
     writeFileSync(descriptor, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     fsyncSync(descriptor);
     closeSync(descriptor);

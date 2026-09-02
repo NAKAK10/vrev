@@ -1,6 +1,6 @@
 {
   "name": "@nakak10/visual-review-firebase-storage",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Firestore REST storage sample for Visual Review workspaces",
   "type": "module",
   "engines": {
@@ -13,6 +13,7 @@
   "exports": "./index.mjs",
   "files": [
     "index.mjs",
+    "auth.mjs",
     "visual-review.plugin.json",
     "README.md"
   ],

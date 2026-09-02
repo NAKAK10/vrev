@@ -9,7 +9,7 @@ import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
 import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, upgradeBundledPlugin } from "./plugin-registry.js";
-import { loadPluginCommand } from "./plugin-runtime.js";
+import { loadPluginCommand, pluginRuntimeContext } from "./plugin-runtime.js";
 import { createPluginScaffold } from "./plugin-scaffold.js";
 import { createReviewCapability } from "./review-capability.js";
 import type { ReviewStore } from "./review-store.js";
@@ -336,10 +336,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       const pluginId = argv[2]!;
       const commandName = argv[3]!;
       const { handler } = await loadPluginCommand(pluginId, commandName, workspaceRoot);
+      const runtimeContext = pluginRuntimeContext(pluginId, workspaceRoot);
       await handler({
         workspaceRoot,
         pluginDirectory: installedPluginDirectory(pluginId, workspaceRoot),
         args: argv.slice(4),
+        configuration: runtimeContext.configuration,
+        credentials: runtimeContext.credentials,
       });
       return;
     }

@@ -884,6 +884,130 @@ async function renderSettings() {
   page.append(list); shell.append(page, element("div", "toast-region")); root.replaceChildren(shell); root.setAttribute("aria-busy", "false"); queueMicrotask(paintToast); requestAnimationFrame(paintToast);
   const selected = (management.plugins || []).find(({ id }) => id === decodeURIComponent(location.hash.slice(1))); if (selected) await openSettingsDetail(selected, null);
 }
+function renderConfigurationField(plugin, field, refreshConfigSection) {
+  if (field.source === "environment") {
+    const line = element("p", "vr-field-description vr-plugin-env-field");
+    line.textContent = `${field.environment}: ${field.present ? "設定済み" : "未設定"}`;
+    return line;
+  }
+  if (field.source === "credential") {
+    const section = element("div", "vr-field vr-credential-field");
+    const label = element("span", "vr-field-label"); label.textContent = field.title; section.append(label);
+    if (field.description) { const description = element("span", "vr-field-description"); description.textContent = field.description; section.append(description); }
+    const status = element("p", "vr-field-description vr-credential-status");
+    status.textContent = field.present ? `設定済み（更新 ${field.updated_at}, ${field.fingerprint}）` : "未設定";
+    section.append(status);
+    const input = field.format === "json" ? element("textarea", "vr-textarea") : element("input", "vr-input");
+    if (field.format === "json") input.rows = 4; else input.type = "password";
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", field.title);
+    section.append(input);
+    const row = element("div", "vr-row");
+    const save = element("button", "vr-button"); save.type = "button"; save.textContent = "保存";
+    const remove = element("button", "vr-button"); remove.type = "button"; remove.textContent = "削除"; remove.disabled = !field.present;
+    save.addEventListener("click", async () => {
+      if (!input.value) { toast("値を入力してください。", "error"); return; }
+      save.setAttribute("aria-busy", "true"); remove.setAttribute("aria-busy", "true"); save.disabled = true; remove.disabled = true;
+      try {
+        const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}/credentials/${encodeURIComponent(field.key)}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: input.value }),
+        });
+        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || "保存できませんでした。");
+        input.value = "";
+        toast("設定を保存しました。", "success");
+        await refreshConfigSection();
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "保存できませんでした。", "error");
+      } finally {
+        save.removeAttribute("aria-busy"); remove.removeAttribute("aria-busy"); save.disabled = false; remove.disabled = !field.present;
+      }
+    });
+    remove.addEventListener("click", async () => {
+      save.setAttribute("aria-busy", "true"); remove.setAttribute("aria-busy", "true"); save.disabled = true; remove.disabled = true;
+      try {
+        const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}/credentials/${encodeURIComponent(field.key)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || "削除できませんでした。");
+        input.value = "";
+        toast("削除しました。", "success");
+        await refreshConfigSection();
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "削除できませんでした。", "error");
+      } finally {
+        save.removeAttribute("aria-busy"); remove.removeAttribute("aria-busy"); save.disabled = false; remove.disabled = !field.present;
+      }
+    });
+    row.append(save, remove);
+    section.append(row);
+    return section;
+  }
+  return null;
+}
+function renderPluginConfigurationForm(plugin, refreshConfigSection) {
+  const fields = plugin.configuration || [];
+  const wrapper = element("div", "vr-plugin-config");
+  const workspaceFields = fields.filter((field) => field.source === "workspace");
+  if (workspaceFields.length) {
+    const form = element("form", "vr-form vr-plugin-config-form");
+    form.addEventListener("submit", (event) => event.preventDefault());
+    const inputs = new Map();
+    for (const field of workspaceFields) {
+      const isCheckbox = field.type === "boolean";
+      const fieldEl = element("label", `vr-field${isCheckbox ? " vr-field-checkbox" : field.type === "select" ? " vr-field-select" : ""}`);
+      const label = element("span", "vr-field-label"); label.textContent = field.title;
+      let control;
+      if (isCheckbox) {
+        control = element("input", "vr-checkbox"); control.type = "checkbox"; control.checked = Boolean(field.value ?? field.default ?? false);
+        fieldEl.append(control, label);
+      } else if (field.type === "select") {
+        control = element("select", "vr-select");
+        for (const option of field.options || []) { const optionEl = element("option"); optionEl.value = option.value; optionEl.textContent = option.label; control.append(optionEl); }
+        control.value = field.value ?? field.default ?? "";
+        fieldEl.append(label, control);
+      } else if (field.type === "integer") {
+        control = element("input", "vr-input"); control.type = "number"; control.step = "1"; control.value = field.value ?? field.default ?? "";
+        fieldEl.append(label, control);
+      } else {
+        control = element("input", "vr-input"); control.type = "text"; control.value = field.value ?? field.default ?? "";
+        fieldEl.append(label, control);
+      }
+      if (field.description) { const description = element("span", "vr-field-description"); description.textContent = field.description; fieldEl.append(description); }
+      inputs.set(field.key, { field, control });
+      form.append(fieldEl);
+    }
+    const saveButton = element("button", "vr-button"); saveButton.type = "button"; saveButton.dataset.variant = "primary"; saveButton.textContent = "設定を保存";
+    saveButton.addEventListener("click", async () => {
+      saveButton.setAttribute("aria-busy", "true"); saveButton.disabled = true;
+      try {
+        const configuration = {};
+        for (const [key, { field, control }] of inputs) {
+          if (field.type === "boolean") configuration[key] = control.checked;
+          else if (field.type === "integer") configuration[key] = Number(control.value);
+          else configuration[key] = control.value;
+        }
+        const management = await (await fetch("/api/settings/plugins")).json();
+        const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}`, {
+          method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ revision: management.revision, enabled: plugin.enabled, configuration }),
+        });
+        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || "設定を保存できませんでした。");
+        toast("設定を保存しました。", "success");
+        await refreshConfigSection();
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "設定を保存できませんでした。", "error");
+      } finally {
+        saveButton.removeAttribute("aria-busy"); saveButton.disabled = false;
+      }
+    });
+    form.append(saveButton);
+    wrapper.append(form);
+  }
+  for (const field of fields) {
+    if (field.source === "workspace") continue;
+    const node = renderConfigurationField(plugin, field, refreshConfigSection);
+    if (node) wrapper.append(node);
+  }
+  return wrapper;
+}
 async function openSettingsDetail(plugin, opener) {
   document.querySelectorAll("#plugin-detail-renderer").forEach((existing) => existing.remove());
   const dialog = element("dialog", "vr-dialog"); dialog.id = "plugin-detail-renderer"; dialog.dataset.mobilePresentation = "fullscreen"; dialog.setAttribute("aria-labelledby", "plugin-detail-title"); dialog.setAttribute("aria-describedby", "plugin-detail-description");
@@ -895,6 +1019,20 @@ async function openSettingsDetail(plugin, opener) {
   body.append(metadata);
   let readme = ""; try { const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}/readme`); if (response.ok) readme = (await response.json()).readme || ""; } catch {}
   const contributions = surface.contributions.filter((item) => item.plugin_id === plugin.id && item.slot === "settings.detail");
+  let configSection = element("section", "vr-settings-card vr-plugin-config-section");
+  const refreshConfigSection = async () => {
+    try {
+      const management = await (await fetch("/api/settings/plugins")).json();
+      const refreshed = (management.plugins || []).find(({ id }) => id === plugin.id);
+      if (!refreshed) return;
+      Object.assign(plugin, refreshed);
+      configSection.replaceChildren(renderPluginConfigurationForm(plugin, refreshConfigSection));
+    } catch {
+      // Leave the existing section in place; the next explicit action will surface an error toast.
+    }
+  };
+  configSection.append(renderPluginConfigurationForm(plugin, refreshConfigSection));
+  if ((plugin.configuration || []).length) body.append(configSection);
   const content = element("div", "vr-plugin-detail-content");
   for (const contribution of contributions) {
     const runtime = runtimeFor(contribution, "");
@@ -902,7 +1040,7 @@ async function openSettingsDetail(plugin, opener) {
     await Promise.all((contribution.document.resources || []).map(({ id }) => loadResource(contribution, id, scope, false)));
     content.append(renderContribution(contribution, { plugin, readme }));
   }
-  if (!contributions.length) { const empty = element("p", "vr-empty-state"); empty.textContent = "このプラグインに固有設定はありません。"; content.append(empty); }
+  if (!contributions.length && !(plugin.configuration || []).length) { const empty = element("p", "vr-empty-state"); empty.textContent = "このプラグインに固有設定はありません。"; content.append(empty); }
   body.append(content);
   const footer = element("footer", "vr-dialog-footer"); const close = element("button", "vr-button"); close.type = "button"; close.textContent = "閉じる"; close.addEventListener("click", () => dialog.close()); footer.append(close);
   dialog.append(closeIcon, header, body, footer); document.body.append(dialog);

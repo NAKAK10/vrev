@@ -462,3 +462,13 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation-duration: .01ms !important; }
 }
+
+/* plugin configuration form */
+.vr-plugin-config-section { padding: 0 0 4px; border: 0; background: transparent; }
+.vr-plugin-config { display: grid; gap: 16px; }
+.vr-plugin-config-form { display: grid; gap: 12px; }
+.vr-plugin-config-form > .vr-button { justify-self: start; }
+.vr-plugin-env-field { padding: 6px 0; }
+.vr-credential-field { padding: 12px; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-md); background: var(--vr-color-surface-subtle); }
+.vr-credential-status { margin: 2px 0 8px; }
+.vr-credential-field > .vr-row { margin-top: 8px; gap: 8px; }

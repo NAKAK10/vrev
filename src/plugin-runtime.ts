@@ -3,11 +3,13 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { findWorkspaceRoot } from "./paths.js";
 import { parsePluginBridgeContract, type PluginBridgeContractV1 } from "./plugin-bridge-contract.js";
+import { readPluginCredentials } from "./plugin-credentials.js";
 import { readPluginManifest, type PluginModuleReference, type VisualReviewPluginManifest } from "./plugin-manifest.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { assertPluginServerProviderV1, type PluginServerProviderV1 } from "./plugin-server.js";
-import { assertPluginEnabled } from "./plugin-settings.js";
+import { assertPluginEnabled, effectivePluginSettings } from "./plugin-settings.js";
 import { assertWorkspaceStorageProviderV1, type WorkspaceStorageProviderV1 } from "./storage-provider.js";
 
 export interface PluginCommandContext {
@@ -15,6 +17,16 @@ export interface PluginCommandContext {
   pluginDirectory: string;
   args: readonly string[];
   configuration?: Readonly<Record<string, string | number | boolean>>;
+  credentials?: Readonly<Record<string, string>>;
+}
+
+/** Context handed to a schema-v3+ storage provider factory export and to `plugin run` commands. */
+export interface PluginRuntimeContextV1 {
+  workspaceRoot: string;
+  pluginDirectory: string;
+  configuration: Readonly<Record<string, string | number | boolean>>;
+  credentials: Readonly<Record<string, string>>;
+  env: NodeJS.ProcessEnv;
 }
 
 export type PluginCommandHandler = (context: PluginCommandContext) => void | Promise<void>;
@@ -119,6 +131,24 @@ async function loadExport(directory: string, reference: PluginModuleReference): 
   return loaded[exportName];
 }
 
+function buildRuntimeContext(installed: { directory: string; manifest: VisualReviewPluginManifest }, workspace: string): PluginRuntimeContextV1 {
+  const effective = effectivePluginSettings(installed.manifest, workspace);
+  const credentialKeys = (installed.manifest.configuration ?? []).filter((field) => field.source === "credential").map((field) => field.key);
+  const credentials = readPluginCredentials(installed.manifest.id, workspace, credentialKeys);
+  return {
+    workspaceRoot: findWorkspaceRoot(workspace),
+    pluginDirectory: installed.directory,
+    configuration: Object.freeze({ ...effective.configuration }),
+    credentials: Object.freeze({ ...credentials }),
+    env: process.env,
+  };
+}
+
+/** Builds the runtime context (effective configuration and declared credentials) delivered to storage provider factories and `plugin run` commands. */
+export function pluginRuntimeContext(id: string, workspace = process.cwd()): PluginRuntimeContextV1 {
+  return buildRuntimeContext(installedManifest(id, workspace), workspace);
+}
+
 export interface LoadedPluginServerProvider {
   manifest: VisualReviewPluginManifest;
   pluginDirectory: string;
@@ -157,9 +187,12 @@ export async function loadPluginCommand(id: string, name: string, workspace = pr
 export async function loadPluginStorageProvider<T extends PluginStorageProvider = PluginStorageProvider>(id: string, workspace = process.cwd()): Promise<LoadedPluginStorageProvider<T>> {
   const installed = installedManifest(id, workspace);
   if (!installed.manifest.storage_provider) throw new Error(`plugin does not declare a storage provider: ${id}`);
-  const provider = await loadExport(installed.directory, installed.manifest.storage_provider);
+  const exported = await loadExport(installed.directory, installed.manifest.storage_provider);
+  const provider = typeof exported === "function"
+    ? await (exported as (context: PluginRuntimeContextV1) => unknown)(buildRuntimeContext(installed, workspace))
+    : exported;
   if (installed.manifest.schema_version === 2) assertWorkspaceStorageProviderV1(provider);
-  else if ((typeof provider !== "object" || provider === null) && typeof provider !== "function") throw new Error(`plugin storage provider export is invalid: ${id}`);
+  else if ((typeof provider !== "object" || provider === null)) throw new Error(`plugin storage provider export is invalid: ${id}`);
   return { manifest: installed.manifest, provider: provider as T };
 }
 
