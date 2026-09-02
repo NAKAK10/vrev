@@ -478,10 +478,19 @@ a { color: inherit; }
 .vr-credential-status { margin: 2px 0 8px; }
 .vr-credential-field > .vr-row { margin-top: 8px; gap: 8px; }
 /* page-map stage */
-.vr-page-map-shell { display: grid; grid-template-columns: 240px minmax(0, 1fr) 280px; gap: var(--vr-space-3); height: 100%; min-height: 420px; }
-.vr-page-map-list { display: flex; flex-direction: column; gap: var(--vr-space-2); overflow: auto; border-right: 1px solid var(--vr-color-border); padding-right: var(--vr-space-3); }
-.vr-page-map-search { padding: var(--vr-space-2); border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); font: inherit; }
-.vr-page-map-page-list { display: flex; flex-direction: column; gap: var(--vr-space-1); margin: 0; padding: 0; list-style: none; }
+/* The root panel and the canvas panel Core renders for this stage are made flex columns so the
+   shell below gets a definite, non-overflowing height: `.vr-stage-host > [data-slot="review.stage"]`
+   (renderer.css, shared rules) already positions the root panel with `position: absolute; inset: 0`,
+   which gives it a definite pixel height equal to the stage host - percentages/flex on its
+   descendants resolve against that, so the chain below never needs to grow past the stage. */
+.vr-panel[data-variant="page-map-stage"] { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.vr-panel[data-variant="page-map-stage"] > .vr-row[data-variant="page-map-header"] { flex: 0 0 auto; }
+.vr-panel[data-variant="page-map-canvas"] { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 0; border: 0; }
+.vr-page-map-shell { display: flex; flex: 1 1 auto; min-height: 0; gap: var(--vr-space-3); padding: var(--vr-space-3) var(--vr-space-4); }
+.vr-page-map-side { display: flex; flex: 0 0 280px; flex-direction: column; min-width: 0; min-height: 0; gap: var(--vr-space-2); }
+.vr-page-map-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--vr-space-2); min-height: 0; overflow: auto; }
+.vr-page-map-search { flex: 0 0 auto; padding: var(--vr-space-2); border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); font: inherit; }
+.vr-page-map-page-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--vr-space-1); min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
 .vr-page-map-page-button { display: flex; flex-wrap: wrap; align-items: center; gap: var(--vr-space-1); width: 100%; padding: var(--vr-space-2); border: 1px solid transparent; border-radius: var(--vr-radius-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .vr-page-map-page-button:hover { background: var(--vr-color-surface-subtle); }
 .vr-page-map-page-item.is-selected .vr-page-map-page-button { border-color: var(--vr-color-accent); background: var(--vr-color-accent-soft); }
@@ -491,8 +500,9 @@ a { color: inherit; }
 .vr-page-map-badge.is-entry { background: var(--vr-color-focus); color: #fff; }
 .vr-page-map-badge.is-unreachable { background: var(--vr-color-warning); color: #fff; }
 .vr-page-map-badge.is-missing { background: var(--vr-color-danger); color: #fff; }
-.vr-page-map-graph { min-width: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); }
-.vr-page-map-svg { width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.vr-page-map-graph { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); }
+.vr-page-map-svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.vr-page-map-fit-button { position: absolute; top: var(--vr-space-2); right: var(--vr-space-2); z-index: 2; padding: var(--vr-space-1) var(--vr-space-2); border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); box-shadow: var(--vr-shadow-sm); font-size: 0.8em; cursor: pointer; }
 .vr-page-map-node { cursor: pointer; }
 .vr-page-map-node-rect { fill: var(--vr-color-surface); stroke: var(--vr-color-border-strong); stroke-width: 1.5; }
 .vr-page-map-node.is-selected .vr-page-map-node-rect { stroke: var(--vr-color-accent); stroke-width: 2.5; }
@@ -502,7 +512,7 @@ a { color: inherit; }
 .vr-page-map-edge { fill: none; stroke: var(--vr-color-border-strong); stroke-width: 1.25; }
 .vr-page-map-edge.is-highlighted { stroke: var(--vr-color-accent); stroke-width: 2; }
 .vr-page-map-edge-label { font-size: 11px; fill: var(--vr-color-text-muted); }
-.vr-page-map-detail { display: flex; flex-direction: column; gap: var(--vr-space-2); overflow: auto; border-left: 1px solid var(--vr-color-border); padding-left: var(--vr-space-3); }
+.vr-page-map-detail { display: flex; flex: 0 1 45%; flex-direction: column; gap: var(--vr-space-2); max-height: 45%; overflow: auto; border-top: 1px solid var(--vr-color-border); padding-top: var(--vr-space-2); }
 .vr-page-map-detail-title { margin: 0; }
 .vr-page-map-detail-path { margin: 0; color: var(--vr-color-text-muted); font-size: 0.85em; word-break: break-all; }
 .vr-page-map-detail-empty { color: var(--vr-color-text-muted); }
@@ -512,6 +522,7 @@ a { color: inherit; }
 .vr-page-map-edge-list { margin: 0; padding-left: 1.2em; font-size: 0.85em; }
 
 @media (max-width: 860px) {
-  .vr-page-map-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(240px, 1fr) auto; }
-  .vr-page-map-list, .vr-page-map-detail { border: 0; padding: 0; }
+  .vr-page-map-shell { flex-direction: column; }
+  .vr-page-map-side { flex: 0 1 45%; max-height: 45%; }
+  .vr-page-map-graph { flex: 1 1 auto; min-height: 320px; }
 }

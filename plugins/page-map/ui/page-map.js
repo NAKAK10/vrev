@@ -65,16 +65,35 @@ function computeLayers(data) {
   return layers;
 }
 
+const NODE_HEIGHT = 48;
+const NODE_LABEL_MAX_CHARS = 28;
+
+/** Truncates a node label to a fixed character budget so overly long titles don't blow out the graph layout. */
+function ellipsizeLabel(label) {
+  return label.length > NODE_LABEL_MAX_CHARS ? `${label.slice(0, NODE_LABEL_MAX_CHARS - 1)}…` : label;
+}
+
+/** Node rect width grows with the (already-capped) label length, keeping the 12px label readable without over-widening the graph. */
+function nodeWidth(label) {
+  return Math.max(140, Math.min(240, Math.round(label.length * 7.2) + 32));
+}
+
 function layoutNodes(layers) {
   const positions = new Map();
-  const columnWidth = 260;
+  const columnGap = 60;
   const rowHeight = 88;
   const sortedLayerKeys = [...layers.keys()].sort((a, b) => a - b);
+  let x = 60;
   for (const layerIndex of sortedLayerKeys) {
     const pages = layers.get(layerIndex).sort((a, b) => a.path.localeCompare(b.path));
+    let layerWidth = 140;
     pages.forEach((page, row) => {
-      positions.set(page.path, { x: 60 + layerIndex * columnWidth, y: 50 + row * rowHeight, page });
+      const label = ellipsizeLabel(page.title || baseName(page.path));
+      const width = nodeWidth(label);
+      layerWidth = Math.max(layerWidth, width);
+      positions.set(page.path, { x, y: 50 + row * rowHeight, page, label, width });
     });
+    x += layerWidth + columnGap;
   }
   return positions;
 }
@@ -88,22 +107,62 @@ export async function mount({ root, pluginId, toast }) {
   let searchTerm = "";
   let viewBox = { x: 0, y: 0, width: 1200, height: 800 };
   let pan = null;
+  let lastPositions = new Map();
 
   const shell = el("div", "vr-page-map-shell");
+  const sideColumn = el("div", "vr-page-map-side");
   const listColumn = el("div", "vr-page-map-list");
-  const graphColumn = el("div", "vr-page-map-graph");
   const detailColumn = el("div", "vr-page-map-detail");
-  shell.append(listColumn, graphColumn, detailColumn);
+  sideColumn.append(listColumn, detailColumn);
+  const graphColumn = el("div", "vr-page-map-graph");
+  shell.append(sideColumn, graphColumn);
   canvas.replaceChildren(shell);
 
   const graphSvg = svg("svg", { class: "vr-page-map-svg", role: "img", "aria-label": "画面遷移グラフ" });
-  graphColumn.append(graphSvg);
+  const fitButton = el("button", "vr-page-map-fit-button");
+  fitButton.type = "button";
+  fitButton.textContent = "全体表示";
+  fitButton.addEventListener("click", () => fitToGraph());
+  graphColumn.append(graphSvg, fitButton);
 
   const marker = svg("marker", { id: "vr-page-map-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 8, markerHeight: 8, orient: "auto-start-reverse" });
   marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "var(--vr-color-border-strong, #94a3b8)" }));
   const defs = svg("defs");
   defs.append(marker);
   graphSvg.append(defs);
+
+  /** Fits the viewBox to the full graph bounds (plus padding), matched to the container's aspect ratio.
+   *  Retries on the next frame if the SVG hasn't been laid out yet (clientWidth/Height still 0). */
+  function fitToGraph() {
+    const positions = [...lastPositions.values()];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const { x, y, width } of positions) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + NODE_HEIGHT);
+    }
+    if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 400; maxY = 300; }
+    const pad = 48;
+    let boundsWidth = maxX - minX + pad * 2;
+    let boundsHeight = maxY - minY + pad * 2;
+    const containerWidth = graphSvg.clientWidth;
+    const containerHeight = graphSvg.clientHeight;
+    if (!containerWidth || !containerHeight) { requestAnimationFrame(fitToGraph); return; }
+    const containerAspect = containerWidth / containerHeight;
+    if (boundsWidth / boundsHeight > containerAspect) boundsHeight = boundsWidth / containerAspect;
+    else boundsWidth = boundsHeight * containerAspect;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    viewBox = { x: centerX - boundsWidth / 2, y: centerY - boundsHeight / 2, width: boundsWidth, height: boundsHeight };
+    graphSvg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+  }
+
+  const resizeObserver = new ResizeObserver(() => {
+    if (!lastPositions.size) return;
+    fitToGraph();
+  });
+  resizeObserver.observe(graphColumn);
 
   function pageLabel(page) {
     return page.title || baseName(page.path);
@@ -152,46 +211,44 @@ export async function mount({ root, pluginId, toast }) {
   function renderGraph() {
     const layers = computeLayers(data);
     const positions = layoutNodes(layers);
-    const maxX = Math.max(400, ...[...positions.values()].map((p) => p.x + 220));
-    const maxY = Math.max(300, ...[...positions.values()].map((p) => p.y + 60));
-    viewBox = { x: viewBox.x, y: viewBox.y, width: viewBox.width || maxX, height: viewBox.height || maxY };
-    graphSvg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+    const isFirstGraphRender = lastPositions.size === 0;
+    lastPositions = positions;
 
     while (graphSvg.children.length > 1) graphSvg.removeChild(graphSvg.lastChild);
 
     const edgeLayer = svg("g", { class: "vr-page-map-edges" });
     const nodeLayer = svg("g", { class: "vr-page-map-nodes" });
 
-    const selectedEdges = data.edges.filter((edge) => edge.from === selectedPath || edge.to === selectedPath);
     for (const edge of data.edges) {
       const from = positions.get(edge.from);
       const to = positions.get(edge.to);
       if (!from || !to || from === to) continue;
       const isHighlighted = selectedPath !== null && (edge.from === selectedPath || edge.to === selectedPath);
+      const fromX = from.x + from.width;
+      const midOffset = Math.max(24, (to.x - fromX) / 2);
       const path = svg("path", {
-        d: `M ${from.x + 200} ${from.y + 24} C ${from.x + 240} ${from.y + 24}, ${to.x - 40} ${to.y + 24}, ${to.x} ${to.y + 24}`,
+        d: `M ${fromX} ${from.y + 24} C ${fromX + midOffset} ${from.y + 24}, ${to.x - midOffset} ${to.y + 24}, ${to.x} ${to.y + 24}`,
         class: `vr-page-map-edge${isHighlighted ? " is-highlighted" : ""}`,
         "marker-end": "url(#vr-page-map-arrow)",
       });
       edgeLayer.append(path);
       if (isHighlighted) {
-        const midX = (from.x + 200 + to.x) / 2;
+        const midX = (fromX + to.x) / 2;
         const midY = (from.y + to.y) / 2 + 16;
         const label = svg("text", { x: midX, y: midY, class: "vr-page-map-edge-label" });
         label.textContent = edge.label || edge.kind;
         edgeLayer.append(label);
       }
     }
-    void selectedEdges;
 
-    for (const { x, y, page } of positions.values()) {
+    for (const { x, y, page, label, width } of positions.values()) {
       const group = svg("g", { class: "vr-page-map-node", transform: `translate(${x}, ${y})`, tabindex: 0, role: "button" });
       if (page.path === selectedPath) group.classList.add("is-selected");
       if (!page.reachable) group.classList.add("is-unreachable");
       if (!page.exists) group.classList.add("is-missing");
-      const rect = svg("rect", { width: 200, height: 48, rx: 8, class: "vr-page-map-node-rect" });
+      const rect = svg("rect", { width, height: NODE_HEIGHT, rx: 8, class: "vr-page-map-node-rect" });
       const text = svg("text", { x: 12, y: 28, class: "vr-page-map-node-text" });
-      text.textContent = pageLabel(page).slice(0, 28);
+      text.textContent = label;
       group.append(rect, text);
       group.addEventListener("click", () => { selectedPath = page.path; render(); });
       group.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedPath = page.path; render(); } });
@@ -199,6 +256,8 @@ export async function mount({ root, pluginId, toast }) {
     }
 
     graphSvg.append(edgeLayer, nodeLayer);
+
+    if (isFirstGraphRender) fitToGraph();
   }
 
   function renderDetail() {
@@ -311,6 +370,7 @@ export async function mount({ root, pluginId, toast }) {
   }
 
   return () => {
+    resizeObserver.disconnect();
     graphSvg.removeEventListener("wheel", onWheel);
     graphSvg.removeEventListener("pointerdown", onPointerDown);
     graphSvg.removeEventListener("pointermove", onPointerMove);

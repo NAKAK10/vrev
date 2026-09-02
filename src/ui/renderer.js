@@ -775,12 +775,21 @@ function renderSidebarHost(container) {
   container.scrollTop = scrollState.top;
   container.scrollLeft = scrollState.left;
 }
+/** Loads the resources of a stage contribution that was not active at start-up (they are skipped there). */
+async function loadStageResources(key) {
+  const stage = surface.contributions.find((contribution) => contribution.slot === "review.stage" && `${contribution.plugin_id}/${contribution.id}` === key);
+  if (!stage) return;
+  const runtime = runtimeFor(stage, "");
+  const scope = { plugin: stage.plugin_id, contribution: stage, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} };
+  await Promise.all((stage.document.resources || []).map((resource) => loadResource(stage, resource.id, scope, false)));
+}
 async function switchActiveStage(key) {
   try {
     const response = await fetch("/api/settings/layout", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: surface.layout.revision, stage: { active: key } }) });
     if (!response.ok) throw new Error("描画を切り替えられませんでした。");
     surface = await (await fetch("/api/plugin-host/v1/surfaces/review")).json();
     applyTheme(surface.theme);
+    await loadStageResources(key);
     rerender();
   } catch (error) {
     toast(error instanceof Error ? error.message : "描画を切り替えられませんでした。", "error");
