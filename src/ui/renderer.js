@@ -854,7 +854,7 @@ function pluginProvenanceLabel(plugin) {
   if (plugin.bundled) return "同梱";
   const resolved = plugin.resolved;
   if (!resolved) return "";
-  const digestPrefix = resolved.digest ? `sha256 ${resolved.digest.slice(0, 4)}…` : "";
+  const digestPrefix = resolved.digest ? `sha256 ${resolved.digest.slice(0, 12)}…` : "";
   if (resolved.kind === "npm") return ["npm", resolved.ref, digestPrefix].filter(Boolean).join(" · ");
   if (resolved.kind === "git") return ["git", resolved.ref ? resolved.ref.slice(0, 12) : null, digestPrefix].filter(Boolean).join(" · ");
   return ["local", digestPrefix].filter(Boolean).join(" · ");
