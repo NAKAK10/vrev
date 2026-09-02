@@ -173,7 +173,7 @@ export interface ReviewStoreContract {
   sourceHash(pagePath?: string): string;
   load(): Review;
   loadActive(): Review;
-  createAnnotation(payload: CreateAnnotationInput): Review;
+  createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Review;
   createIssueRequest(payload: CreateAnnotationInput): Review;
   setIssueDraftReady(annotationId: string, title: string, body: string): Review;
   completeIssueDraft(annotationId: string, title: string, url: string): Review;
@@ -366,7 +366,7 @@ class ReviewStore {
     review.events.push({ revision: review.revision, id: randomUUID(), type, annotation_id: annotationId, actor: eventActor, at, details });
   }
 
-  createAnnotation(payload: CreateAnnotationInput): Review {
+  createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Review {
     if (payload.kind !== "dom" && payload.kind !== "region") throw new Error("kind must be dom or region");
     const comment = nonblank(payload.comment, "comment");
     const anchor = sanitizeAnchor(payload.kind, payload.anchor);
@@ -376,6 +376,7 @@ class ReviewStore {
     if (!SOURCE_HASH.test(payload.source_hash)) throw new Error("source_hash must be a 64-character lowercase hex digest");
     return withFileLock(this.path, () => {
       const review = this.loadUnlocked();
+      if (expectedRevision !== undefined && expectedRevision !== null && expectedRevision !== review.revision && expectedRevision !== `review:${review.revision}`) throw new Error("review revision conflict");
       if (this.sourceHash(page.entryPath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
       const timestamp = now();
       const annotationId = randomUUID();

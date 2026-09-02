@@ -91,7 +91,7 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   let retryInput: unknown;
   const manager = {
     list: () => ({ revision: 2, batches: [{ id: "legacy", max_parallel: 1, opencode_attach: null, runner_id: null, custom_command: "do-not-expose" }], jobs: [{ id: "job-1", batch_id: "legacy", annotation_id: "annotation-1", page_path: "/", source_hash: "hash", cli: "codex", custom_name: null, session_id: null, state: "running", created: "2026-08-31T00:00:00.000Z", started: "2026-08-31T00:00:01.000Z", finished: null, exit_code: null, summary: "running" }] }),
-    enqueue: (input: unknown) => { enqueueInput = input; return { batch_id: "batch", jobs: [] }; },
+    enqueue: (input: unknown) => { enqueueInput = input; return { batch_id: "batch", jobs: Array.isArray((input as { annotation_ids?: unknown }).annotation_ids) ? [{}] : [] }; },
     retry: (annotationId: string, input: unknown) => { retryInput = { annotationId, input }; return { batch_id: "retry", jobs: [] }; },
     cancel: (input: unknown) => { cancelInput = input; },
   };
@@ -124,6 +124,8 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   await assert.rejects(bridge.command("jobs.enqueue", { request_id: "unverified", input: { runner: `custom:${unverifiedRunnerId}`, max_parallel: 3 } }), /未検証/);
   await bridge.command("jobs.enqueue", { request_id: "enqueue", input: { runner: externalSelection, max_parallel: 3 } });
   assert.deepEqual(enqueueInput, { cli: "custom", runner_id: externalRunnerId, max_parallel: 3 });
+  await bridge.command("jobs.enqueue", { request_id: "enqueue-one", input: { annotation_id: "annotation-1", runner: externalSelection, max_parallel: 2 } });
+  assert.deepEqual(enqueueInput, { cli: "custom", runner_id: externalRunnerId, max_parallel: 2, annotation_ids: ["annotation-1"] });
   await bridge.command("jobs.retry", { request_id: "retry", input: { annotation_id: "annotation-1", runner: externalSelection, max_parallel: 2 } });
   assert.deepEqual(retryInput, { annotationId: "annotation-1", input: { cli: "custom", runner_id: externalRunnerId, max_parallel: 2 } });
   const jobs = await bridge.query("jobs.list", { request_id: "jobs", input: {} });

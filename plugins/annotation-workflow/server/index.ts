@@ -107,8 +107,15 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
         const settings = workflowSettingsProjection(review.store.target.projectRoot, runners);
         const selected = parseRunnerSelection(typeof input.runner === "string" ? input.runner : settings.runner);
         if (selected.runner_id && !runners.some(({ runner_id, verified }) => runner_id === selected.runner_id && verified)) throw new Error("選択した外部AIコマンドは未検証です。外部AIコマンド設定でテストを完了してください。");
-        const enqueueInput = { ...selected, max_parallel: Number.isInteger(input.max_parallel) ? input.max_parallel as number : settings.max_parallel };
+        const enqueueInput = {
+          ...selected,
+          max_parallel: Number.isInteger(input.max_parallel) ? input.max_parallel as number : settings.max_parallel,
+          ...(name === "jobs.enqueue" && typeof input.annotation_id === "string" ? { annotation_ids: [input.annotation_id] } : {}),
+        };
         const data = name === "jobs.retry" ? manager.retry(input.annotation_id as string, enqueueInput) : manager.enqueue(enqueueInput);
+        if (name === "jobs.enqueue" && typeof input.annotation_id === "string" && data.jobs.length !== 1) {
+          return bridgeError(request, "CONFLICT", "この注釈はすでにAI修正中か、未対応ではありません。");
+        }
         return { ok: true, data, effects: [{ type: "resource.invalidate", resources: ["jobs", "annotations"] }] };
       }
       return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");

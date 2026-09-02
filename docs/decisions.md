@@ -181,6 +181,12 @@ manifest・route・source hintからprimary projectとshared scopeを調査し�
 active annotation（`open`・`in_progress`・`failed`・`addressed`）は`review.json`、humanが解決したannotationは`resolved.json`へ分離する。
 通常sessionとjob managerはactive-only readを使い、polling payloadを小さく保つ。reviewerは別のarchive APIから解決済みannotationを取得してfilter・card・overlay・件数へ含め、履歴だけは24件単位でpage取得する。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
 
+## Multi-client synchronization
+
+一時的なpublic tunnel、複数tab、複数reviewerでは、plugin event streamをhost-wide invalidation busとして使い、成功したmutationのresource invalidationを全接続clientへ即時配信する。SSEはproxy bufferingを無効化し、15秒heartbeatと1秒reconnectを持つ。切断・background job・event取りこぼしに備えてvisible tabは2秒ごとにsession・annotation・history・job revisionを照合する。resource fetchはgenerationを持ち、古いresponseが新しいstateを上書きしない。remote変更の反映時は対象resource名を通知し、履歴とannotation listを同時更新する。
+
+review mutationのexpected revisionはfile lock内で比較し、job enqueueはjob-state lock内でannotation IDをclaimする。同じlogical requestのtransport retryは同一idempotency keyを再利用する。HTTPS public tunnelからのsame-host Originは許可するが、cross-origin commandは引き続き拒否する。public URL自体には認証を提供しないため、外部公開時はtunnel側のAccess/OAuthまたは同等の認証を必須とする。
+
 ## External projects
 
 別repositoryを対象にする場合だけ`--project-root`を明示する。packageを対象projectへ複製せず、同じschemaと安全なpath規則を再利用できる。

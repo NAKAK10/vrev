@@ -142,6 +142,8 @@ a { color: inherit; }
 .vr-target-stage iframe { width: 100%; height: 100%; }
 .vr-target-stage[data-viewport="tablet"] iframe { width: 768px; }
 .vr-target-stage[data-viewport="mobile"] iframe { width: 390px; }
+.vr-target-diagnostic { position: absolute; z-index: 6; top: 14px; left: 50%; display: flex; width: min(680px, calc(100% - 28px)); flex-direction: column; gap: 3px; transform: translateX(-50%); border: 1px solid #fca5a5; border-radius: var(--vr-radius-md); padding: 10px 14px; color: #7f1d1d; background: rgb(254 242 242 / 96%); box-shadow: var(--vr-shadow-md); font-size: 13px; line-height: 1.45; pointer-events: none; }
+.vr-target-diagnostic strong { font-size: 14px; }
 .vr-annotation-mark-layer { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
 .vr-annotation-mark { --vr-mark-color: var(--vr-color-accent); position: absolute; border: 2px solid var(--vr-mark-color); border-radius: 3px; background: rgb(217 119 6 / 16%); box-shadow: 0 0 0 1px rgb(255 255 255 / 75%); }
 .vr-annotation-mark[data-status="open"] { --vr-mark-color: #d97706; background: rgb(217 119 6 / 18%); }

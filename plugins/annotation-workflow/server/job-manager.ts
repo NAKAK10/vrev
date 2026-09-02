@@ -128,7 +128,7 @@ export class JobManager {
     const annotations = review.annotations.filter(({ status, id }) => status === "open" && !activeIds.has(id) && (!selectedIds || selectedIds.has(id)));
     const batchId = randomUUID();
     const created = now();
-    const jobs = annotations.map((annotation): ReviewJob => {
+    const candidates = annotations.map((annotation): ReviewJob => {
       let state: ReviewJob["state"] = "queued";
       let summary = "queued";
       let sourceHash = annotation.source_hash;
@@ -139,8 +139,12 @@ export class JobManager {
       }
       return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: sourceHash, deferred_checkpoint: state === "queued" && activePages.has(annotation.page_path), cli: input.cli, custom_name: null, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
     });
-    if (jobs.length > 0) {
+    const jobs: ReviewJob[] = [];
+    if (candidates.length > 0) {
       this.jobStore.update((state) => {
+        const claimed = new Set(state.jobs.filter(({ state: jobState }) => jobState === "queued" || jobState === "running").map(({ annotation_id }) => annotation_id));
+        jobs.push(...candidates.filter(({ annotation_id }) => !claimed.has(annotation_id)));
+        if (!jobs.length) return;
         state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach, runner_id: input.runner_id, custom_command: null });
         state.jobs.push(...jobs);
       });

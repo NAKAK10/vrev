@@ -1,5 +1,6 @@
 const root = document.querySelector("#renderer-root");
 const resourceStores = new Map();
+const resourceRequestGenerations = new Map();
 const documents = new Map();
 const pending = new Map();
 const dialogs = new Map();
@@ -312,6 +313,29 @@ function targetUrlForPage(target, pagePath) {
   return `/target/${String(pagePath).replace(/^\/+/, "").split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
 }
 function waitForFrame(frame) { return new Promise((resolve, reject) => { const timer = setTimeout(() => { cleanup(); reject(new Error("対象ページの読み込みがタイムアウトしました")); }, 8000); const cleanup = () => { clearTimeout(timer); frame.removeEventListener("load", loaded); frame.removeEventListener("error", failed); }; const loaded = () => { cleanup(); resolve(); }; const failed = () => { cleanup(); reject(new Error("対象ページを読み込めませんでした")); }; frame.addEventListener("load", loaded, { once: true }); frame.addEventListener("error", failed, { once: true }); }); }
+function showTargetDiagnostic(container, message, detail = "") {
+  let diagnostic = container.querySelector(":scope > .vr-target-diagnostic");
+  if (!diagnostic) { diagnostic = element("div", "vr-target-diagnostic"); diagnostic.setAttribute("role", "alert"); container.append(diagnostic); }
+  const title = element("strong"); title.textContent = message;
+  diagnostic.replaceChildren(title);
+  if (detail) { const copy = element("span"); copy.textContent = detail; diagnostic.append(copy); }
+}
+function clearTargetDiagnostic(container) { container.querySelector(":scope > .vr-target-diagnostic")?.remove(); }
+function installTargetDiagnostics(container, frame) {
+  container.__targetDiagnosticCleanup?.();
+  const win = frame.contentWindow;
+  if (!win) return;
+  let status = 0;
+  try { status = Number(win.performance.getEntriesByType("navigation").at(-1)?.responseStatus || 0); } catch {}
+  if (status >= 400) showTargetDiagnostic(container, `対象ページが HTTP ${status} を返しました`, "通常のブラウザ表示でもエラーになる状態です。対象アプリのエラーを確認してください。");
+  else clearTargetDiagnostic(container);
+  const runtimeError = (message) => showTargetDiagnostic(container, "対象ページで JavaScript エラーが発生しました", String(message || "詳細は対象アプリのコンソールを確認してください。").slice(0, 300));
+  const onError = (event) => runtimeError(event.message);
+  const onRejection = (event) => runtimeError(event.reason?.message || event.reason);
+  win.addEventListener("error", onError);
+  win.addEventListener("unhandledrejection", onRejection);
+  container.__targetDiagnosticCleanup = () => { win.removeEventListener("error", onError); win.removeEventListener("unhandledrejection", onRejection); delete container.__targetDiagnosticCleanup; };
+}
 async function focusTarget(pagePath, anchor, restoreContext) {
   const stage = document.querySelector(".vr-target-stage"); const frame = stage?.querySelector("iframe"); let focused = false;
   try {
@@ -364,10 +388,16 @@ async function command(instruction, scope) {
   const disabledControl = disableId ? document.getElementById(disableId) : null;
   if (disabledControl) { disabledControl.disabled = true; disabledControl.setAttribute("aria-busy", "true"); }
   const requestCommand = async () => {
-    const response = await fetch(`/api/plugin-host/v1/plugins/${encodeURIComponent(scope.plugin)}/commands/${encodeURIComponent(instruction.command)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), expected_revision: binding(instruction.expected_revision, scope) ?? null, input }) });
-    const result = await response.json().catch(() => null);
-    if (!result) throw new Error(`${response.status} ${response.statusText}`);
-    return result;
+    const endpoint = `/api/plugin-host/v1/plugins/${encodeURIComponent(scope.plugin)}/commands/${encodeURIComponent(instruction.command)}`;
+    const envelope = { protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), expected_revision: binding(instruction.expected_revision, scope) ?? null, input };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope) });
+        const result = await response.json().catch(() => null);
+        if (!result) throw new Error(`${response.status} ${response.statusText}`);
+        return result;
+      } catch (error) { if (attempt === 1) throw error; }
+    }
   };
   const operation = (async () => {
     let result = await requestCommand();
@@ -471,7 +501,7 @@ function targetStage(definition, scope) {
   } else {
     const frame = element("iframe"); frame.title = "レビュー対象ページ"; frame.src = target.url;
     if (!target.allow_scripts) frame.setAttribute("sandbox", "allow-same-origin allow-forms");
-    container.append(frame); frame.addEventListener("load", () => { try { installHtmlSelection(container, frame, mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
+    container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
   container.dataset.viewport = String(binding(definition.props?.viewport_mode, scope) || "desktop"); container.dataset.mode = mode;
   container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); container.dispatchEvent(new CustomEvent("selection-cancel", { detail: {} })); } });
@@ -493,17 +523,24 @@ async function refreshResourceNamed(id, fallbackScope) {
 }
 async function loadResource(contribution, id, scope, shouldRender = true) {
   const declaration = (contribution.document.resources || []).find((item) => item.id === id); if (!declaration) return;
-  const key = `${contribution.plugin_id}:${id}`; resourceStores.set(key, { state: "loading" });
+  const key = `${contribution.plugin_id}:${id}`;
+  const generation = (resourceRequestGenerations.get(key) || 0) + 1;
+  resourceRequestGenerations.set(key, generation);
+  resourceStores.set(key, { ...resourceStores.get(key), state: "loading" });
   const input = Object.fromEntries(Object.entries(declaration.input).map(([name, value]) => [name, binding(value, scope)]));
   try {
     const response = await fetch(`/api/plugin-host/v1/plugins/${encodeURIComponent(contribution.plugin_id)}/queries/${encodeURIComponent(declaration.query)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), input }) });
     const result = await response.json(); if (!result.ok) throw result.error;
+    if (resourceRequestGenerations.get(key) !== generation) return;
     const previous = resourceStores.get(key)?.data;
     const data = Number(input.offset) > 0 && Array.isArray(previous?.events) && Array.isArray(result.data?.events)
       ? { ...result.data, events: [...previous.events, ...result.data.events] }
       : result.data;
     resourceStores.set(key, { state: "ready", data, revision: result.revision });
-  } catch (error) { resourceStores.set(key, { state: "error", error }); }
+  } catch (error) {
+    if (resourceRequestGenerations.get(key) !== generation) return;
+    resourceStores.set(key, { state: "error", error });
+  }
   if (shouldRender) rerender();
 }
 function renderContribution(contribution, slotContext = {}, parentInstanceKey = "") {
@@ -635,6 +672,21 @@ async function openSettingsDetail(plugin, opener) {
   dialog.append(closeIcon, header, body, footer); document.body.append(dialog);
   dialog.addEventListener("close", () => { history.replaceState(null, "", location.pathname); opener?.focus(); dialog.remove(); }, { once: true }); dialog.showModal(); paintToast(); dialog.scrollTop = 0; closeIcon.focus({ preventScroll: true });
 }
+async function synchronizeResources(resources, announce = false) {
+  const unique = [...new Set(resources)];
+  const fallback = surface?.contributions?.[0];
+  if (!fallback || !unique.length) return;
+  const before = new Map([...resourceStores].map(([key, store]) => [key, store.revision ?? JSON.stringify(store.data)]));
+  const runtime = documents.get(`${fallback.plugin_id}:${fallback.id}`) || stateFor(fallback);
+  const scope = { plugin: fallback.plugin_id, contribution: fallback, state: runtime.state, persist: runtime.persist, slotContext: {} };
+  await Promise.all(unique.map((resource) => refreshResourceNamed(resource, scope)));
+  rerender();
+  const changed = [...resourceStores].some(([key, store]) => before.get(key) !== (store.revision ?? JSON.stringify(store.data)));
+  if (announce && changed) {
+    const labels = unique.map((resource) => ({ session: "レビュー", annotations: "注釈", history: "変更履歴", jobs: "AI修正状況", "workflow-settings": "設定" })[resource] || resource);
+    toast(`別の画面での変更を同期しました：${[...new Set(labels)].join("・")}`, "info");
+  }
+}
 async function start() {
   if (location.pathname === "/settings/plugins") return renderSettings();
   root.dataset.page = "review";
@@ -650,10 +702,21 @@ async function start() {
   }
   rerender();
   if (resourceLoads.length) void Promise.all(resourceLoads).then(() => rerender());
-  const streams = new Map();
-  for (const contribution of surface.contributions) if (!streams.has(contribution.plugin_id)) {
-    const stream = new EventSource(`/api/plugin-host/v1/plugins/${encodeURIComponent(contribution.plugin_id)}/events`); streams.set(contribution.plugin_id, stream);
-    stream.addEventListener("message", (event) => { try { const update = JSON.parse(event.data); const resources = update.type === "resync.required" && !(update.resources || []).length ? (contribution.document.resources || []).map(({ id }) => id) : update.resources || []; for (const resource of resources) { const scope = { plugin: contribution.plugin_id, contribution, state: documents.get(`${contribution.plugin_id}:${contribution.id}`).state, persist() {}, slotContext: {} }; void loadResource(contribution, resource, scope); } } catch {} });
+  const allResources = [...new Set(surface.contributions.flatMap((contribution) => (contribution.document.resources || []).map(({ id }) => id)))];
+  const eventPlugin = surface.contributions[0]?.plugin_id;
+  if (eventPlugin) {
+    const stream = new EventSource(`/api/plugin-host/v1/plugins/${encodeURIComponent(eventPlugin)}/events`);
+    stream.addEventListener("message", (event) => { try { const update = JSON.parse(event.data); const resync = update.type === "resync.required"; const resources = resync && !(update.resources || []).length ? allResources : update.resources || []; void synchronizeResources(resources, !resync); } catch {} });
   }
+  let fallbackSyncRunning = false;
+  const fallbackSync = async () => {
+    if (fallbackSyncRunning || document.visibilityState === "hidden") return;
+    fallbackSyncRunning = true;
+    try { await synchronizeResources(["session", "annotations", "history", "jobs"]); }
+    finally { fallbackSyncRunning = false; }
+  };
+  const fallbackTimer = setInterval(() => { void fallbackSync(); }, 2000);
+  window.addEventListener("focus", () => { void fallbackSync(); });
+  window.addEventListener("pagehide", () => clearInterval(fallbackTimer), { once: true });
 }
 start().catch(() => { root.textContent = "宣言UIを読み込めませんでした。/legacy で旧UIへ戻せます。"; root.setAttribute("aria-busy", "false"); });

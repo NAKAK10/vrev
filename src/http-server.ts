@@ -392,7 +392,11 @@ function assertBridgeRequestOrigin(request: IncomingMessage): void {
   if (origin === "null") throw new HttpError(403, "sandboxed target cannot access plugin bridge actions");
   if (typeof origin === "string") {
     const host = request.headers.host;
-    if (!host || origin !== `http://${host}`) throw new HttpError(403, "plugin bridge origin is not allowed");
+    let parsed: URL;
+    try { parsed = new URL(origin); } catch { throw new HttpError(403, "plugin bridge origin is not allowed"); }
+    if (!host || !["http:", "https:"].includes(parsed.protocol) || parsed.host !== host || parsed.username || parsed.password || parsed.pathname !== "/") {
+      throw new HttpError(403, "plugin bridge origin is not allowed");
+    }
   }
 }
 
@@ -418,14 +422,46 @@ async function delegateBridge(
   }
 }
 
-function serveBridgeEvents(request: IncomingMessage, response: ServerResponse, pluginId: string, projectRoot: string): void {
+interface BridgeEventHub {
+  readonly seq: number;
+  subscribe(pluginId: string, response: ServerResponse): () => void;
+  publish(resources: string[], revision?: string): void;
+}
+
+function createBridgeEventHub(): BridgeEventHub {
+  let seq = 0;
+  const subscribers = new Map<string, Set<ServerResponse>>();
+  return {
+    get seq() { return seq; },
+    subscribe(pluginId, response) {
+      let clients = subscribers.get(pluginId);
+      if (!clients) { clients = new Set(); subscribers.set(pluginId, clients); }
+      clients.add(response);
+      return () => { clients?.delete(response); if (clients?.size === 0) subscribers.delete(pluginId); };
+    },
+    publish(resources, revision) {
+      const unique = [...new Set(resources.filter((resource) => typeof resource === "string" && resource))];
+      if (!unique.length) return;
+      seq += 1;
+      for (const [pluginId, clients] of subscribers) {
+        const event = { protocol: "plugin-bridge/1", event_id: `host:${seq}`, seq, plugin_id: pluginId, type: "resources.invalidated", resources: unique, ...(revision ? { revision } : {}) };
+        const frame = `id: ${event.event_id}\ndata: ${JSON.stringify(event)}\n\n`;
+        for (const client of clients) if (!client.destroyed) client.write(frame);
+      }
+    },
+  };
+}
+
+function serveBridgeEvents(request: IncomingMessage, response: ServerResponse, pluginId: string, projectRoot: string, hub: BridgeEventHub): void {
   if (!pluginEnabled(pluginId, projectRoot)) throw new HttpError(404, "plugin event stream is unavailable");
   setSecurityHeaders(response);
-  response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive" });
-  response.write(`id: host:0\ndata: ${JSON.stringify({ protocol: "plugin-bridge/1", event_id: "host:0", seq: 0, plugin_id: pluginId, type: "resync.required", resources: [] })}\n\n`);
-  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000);
+  response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  response.flushHeaders();
+  response.write(`retry: 1000\nid: host:${hub.seq}\ndata: ${JSON.stringify({ protocol: "plugin-bridge/1", event_id: `host:${hub.seq}`, seq: hub.seq, plugin_id: pluginId, type: "resync.required", resources: [] })}\n\n`);
+  const unsubscribe = hub.subscribe(pluginId, response);
+  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 15_000);
   heartbeat.unref();
-  request.once("close", () => clearInterval(heartbeat));
+  request.once("close", () => { clearInterval(heartbeat); unsubscribe(); });
 }
 
 function annotationId(pathname: string, suffix = ""): string | undefined {
@@ -545,6 +581,18 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
     { provider: { createIssue: (_projectRoot, draft) => issueCreator(draft) } },
   );
   const commandJournal = new Map<string, { payload: string; result: Promise<BridgeAdapterResult>; at: number }>();
+  const bridgeEventHub = createBridgeEventHub();
+  const publishEffects = (result: BridgeAdapterResult): BridgeAdapterResult => {
+    if (result.ok) {
+      const resources = (result.effects ?? []).flatMap((effect) => {
+        if (!effect || typeof effect !== "object" || (effect as { type?: unknown }).type !== "resource.invalidate") return [];
+        const values = (effect as { resources?: unknown }).resources;
+        return Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : [];
+      });
+      bridgeEventHub.publish(resources, result.revision);
+    }
+    return result;
+  };
   const uiRoot = defaultUiRoot();
   const settingsUiRoot = pluginSettingsUiRoot();
   const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management !== false;
@@ -614,7 +662,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           if (recorded && recorded.payload !== payloadHash) operation = Promise.resolve(bridgeError(payload, "CONFLICT", "idempotency key was reused with a different payload"));
           else if (recorded) operation = recorded.result;
           else {
-            operation = delegateBridge(bridgeAdapter(bridgeCommand[1]), "command", bridgeCommand[2], payload);
+            operation = delegateBridge(bridgeAdapter(bridgeCommand[1]), "command", bridgeCommand[2], payload).then(publishEffects);
             if (idempotencyKey) {
               commandJournal.set(idempotencyKey, { payload: payloadHash, result: operation, at: Date.now() });
               if (commandJournal.size > 10_000) commandJournal.delete(commandJournal.keys().next().value as string);
@@ -624,7 +672,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           return sendJson(response, result.ok ? 200 : bridgeStatus(result.error.code), result);
         }
         const bridgeEvents = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/events$/.exec(pathname);
-        if (request.method === "GET" && bridgeEvents?.[1]) return serveBridgeEvents(request, response, bridgeEvents[1], store.target.projectRoot);
+        if (request.method === "GET" && bridgeEvents?.[1]) return serveBridgeEvents(request, response, bridgeEvents[1], store.target.projectRoot, bridgeEventHub);
         if (pathname.startsWith("/settings/") || pathname.startsWith("/api/settings/plugins")) {
           if (!pluginManagementVisible) throw new HttpError(404, "plugin management is hidden by workspace settings");
           if (request.method === "GET" && pathname === "/settings/plugins") return serveFile(response, legacyUi ? path.join(settingsUiRoot, "index.html") : path.join(uiRoot, "renderer.html"));
@@ -763,7 +811,9 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             if (typeof input.runner_id !== "string") throw new HttpError(400, "runner_id is required for custom commands");
             (await customCommandProvider()).resolve(store.target.projectRoot, input.runner_id);
           }
-          return sendJson(response, 200, jobManager.enqueue(input));
+          const result = jobManager.enqueue(input);
+          bridgeEventHub.publish(["jobs", "annotations", "history", "session"]);
+          return sendJson(response, 200, result);
         }
         if (request.method === "POST" && pathname === "/api/jobs/custom-command/test") {
           throw new HttpError(404, "route not found");
@@ -773,6 +823,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           if (installed && !pluginEnabled("github-issue", store.target.projectRoot)) throw new HttpError(409, "GitHub Issue plugin is disabled");
           const payload = await readJson(request);
           store.createIssueRequest(payload as unknown as CreateAnnotationInput);
+          bridgeEventHub.publish(["session", "annotations", "history"]);
           return sendJson(response, 200, store.loadActive());
         }
         if (request.method === "POST" && pathname === "/api/issues") {
@@ -787,11 +838,13 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             if (error instanceof Error && error.message === "Issue draft is not ready for creation") throw new HttpError(409, error.message);
             throw error;
           }
+          bridgeEventHub.publish(["session", "annotations", "history"]);
           return sendJson(response, 200, { ...result, review: store.loadActive() });
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) {
           const { custom_name: _legacyName, ...job } = jobManager.cancel(cancelId);
+          bridgeEventHub.publish(["jobs", "annotations", "history", "session"]);
           return sendJson(response, 200, job);
         }
         if (store.target.liveUrl && (pathname === "/live" || pathname.startsWith("/live/"))) {
@@ -806,16 +859,19 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         if (request.method === "POST" && pathname === "/api/annotations") {
           store.createAnnotation(await readJson(request) as unknown as CreateAnnotationInput);
+          bridgeEventHub.publish(["session", "annotations", "history"]);
           return sendJson(response, 200, store.loadActive());
         }
         const messageId = request.method === "POST" ? annotationId(pathname, "/messages") : undefined;
         if (messageId !== undefined) {
           store.addMessage(messageId, await readJson(request) as unknown as AddMessageInput);
+          bridgeEventHub.publish(["session", "annotations", "history"]);
           return sendJson(response, 200, store.loadActive());
         }
         const statusId = request.method === "PATCH" ? annotationId(pathname) : undefined;
         if (statusId !== undefined) {
           store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
+          bridgeEventHub.publish(["session", "annotations", "history"]);
           return sendJson(response, 200, store.loadActive());
         }
         if (store.target.liveUrl && !publicTarget) {

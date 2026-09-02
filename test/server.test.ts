@@ -23,6 +23,32 @@ const createdIssueDrafts: Array<{ title: string; body: string }> = [];
 let releaseIssueCreation: (() => void) | null = null;
 let issueCreationGate: Promise<void> | null = null;
 
+async function openEventStream(url: string): Promise<{ next(): Promise<Record<string, unknown>>; close(): void }> {
+  const controller = new AbortController();
+  const response = await fetch(url, { signal: controller.signal });
+  assert.equal(response.status, 200);
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  return {
+    async next() {
+      for (;;) {
+        const boundary = buffer.indexOf("\n\n");
+        if (boundary >= 0) {
+          const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+          const data = frame.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
+          if (data) return JSON.parse(data) as Record<string, unknown>;
+          continue;
+        }
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("event stream closed");
+        buffer += decoder.decode(chunk.value, { stream: true });
+      }
+    },
+    close() { controller.abort(); },
+  };
+}
+
 before(async () => {
   root = mkdtempSync(path.join(os.tmpdir(), "visual-review-server-"));
   mkdirSync(path.join(root, ".code/htmls/pages"), { recursive: true });
@@ -88,6 +114,14 @@ test("serves built UI and compatible session/security headers", async () => {
   assert.match(pluginRuntime.headers.get("content-type") ?? "", /javascript/);
   assert.match(await pluginRuntime.text(), /export function mount/);
 
+  const forwardedHost = new URL(baseUrl).host;
+  const forwardedQuery = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/review/queries/session.get`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: `https://${forwardedHost}` },
+    body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: "forwarded-https", input: {} }),
+  });
+  assert.equal(forwardedQuery.status, 200);
+
   const flowResponse = await fetch(`${baseUrl}/api/plugins/annotation-flow`);
   assert.equal(flowResponse.status, 200);
   const flowPayload = await flowResponse.json() as {
@@ -102,6 +136,26 @@ test("serves built UI and compatible session/security headers", async () => {
   assert.equal(flowPayload.policy.settings.runner.label, "CLI");
   assert.equal(flowPayload.policy.settings.maxParallel.max, 10);
   assert.match(flowPayload.policy.settings.autoRun.label, /自動/);
+});
+
+test("broadcasts mutations to multiple event-stream clients", async () => {
+  const first = await openEventStream(`${baseUrl}/api/plugin-host/v1/plugins/review/events`);
+  const second = await openEventStream(`${baseUrl}/api/plugin-host/v1/plugins/review/events`);
+  try {
+    assert.equal((await first.next()).type, "resync.required");
+    assert.equal((await second.next()).type, "resync.required");
+    const created = await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "dom", page_path: ".code/htmls/pages/index.html", comment: "Concurrent sync", anchor: { selector: "h1" }, source_hash: visualReview.store.sourceHash() }),
+    });
+    assert.equal(created.status, 200);
+    const [left, right] = await Promise.all([first.next(), second.next()]);
+    assert.equal(left.type, "resources.invalidated");
+    assert.equal(right.type, "resources.invalidated");
+    assert.deepEqual(left.resources, ["session", "annotations", "history"]);
+    assert.equal(left.event_id, right.event_id);
+  } finally { first.close(); second.close(); }
 });
 
 test("plugin management is visible by default and can be explicitly hidden", async () => {
@@ -271,6 +325,11 @@ test("proxies loopback applications and persists URL annotations", async () => {
       response.end(`import "/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(route);\nfetch('/api/data');`);
       return;
     }
+    if (request.url === "/broken") {
+      response.writeHead(500, { "Content-Type": "text/html" });
+      response.end("<html><head></head><body>upstream failed</body></html>");
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "upstream=blocked" });
     response.end(`<html><head></head><body><a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main></body></html>`);
   });
@@ -305,6 +364,9 @@ test("proxies loopback applications and persists URL annotations", async () => {
       await (await fetch(`${url}/live/app.js`)).text(),
       `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = (window.location.pathname.replace(/^\\/live(?=\\/|$)/, "") || "/");\nwindow.location.replace(window.__visualReviewUrl(route));\nfetch('/live/api/data');`,
     );
+    const brokenResponse = await fetch(`${url}/live/broken`);
+    assert.equal(brokenResponse.status, 500);
+    assert.match(await brokenResponse.text(), /upstream failed/);
     assert.equal((await fetch(`${url}/live//example.invalid/path`)).status, 200);
     assert.equal(lastRequestUrl, "//example.invalid/path");
     assert.equal((await fetch(`${url}/root-asset.png`)).status, 200);

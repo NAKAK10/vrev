@@ -86,11 +86,6 @@ export function createReviewBridgeAdapter(store: ReviewStoreContract, presentati
     },
     async command(name: string, request: ReviewBridgeRequestV1): Promise<ReviewBridgeResultV1> {
       if (name !== "annotation.create") return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
-      const currentRevision = store.load().revision;
-      if (request.expected_revision !== undefined && request.expected_revision !== null
-        && request.expected_revision !== currentRevision && request.expected_revision !== `review:${currentRevision}`) {
-        return bridgeError(request, "CONFLICT", "review revision conflict");
-      }
       const { input } = request;
       if (typeof input.comment !== "string" || !input.comment.trim() || typeof input.anchor !== "object"
         || input.anchor === null || Array.isArray(input.anchor)) return bridgeError(request, "VALIDATION_FAILED", "annotation input is invalid");
@@ -98,14 +93,19 @@ export function createReviewBridgeAdapter(store: ReviewStoreContract, presentati
       const pagePath = typeof anchor.page_path === "string" ? anchor.page_path : store.entryPath;
       const kind = anchor.kind === "dom" ? "dom" : "region";
       const { kind: _kind, page_path: _pagePath, ...persistedAnchor } = anchor;
-      store.createAnnotation({
-        kind,
-        page_path: pagePath,
-        source_hash: store.sourceHash(pagePath),
-        anchor: persistedAnchor,
-        comment: input.comment.trim(),
-        actor: "human",
-      });
+      try {
+        store.createAnnotation({
+          kind,
+          page_path: pagePath,
+          source_hash: store.sourceHash(pagePath),
+          anchor: persistedAnchor,
+          comment: input.comment.trim(),
+          actor: "human",
+        }, request.expected_revision);
+      } catch (error) {
+        if (error instanceof Error && error.message === "review revision conflict") return bridgeError(request, "CONFLICT", error.message);
+        throw error;
+      }
       const active = store.loadActive();
       return { ok: true, revision: `review:${active.revision}`, data: active, effects: [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }] };
     },

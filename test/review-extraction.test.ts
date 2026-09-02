@@ -39,6 +39,14 @@ test("deprecated ReviewStore and ReviewCapability share the plugin-owned persist
 
   assert.equal(capability.store.load().review_id, created.review_id);
   assert.equal(capability.store.load().revision, 1);
+  assert.throws(() => facade.createAnnotation({
+    kind: "dom",
+    page_path: facade.entryPath,
+    comment: "stale write",
+    anchor: { selector: "h1" },
+    source_hash: fileSha256(facade.targetPath),
+  }, "review:0"), /review revision conflict/);
+  assert.equal(capability.store.load().revision, 1);
   assert.match(facade.path, /\.vreview\/reviews\/index--60e665b01e89\/review\.json$/);
 });
 
