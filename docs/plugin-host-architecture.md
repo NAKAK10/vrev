@@ -327,9 +327,10 @@ interface PluginUiContributionV1 {
   slot:
     | "review.main"
     | "review.sidebar"
-    | "review.annotation.actions"
-    | "review.overlays"
-    | "settings.detail";
+    | "review.header"
+    | "review.stage"
+    | "settings.detail"
+    | string; // 他pluginのextension point id（例: annotation-workflow.annotation.actions）
   document: string;
   order: number;
 }
@@ -345,7 +346,7 @@ interface PluginUiContributionV1 {
 - `review.main`はcardinality 1。複数enabled contributionが競合した場合はsurfaceを起動せずmanagement diagnosticを表示する
 - その他のslotはcardinality many。各contribution failureは同じslotの他contributionを停止しない
 - `review.sidebar`が空ならsplit-panelはsidebarを生成せずmainを全幅にする
-- `review.annotation.actions`はannotation dialogのCore定義action region、`review.overlays`はCore定義dialog/toast regionへmountする
+- `review.annotation.actions`/`review.overlays`はCore slotではなく、annotation-workflow/reviewが`ui.extension_points`でhostするplugin-owned extension pointへ移行した（[plugin-ui-bridge.md](plugin-ui-bridge.md)）
 - slotへ渡すcontext schemaと使用可能capabilityはslotごとに固定し、plugin間local state共有には使わない
 
 ## 9. Independent lifecycle

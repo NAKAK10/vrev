@@ -27,3 +27,7 @@ gh issue create --title <title> --body-file -
 ```
 
 Issue bodyはcommand line argumentではなく標準入力へ渡します。実行は30秒でtimeoutし、標準出力と標準エラーの合計を64 KiBに制限します。成功時は`https://github.com/<owner>/<repo>/issues/<number>`形式のURLだけを受理します。
+
+## Annotation card status badges
+
+`issue-task` capabilityは`label(annotation)`を通じてannotation cardのstatus badgeを供給します。Issue依頼のflowに沿って「Issue依頼」→「AI Issue下書き中」→「Issueラフ確認待ち」→「Issue作成済み」と遷移し、下書き生成に失敗した場合は「Issue下書き失敗」を表示します。これらのbadgeはgithub-issue pluginがannotation-workflow pluginへ提供するもので、本pluginを無効化するとcardはworkflow側のdefault labelに戻ります。

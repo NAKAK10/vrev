@@ -237,6 +237,11 @@ a { color: inherit; }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="failed"] { color: var(--vr-color-danger); background: var(--vr-color-danger-soft); }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="addressed"] { color: var(--vr-color-success); background: var(--vr-color-success-soft); }
 .vr-panel[data-variant="annotation-card"] > .vr-status[data-status="resolved"] { color: #596563; background: #eef2f1; }
+.vr-panel[data-variant="annotation-card"] > .vr-status[data-tone="pending"] { color: #7c4a03; background: #fdf3e2; }
+.vr-panel[data-variant="annotation-card"] > .vr-status[data-tone="active"] { color: #245f8a; background: #edf6fc; }
+.vr-panel[data-variant="annotation-card"] > .vr-status[data-tone="ready"] { color: #5b3fa0; background: #f1ecfb; }
+.vr-panel[data-variant="annotation-card"] > .vr-status[data-tone="done"] { color: var(--vr-color-success); background: var(--vr-color-success-soft); }
+.vr-panel[data-variant="annotation-card"] > .vr-status[data-tone="failed"] { color: var(--vr-color-danger); background: var(--vr-color-danger-soft); }
 .vr-panel[data-variant="annotation-card"] > .vr-text { margin: 1px 86px 8px 0; font-size: 13px; font-weight: 700; line-height: 1.5; }
 .vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"] { display: block; width: calc(100% - 82px); min-height: 0; margin: 0 82px 8px 0; padding: 1px 0; color: var(--vr-color-text); font-size: 13px; font-weight: 800; line-height: 1.5; text-align: left; background: transparent; border: 0; border-radius: 3px; }
 .vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"]:hover { color: var(--vr-color-text); text-decoration: none; border-color: transparent; background: transparent; }

@@ -31,6 +31,21 @@ export function createIssueTaskCapability(review, options = {}) {
       if (!annotation.issue_state) return "none";
       return annotation.issue_state === "ready" || annotation.issue_state === "created" ? "complete" : "pending";
     },
+    label(annotation) {
+      if (!annotation || typeof annotation !== "object") return null;
+      const issueState = annotation.issue_state;
+      const status = annotation.status;
+      if (typeof issueState !== "string") return null;
+      if (issueState === "requested") {
+        if (status === "open") return Object.freeze({ text: "Issue依頼", tone: "pending" });
+        if (status === "in_progress") return Object.freeze({ text: "AI Issue下書き中", tone: "active" });
+        if (status === "failed") return Object.freeze({ text: "Issue下書き失敗", tone: "failed" });
+        return null;
+      }
+      if (issueState === "ready") return Object.freeze({ text: "Issueラフ確認待ち", tone: "ready" });
+      if (issueState === "created") return Object.freeze({ text: "Issue作成済み", tone: "done" });
+      return null;
+    },
     create(annotationId, rawDraft) {
       const draft = validateStandaloneDraft(annotationId, rawDraft);
       const annotation = store.load().annotations.find(({ id }) => id === annotationId);

@@ -140,6 +140,53 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   assert.equal(cancelInput, "job-1");
 });
 
+test("annotations.list applies a task-capability status label override and falls back on invalid overrides", async () => {
+  const root = repository();
+  const review = {
+    apiVersion: 1 as const,
+    store: {
+      target: { projectRoot: root },
+      load: () => ({
+        revision: 1,
+        annotations: [
+          { id: "annotation-custom", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-default", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-invalid", status: "open", kind: "dom", thread: [] },
+        ],
+        events: [],
+      }),
+      loadActive: () => ({ annotations: [] }),
+      addMessage() {},
+      setStatus() {},
+    },
+  };
+  const taskCapability = {
+    coordinatorInstructions: () => "",
+    acceptCoordinatorOutput: () => [],
+    state: () => "none" as const,
+    label: (annotation: { id: string }) => {
+      if (annotation.id === "annotation-custom") return { text: "カスタム", tone: "active" as const };
+      if (annotation.id === "annotation-invalid") return { text: "", tone: "active" as const };
+      if (annotation.id === "annotation-default") return null;
+      throw new Error("unexpected annotation");
+    },
+  };
+  const manager = { list: () => ({ revision: 1, batches: [], jobs: [] }), enqueue: () => ({ batch_id: "", jobs: [] }), retry: () => ({ batch_id: "", jobs: [] }), cancel: () => {}, taskCapability };
+  const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never);
+  const result = await bridge.query("annotations.list", { request_id: "list", input: {} });
+  assert.equal(result.ok, true);
+  const items = (result as { data: { items: Array<{ id: string; status_label: string; status_tone: string | null }> } }).data.items;
+  const custom = items.find(({ id }) => id === "annotation-custom")!;
+  assert.equal(custom.status_label, "カスタム");
+  assert.equal(custom.status_tone, "active");
+  const withDefault = items.find(({ id }) => id === "annotation-default")!;
+  assert.equal(withDefault.status_label, "未対応");
+  assert.equal(withDefault.status_tone, null);
+  const invalid = items.find(({ id }) => id === "annotation-invalid")!;
+  assert.equal(invalid.status_label, "未対応");
+  assert.equal(invalid.status_tone, null);
+});
+
 test("disabling annotation-workflow rejects legacy job APIs while review stays available", async () => {
   const root = repository();
   await ensureDefaultPlugins(root);

@@ -90,7 +90,7 @@ export class JobManager {
   private readonly executor: CommandExecutor;
   private readonly reviewPath: string;
   private readonly runnerRegistry: RunnerRegistryV1 | undefined;
-  private readonly taskCapability: WorkflowTaskCapabilityV1 | undefined;
+  readonly taskCapability: WorkflowTaskCapabilityV1 | undefined;
   private readonly running = new Map<string, RunningBatch>();
   private scheduling = false;
   private stopped = true;
@@ -414,7 +414,7 @@ export class JobManager {
         if (hasDurableCompletion && (processFailed || completionPageAvailable)) {
           job.state = "succeeded";
           job.summary = result.reason === "exit" && result.exitCode === 0
-            ? (hasNewAiMessage ? "succeeded: AI completion message received" : "succeeded: Issue draft saved")
+            ? (hasNewAiMessage ? "succeeded: AI completion message received" : "succeeded: task completion persisted")
             : `succeeded: completion persisted before coordinator ${result.reason}`;
           continue;
         }
@@ -443,7 +443,7 @@ export class JobManager {
         }
         if ((this.taskCapability?.state(annotation) ?? "none") === "pending") {
           job.state = "failed";
-          job.summary = "failed: coordinator did not save an Issue draft";
+          job.summary = "failed: coordinator did not complete the task";
           continue;
         }
         job.state = "succeeded";

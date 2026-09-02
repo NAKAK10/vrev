@@ -29,9 +29,7 @@
           "type": "object",
           "properties": {
             "id": { "type": "string", "maxLength": 128 },
-            "status": { "type": "string", "maxLength": 32 },
-            "issue_state": { "type": "string", "maxLength": 32 },
-            "issue_url": { "type": "string", "maxLength": 2048 }
+            "status": { "type": "string", "maxLength": 32 }
           },
           "required": ["id", "status"],
           "additionalProperties": true

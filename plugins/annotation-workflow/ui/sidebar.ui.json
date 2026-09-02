@@ -36,7 +36,7 @@
       { "type": "checkbox-group", "props": { "label": { "literal": "種類で絞り込む" }, "value": { "local": "/kinds" }, "options": { "literal": [{ "value": "dom", "label": "ノード" }, { "value": "region", "label": "範囲" }] } } },
       { "type": "list", "props": { "label": { "literal": "レビュー注釈" }, "empty_message": { "literal": "注釈はまだありません。" }, "variant": { "literal": "annotation-list" } }, "children": [
         { "type": "panel", "props": { "variant": { "literal": "annotation-card" }, "aria_label": { "item": "/comment" } }, "repeat": { "source": { "resource": "annotations", "path": "/items" }, "key": { "item": "/id" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] }, "children": [
-          { "type": "status", "props": { "value": { "item": "/status" }, "label": { "item": "/status_label" } } },
+          { "type": "status", "props": { "value": { "item": "/status" }, "label": { "item": "/status_label" }, "tone": { "item": "/status_tone" } } },
           { "id": "annotation-comment", "type": "button", "props": { "label": { "item": "/comment" }, "variant": { "literal": "annotation-target" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
           { "type": "row", "props": { "variant": { "literal": "annotation-meta" } }, "children": [
             { "type": "badge", "props": { "text": { "item": "/kind_label" } } },

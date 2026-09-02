@@ -7,7 +7,9 @@ import test from "node:test";
 import { installPlugin, loadPluginIssueProvider } from "../src/index.js";
 import {
   createIssueBridgeAdapter,
+  createIssueTaskCapability,
   type IssueAnnotationCreateInputV1,
+  type IssueProjectionAnnotationV1,
   type IssueReviewCapabilityV1,
   type IssueTaskCapabilityV1,
 } from "../plugins/github-issue/server/index.js";
@@ -40,9 +42,27 @@ function issueRequestFixture(calls: IssueAnnotationCreateInputV1[]) {
     coordinatorInstructions: () => "",
     acceptCoordinatorOutput: () => [],
     state: () => "none",
+    label: () => null,
     create: () => { throw new Error("not implemented"); },
   };
   return createIssueBridgeAdapter(review, issueTask);
+}
+
+function issueTaskFixture(): IssueTaskCapabilityV1 {
+  const review: IssueReviewCapabilityV1 = {
+    apiVersion: 1,
+    store: {
+      target: { projectRoot: "/workspace" },
+      load: () => ({ annotations: [] }),
+      loadActive: () => ({ annotations: [] }),
+      setIssueDraftReady: () => { throw new Error("not implemented"); },
+      completeIssueDraft: () => { throw new Error("not implemented"); },
+    },
+    annotations: {
+      create: () => { throw new Error("not implemented"); },
+    },
+  };
+  return createIssueTaskCapability(review);
 }
 
 function workspace(): string {
@@ -144,4 +164,37 @@ test("undeclared bridge commands are rejected as NOT_FOUND", async () => {
     ok: false,
     error: { code: "NOT_FOUND", message: "command is not declared by the plugin", retryable: false, request_id: "missing-command" },
   });
+});
+
+test("issue-task capability's label() maps issue_state/status combinations to status badges", () => {
+  const issueTask = issueTaskFixture();
+  const annotation = (overrides: Partial<IssueProjectionAnnotationV1>): IssueProjectionAnnotationV1 => ({
+    id: "annotation-1",
+    status: "open",
+    ...overrides,
+  });
+
+  assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "open" })), {
+    text: "Issue依頼", tone: "pending",
+  });
+  assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "in_progress" })), {
+    text: "AI Issue下書き中", tone: "active",
+  });
+  assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "failed" })), {
+    text: "Issue下書き失敗", tone: "failed",
+  });
+  assert.deepEqual(issueTask.label(annotation({ issue_state: "ready", status: "addressed" })), {
+    text: "Issueラフ確認待ち", tone: "ready",
+  });
+  assert.deepEqual(issueTask.label(annotation({ issue_state: "created", status: "resolved", issue_url: "https://github.com/example/project/issues/1" })), {
+    text: "Issue作成済み", tone: "done",
+  });
+});
+
+test("issue-task capability's label() returns null when there is no meaningful badge", () => {
+  const issueTask = issueTaskFixture();
+
+  assert.equal(issueTask.label({ id: "annotation-1", status: "open" }), null);
+  assert.equal(issueTask.label({ id: "annotation-1", status: "addressed", issue_state: "requested" }), null);
+  assert.equal(issueTask.label({} as unknown as IssueProjectionAnnotationV1), null);
 });

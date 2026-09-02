@@ -24,11 +24,14 @@ export interface IssueReviewCapabilityV1 {
   readonly store: IssueProjectionStoreV1;
   readonly annotations: { create(input: IssueAnnotationCreateInputV1): IssueAnnotationCreateResultV1 };
 }
+export type IssueTaskToneV1 = "pending" | "active" | "ready" | "done" | "failed";
+export interface IssueTaskLabelV1 { readonly text: string; readonly tone: IssueTaskToneV1 }
 export interface IssueTaskCapabilityV1 {
   readonly apiVersion: 1;
   coordinatorInstructions(): string;
   acceptCoordinatorOutput(output: string, allowedAnnotationIds: ReadonlySet<string>): readonly string[];
   state(annotation: IssueProjectionAnnotationV1): "none" | "pending" | "complete";
+  label(annotation: IssueProjectionAnnotationV1): IssueTaskLabelV1 | null;
   create(annotationId: string, rawDraft: unknown): Promise<GitHubIssueResult>;
 }
 export interface CreateIssueTaskOptions { provider?: GitHubIssueProvider; projectRoot?: string }

@@ -155,6 +155,10 @@ manifest `ui.contributions[].slot`にextension point idを指定する。documen
 | `review.overlays` | review | レビュー対象上のoverlay |
 | `annotation-workflow.annotation.actions` | annotation-workflow | 注釈cardの操作（旧`review.annotation.actions`） |
 
+### 注釈cardの状態ラベル
+
+annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI対応済み・解決済み）だけを知り、Issueなどの外部taskの概念を持たない。外部taskを所有するplugin（同梱では`github-issue`）は`issue-task` capability（`WorkflowTaskCapabilityV1`）の任意method `label(annotation)`で`{ text, tone }`を返し、annotation-workflowは`annotations.list`の`status_label`/`status_tone`としてcardのbadgeへ反映する。`tone`は`pending`/`active`/`ready`/`done`/`failed`のいずれかで、`text`は32文字以内。`null`または不正な値なら既定labelへfallbackする。github-issueは「Issue依頼」「AI Issue下書き中」「Issueラフ確認待ち」「Issue作成済み」「Issue下書き失敗」を返し、pluginを無効化するとcardは既定labelに戻る。Issue固有のfield（`issue_state`、`issue_url`）はextension point contextの`additionalProperties: true`経由でcontributorだけが読む。
+
 ### 型
 
 plugin開発者は`@nakak10/visual-review`から`VisualReviewPluginManifest`、`PluginUiExtensionPointV1`、`PluginUiContributionV1`、`PluginUiDocumentV1`、`PluginUiSurfaceExtensionPointV1`、`PluginServerProviderV1`、`PluginBridgeContractV1`をimportできる。`visual-review plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。

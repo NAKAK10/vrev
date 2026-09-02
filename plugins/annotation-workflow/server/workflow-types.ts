@@ -63,9 +63,14 @@ export interface RunnerRegistryV1 {
   resolve(runnerId: string, context: Readonly<{ workspaceRoot: string; prompt: string }>): RunnerCommandV1 | Promise<RunnerCommandV1>;
 }
 
+export type WorkflowTaskToneV1 = "pending" | "active" | "ready" | "done" | "failed";
+export interface WorkflowTaskLabelV1 { readonly text: string; readonly tone: WorkflowTaskToneV1 }
+
 /** Structural port supplied by an optional task plugin; no plugin implementation import is required. */
 export interface WorkflowTaskCapabilityV1 {
   coordinatorInstructions(): string;
   acceptCoordinatorOutput(output: string, allowedAnnotationIds: ReadonlySet<string>): readonly string[];
   state(annotation: WorkflowAnnotation): "none" | "pending" | "complete";
+  /** Optional status-badge override for an annotation this task owns; null = use the workflow default label. */
+  label?(annotation: WorkflowAnnotation): WorkflowTaskLabelV1 | null;
 }

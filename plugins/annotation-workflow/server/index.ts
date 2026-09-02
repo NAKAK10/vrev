@@ -3,7 +3,7 @@ import type { ProcessSupervisorPortV1 } from "./adapters.js";
 import { createSupervisorExecutor } from "./adapters.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { parseRunnerSelection, updateWorkflowSettings, workflowSettingsProjection } from "./settings.js";
-import type { ReviewCapabilityV1, RunnerRegistryV1, WorkflowTaskCapabilityV1 } from "./workflow-types.js";
+import type { ReviewCapabilityV1, RunnerRegistryV1, WorkflowAnnotation, WorkflowTaskCapabilityV1, WorkflowTaskLabelV1, WorkflowTaskToneV1 } from "./workflow-types.js";
 
 export const ANNOTATION_WORKFLOW_CAPABILITY_ID = "annotation-workflow";
 export const ANNOTATION_WORKFLOW_CAPABILITY_API_VERSION = 1;
@@ -33,6 +33,22 @@ function bridgeError(request: BridgeRequest, code: string, message: string): Bri
   return { ok: false, error: { code, message, retryable: false, request_id: request.request_id } };
 }
 
+const TASK_TONES: ReadonlySet<WorkflowTaskToneV1> = new Set(["pending", "active", "ready", "done", "failed"]);
+
+/** Validates an optional task-capability label override; any malformed or thrown result falls back to the workflow default label. */
+function safeTaskLabel(capability: WorkflowTaskCapabilityV1 | undefined, annotation: WorkflowAnnotation): WorkflowTaskLabelV1 | null {
+  let result: WorkflowTaskLabelV1 | null;
+  try {
+    result = capability?.label?.(annotation) ?? null;
+  } catch {
+    return null;
+  }
+  if (!result || typeof result !== "object") return null;
+  if (typeof result.text !== "string" || !result.text.trim() || result.text.length > 32) return null;
+  if (!TASK_TONES.has(result.tone)) return null;
+  return result;
+}
+
 interface BridgeReviewStore {
   readonly target: { projectRoot: string };
   load(): { revision: number; annotations: Array<Record<string, unknown> & { id: string; status: string }>; events: Array<{ at: string; revision: number }> };
@@ -54,7 +70,10 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
         const kinds = Array.isArray(input.kinds) ? new Set(input.kinds.filter((item): item is string => typeof item === "string")) : null;
         const labels: Record<string, string> = { open: "未対応", in_progress: "AI対応中", failed: "失敗", addressed: "AI対応済み", resolved: "解決済み" };
         const items = aggregate.annotations.filter((annotation) => (!statuses || statuses.has(annotation.status)) && (!kinds || kinds.has(String(annotation.kind))))
-          .map((annotation) => ({ ...annotation, status_label: labels[annotation.status] ?? annotation.status, kind_label: annotation.kind === "dom" ? "ノード" : "範囲", thread: (Array.isArray(annotation.thread) ? annotation.thread : []).map((message) => ({ ...message, actor_label: message.actor === "ai" ? "AI" : "人間" })) }));
+          .map((annotation) => {
+            const override = safeTaskLabel(manager.taskCapability, annotation as unknown as WorkflowAnnotation);
+            return { ...annotation, status_label: override?.text ?? labels[annotation.status] ?? annotation.status, status_tone: override?.tone ?? null, kind_label: annotation.kind === "dom" ? "ノード" : "範囲", thread: (Array.isArray(annotation.thread) ? annotation.thread : []).map((message) => ({ ...message, actor_label: message.actor === "ai" ? "AI" : "人間" })) };
+          });
         return { ok: true, revision: `review:${aggregate.revision}`, data: { items, total: items.length, open_count: aggregate.annotations.filter(({ status }) => status === "open").length } };
       }
       if (name === "history.list") {
