@@ -50,7 +50,7 @@ export function createBundledBridgeCatalog(options: BundledBridgeCatalogOptions)
     },
   };
   return new Map<string, BundledBridgeAdapter>([
-    ["review", createReviewBridgeAdapter(review.store, options)],
+    ["review", createReviewBridgeAdapter(review, options)],
     ["annotation-workflow", createAnnotationWorkflowBridgeAdapter(review as unknown as WorkflowReviewCapabilityV1, options.workflowManager, runnerRegistry)],
     ["custom-command", createCustomCommandBridgeAdapter(review.store.target.projectRoot, options.customCommands) as BundledBridgeAdapter],
     ["github-issue", createIssueBridgeAdapter(review as unknown as IssueReviewCapabilityV1, options.issueTask) as BundledBridgeAdapter],

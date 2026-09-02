@@ -4,18 +4,31 @@ import path from "node:path";
 import { DEFAULT_LAYOUT_SETTINGS, layoutSettingsRevision, readLayoutSettings, type LayoutCornerV1, type LayoutSettingsFile } from "./layout-settings.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { effectivePluginSettings } from "./plugin-settings.js";
-import { parsePluginUiDocument, type PluginUiDocumentV1 } from "./plugin-ui-document.js";
-import type { PluginUiSlotV1 } from "./plugin-manifest.js";
+import { parsePluginUiDocument, type PluginUiDocumentV1, type PluginUiNodeV1 } from "./plugin-ui-document.js";
+import { PLUGIN_UI_CORE_SLOTS, type PluginUiCoreSlotV1, type PluginUiExtensionEventSchemaV1, type PluginUiExtensionPointV1 } from "./plugin-manifest.js";
 
 export interface PluginUiSurfaceContributionV1 {
   plugin_id: string;
   plugin_version: string;
   id: string;
-  slot: PluginUiSlotV1;
+  /** A Core slot, or the id of an extension point resolved from an enabled plugin's `ui.extension_points`. */
+  slot: string;
   order: number;
   title: string;
   document: PluginUiDocumentV1;
   browser_module_url?: string;
+}
+
+/** An extension point hosted by an enabled plugin, resolved for the current workspace. */
+export interface PluginUiSurfaceExtensionPointV1 {
+  id: string;
+  plugin_id: string;
+  title: string;
+  description?: string;
+  context_schema: Readonly<Record<string, unknown>>;
+  form_fields: string[];
+  events: PluginUiExtensionEventSchemaV1;
+  max_contributions?: number;
 }
 
 export interface PluginUiSurfaceDiagnosticV1 {
@@ -48,6 +61,7 @@ export interface PluginUiSurfaceV1 {
   renderer_api_version: 1;
   bridge_api_version: 1;
   contributions: PluginUiSurfaceContributionV1[];
+  extension_points: PluginUiSurfaceExtensionPointV1[];
   diagnostics: PluginUiSurfaceDiagnosticV1[];
   layout: PluginUiSurfaceLayoutV1;
   page?: { title: string };
@@ -81,13 +95,55 @@ function compareByLayoutOrder(order: string[]): (left: PluginUiSurfaceContributi
   };
 }
 
+/** Asserts that every `slot` node in a plugin document targets an extension point the plugin itself declares. */
+function assertSlotNodes(node: PluginUiNodeV1, ownPointIds: ReadonlySet<string>): void {
+  if (node.type === "slot") {
+    const name = node.props?.name;
+    const literal = typeof name === "object" && name !== null ? (name as Record<string, unknown>).literal : undefined;
+    if (typeof literal !== "string") throw new Error("slot node name must be a literal string");
+    if (!ownPointIds.has(literal)) throw new Error(`slot ${literal} is not declared in ui.extension_points`);
+  }
+  for (const child of node.children ?? []) assertSlotNodes(child, ownPointIds);
+}
+
 /** Loads static UI documents only. This function never imports a plugin module. */
 export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV1 {
   const contributions: PluginUiSurfaceContributionV1[] = [];
   const diagnostics: PluginUiSurfaceDiagnosticV1[] = [];
+  const extensionPoints: PluginUiSurfaceExtensionPointV1[] = [];
+  const extensionPointOwners = new Map<string, string>();
   for (const plugin of listPlugins(workspace)) {
     if (plugin.manifest.schema_version !== 4 || !plugin.manifest.ui || !effectivePluginSettings(plugin.manifest, workspace).enabled) continue;
     const pluginRoot = installedPluginDirectory(plugin.id, workspace);
+
+    // An extension point id must start with its declaring plugin's id, so two enabled plugins cannot
+    // declare the same id in practice; the first one in registry order still wins defensively.
+    const ownPointIds = new Set<string>();
+    for (const point of plugin.manifest.ui.extension_points ?? []) {
+      ownPointIds.add(point.id);
+      const owner = extensionPointOwners.get(point.id);
+      if (owner !== undefined) {
+        diagnostics.push({
+          plugin_id: plugin.id,
+          contribution_id: point.id,
+          code: "UNAVAILABLE",
+          message: `extension point ${point.id} is already declared by plugin ${owner}`,
+        });
+        continue;
+      }
+      extensionPointOwners.set(point.id, plugin.id);
+      extensionPoints.push({
+        id: point.id,
+        plugin_id: plugin.id,
+        title: point.title,
+        ...(point.description === undefined ? {} : { description: point.description }),
+        context_schema: point.context_schema,
+        form_fields: point.form_fields,
+        events: point.events,
+        ...(point.max_contributions === undefined ? {} : { max_contributions: point.max_contributions }),
+      });
+    }
+
     for (const contribution of plugin.manifest.ui.contributions) {
       try {
         const candidate = safeContributionFile(pluginRoot, contribution.document);
@@ -96,6 +152,8 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
         try { value = JSON.parse(bytes.toString("utf8")) as unknown; }
         catch { throw new Error("plugin UI document is not valid JSON"); }
         if (contribution.browser_module) safeContributionFile(pluginRoot, contribution.browser_module);
+        const document = parsePluginUiDocument(value, bytes.byteLength);
+        assertSlotNodes(document.root, ownPointIds);
         contributions.push({
           plugin_id: plugin.id,
           plugin_version: plugin.version,
@@ -103,7 +161,7 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
           slot: contribution.slot,
           order: contribution.order,
           title: contribution.title ?? plugin.manifest.display?.title ?? plugin.id,
-          document: parsePluginUiDocument(value, bytes.byteLength),
+          document,
           ...(contribution.browser_module ? { browser_module_url: `/api/plugin-host/v1/plugins/${encodeURIComponent(plugin.id)}/ui-modules/${encodeURIComponent(contribution.id)}` } : {}),
         });
       } catch (error) {
@@ -125,6 +183,32 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
       message: "review.main is no longer rendered; migrate to review.stage",
     });
     contributions.splice(contributions.indexOf(deprecated), 1);
+  }
+
+  // A contribution may target an extension point of any enabled plugin, so its slot can only be
+  // resolved after every plugin has been visited.
+  for (const contribution of contributions.filter(({ slot }) => !PLUGIN_UI_CORE_SLOTS.has(slot as PluginUiCoreSlotV1) && !extensionPointOwners.has(slot))) {
+    diagnostics.push({
+      plugin_id: contribution.plugin_id,
+      contribution_id: contribution.id,
+      code: "UNAVAILABLE",
+      message: `extension point ${contribution.slot} is not provided by any enabled plugin`,
+    });
+    contributions.splice(contributions.indexOf(contribution), 1);
+  }
+
+  for (const point of extensionPoints) {
+    if (point.max_contributions === undefined) continue;
+    const ordered = contributions.filter(({ slot }) => slot === point.id).sort(compareByManifestOrder);
+    for (const exceeded of ordered.slice(point.max_contributions)) {
+      diagnostics.push({
+        plugin_id: exceeded.plugin_id,
+        contribution_id: exceeded.id,
+        code: "UNAVAILABLE",
+        message: `extension point ${point.id} exceeds max_contributions`,
+      });
+      contributions.splice(contributions.indexOf(exceeded), 1);
+    }
   }
 
   let settings: LayoutSettingsFile;
@@ -157,6 +241,7 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
     renderer_api_version: 1,
     bridge_api_version: 1,
     contributions: finalContributions,
+    extension_points: extensionPoints,
     diagnostics,
     layout: {
       revision,

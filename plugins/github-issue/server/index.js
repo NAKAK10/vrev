@@ -69,6 +69,14 @@ export function createIssueBridgeAdapter(review, issueTask) {
       if (name === "issue.create" && typeof input.annotation_id === "string") {
         return { ok: true, data: await issueTask.create(input.annotation_id, input), effects: [{ type: "resource.invalidate", resources: ["session", "annotations"] }] };
       }
+      if (name === "issue.request") {
+        try {
+          const { annotation } = review.annotations.create({ anchor: input.anchor, comment: input.comment, mode: "issue-request" });
+          return { ok: true, data: { annotation_id: annotation.id }, effects: [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }] };
+        } catch (error) {
+          return bridgeError(request, "VALIDATION_FAILED", error instanceof Error ? error.message : "Issue request is invalid");
+        }
+      }
       return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
     },
   });

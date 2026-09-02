@@ -5,6 +5,45 @@ import path from "node:path";
 import test from "node:test";
 
 import { installPlugin, loadPluginIssueProvider } from "../src/index.js";
+import {
+  createIssueBridgeAdapter,
+  type IssueAnnotationCreateInputV1,
+  type IssueReviewCapabilityV1,
+  type IssueTaskCapabilityV1,
+} from "../plugins/github-issue/server/index.js";
+
+type BridgeCommandResult =
+  | { ok: true; data: Record<string, unknown>; effects?: unknown[] }
+  | { ok: false; error: { code: string; message: string; retryable: boolean; request_id: string } };
+
+function issueRequestFixture(calls: IssueAnnotationCreateInputV1[]) {
+  const review: IssueReviewCapabilityV1 = {
+    apiVersion: 1,
+    store: {
+      target: { projectRoot: "/workspace" },
+      load: () => ({ annotations: [] }),
+      loadActive: () => ({ annotations: [] }),
+      setIssueDraftReady: () => { throw new Error("not implemented"); },
+      completeIssueDraft: () => { throw new Error("not implemented"); },
+    },
+    annotations: {
+      create(input) {
+        calls.push(input);
+        if (typeof input.comment !== "string" || !input.comment.trim() || typeof input.anchor !== "object"
+          || input.anchor === null || Array.isArray(input.anchor)) throw new Error("annotation input is invalid");
+        return { review: { revision: 1 }, annotation: { id: "annotation-1", status: "open" } };
+      },
+    },
+  };
+  const issueTask: IssueTaskCapabilityV1 = {
+    apiVersion: 1,
+    coordinatorInstructions: () => "",
+    acceptCoordinatorOutput: () => [],
+    state: () => "none",
+    create: () => { throw new Error("not implemented"); },
+  };
+  return createIssueBridgeAdapter(review, issueTask);
+}
 
 function workspace(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-github-issue-"));
@@ -64,4 +103,45 @@ test("the github-issue provider rejects non-GitHub output and excessive output",
   } finally {
     process.env.PATH = previousPath;
   }
+});
+
+test("issue.request creates an Issue request annotation through the review capability", async () => {
+  const calls: IssueAnnotationCreateInputV1[] = [];
+  const adapter = issueRequestFixture(calls);
+  const result = await adapter.command("issue.request", {
+    request_id: "issue-request-1",
+    input: { anchor: { selector: "h1", kind: "dom" }, comment: "GitHub Issueにしてほしい" },
+  }) as BridgeCommandResult;
+
+  assert.deepEqual(result, {
+    ok: true,
+    data: { annotation_id: "annotation-1" },
+    effects: [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }],
+  });
+  assert.deepEqual(calls, [{ anchor: { selector: "h1", kind: "dom" }, comment: "GitHub Issueにしてほしい", mode: "issue-request" }]);
+});
+
+test("issue.request maps invalid annotation input to a VALIDATION_FAILED envelope", async () => {
+  const calls: IssueAnnotationCreateInputV1[] = [];
+  const adapter = issueRequestFixture(calls);
+  for (const [input, requestId] of [
+    [{ anchor: { selector: "h1" }, comment: "" }, "empty-comment"],
+    [{ anchor: "h1", comment: "見た目を整理して" }, "anchor-not-object"],
+  ] as Array<[Record<string, unknown>, string]>) {
+    const result = await adapter.command("issue.request", { request_id: requestId, input }) as BridgeCommandResult;
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: "VALIDATION_FAILED", message: "annotation input is invalid", retryable: false, request_id: requestId },
+    });
+  }
+  assert.equal(calls.length, 2);
+});
+
+test("undeclared bridge commands are rejected as NOT_FOUND", async () => {
+  const adapter = issueRequestFixture([]);
+  const result = await adapter.command("issue.missing", { request_id: "missing-command", input: {} }) as BridgeCommandResult;
+  assert.deepEqual(result, {
+    ok: false,
+    error: { code: "NOT_FOUND", message: "command is not declared by the plugin", retryable: false, request_id: "missing-command" },
+  });
 });

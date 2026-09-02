@@ -16,6 +16,7 @@
           { "type": "button", "props": { "label": { "literal": "GitHubにIssueを追加" }, "variant": { "literal": "primary" }, "type": { "literal": "submit" } } }
         ] }
       ] }
-    ] }
+    ] },
+    { "type": "link", "when": { "eq": [{ "slot_context": "/issue_state" }, { "literal": "created" }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "slot_context": "/issue_url" }, "external": { "literal": true } } }
   ] }
 }

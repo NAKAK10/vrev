@@ -41,7 +41,8 @@ function taskFixture(provider: { createIssue(root: string, draft: { title: strin
     setIssueDraftReady: (_id: string, title: string, body: string) => { drafts.push({ title, body }); annotation.issue_state = "ready"; },
     completeIssueDraft: (_id: string, _title: string, url: string) => { annotation.issue_state = "created"; annotation.issue_url = url; },
   };
-  return { annotation, drafts, task: createIssueTaskCapability({ apiVersion: 1, store }, { provider }) };
+  const annotations = { create: (): never => { throw new Error("not implemented"); } };
+  return { annotation, drafts, task: createIssueTaskCapability({ apiVersion: 1, store, annotations }, { provider }) };
 }
 
 test("Issue task accepts only allowed annotation IDs and rejects internal references", () => {

@@ -3,6 +3,8 @@ export const PLUGIN_UI_DOCUMENT_MAX_DEPTH = 32;
 export const PLUGIN_UI_DOCUMENT_MAX_NODES = 2_000;
 
 const IDENTIFIER = /^[a-z](?:[a-z0-9_.-]{0,62}[a-z0-9_])?$/;
+/** Extension-point event names: declared by a plugin's `ui.extension_points[].events` and used on a `slot` node's `on` map and by the `slot.emit` instruction. */
+const SLOT_EVENT_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const COMPONENTS = new Set([
   "app-shell", "header", "toolbar", "split-panel", "slot", "section", "stack", "row", "panel", "spacer",
   "text", "heading", "badge", "count", "status", "time", "list", "empty-state", "code", "safe-markdown",
@@ -302,6 +304,17 @@ function instruction(value: unknown, label: string, depth: number): void {
       if (item.user_gesture !== true) throw new Error(`${label}.user_gesture must be true`);
       break;
     }
+    case "slot.emit":
+      // Only meaningful inside a contribution rendered into an extension point; this validator
+      // accepts it anywhere since it has no manifest context to confirm the enclosing slot.
+      exactKeys(item, ["type", "event", "payload"], label);
+      if (typeof item.event !== "string" || !SLOT_EVENT_NAME_PATTERN.test(item.event)) throw new Error(`${label}.event is invalid`);
+      if (item.payload !== undefined) {
+        const payload = record(item.payload, `${label}.payload`);
+        if (Object.keys(payload).length > 16) throw new Error(`${label}.payload has too many entries`);
+        bindingMap(payload, `${label}.payload`);
+      }
+      break;
     case "toast.show":
       exactKeys(item, ["type", "variant", "message", "duration_ms"], label);
       if (item.variant !== undefined && !["info", "success", "warning", "error"].includes(item.variant as string)) throw new Error(`${label}.variant is invalid`);
@@ -374,10 +387,19 @@ export function parsePluginUiDocument(value: unknown, byteLength?: number): Plug
     }
     if (node.on !== undefined) {
       const on = record(node.on, `${label}.on`);
-      const allowedEvents = COMPONENT_EVENTS[node.type] ?? [];
-      for (const [event, handlers] of Object.entries(on)) {
-        if (!allowedEvents.includes(event)) throw new Error(`${label}.on contains unsupported event: ${event}`);
-        instructions(handlers, `${label}.on.${event}`);
+      if (node.type === "slot") {
+        // A slot's `on` map is for the events its extension point declares; this validator has
+        // no manifest context, so it only checks the event-name shape (cross-checked at surface time).
+        for (const [event, handlers] of Object.entries(on)) {
+          if (!SLOT_EVENT_NAME_PATTERN.test(event)) throw new Error(`${label}.on contains unsupported event: ${event}`);
+          instructions(handlers, `${label}.on.${event}`);
+        }
+      } else {
+        const allowedEvents = COMPONENT_EVENTS[node.type] ?? [];
+        for (const [event, handlers] of Object.entries(on)) {
+          if (!allowedEvents.includes(event)) throw new Error(`${label}.on contains unsupported event: ${event}`);
+          instructions(handlers, `${label}.on.${event}`);
+        }
       }
     }
     if (node.children !== undefined && !Array.isArray(node.children)) throw new Error(`${label}.children must be an array`);

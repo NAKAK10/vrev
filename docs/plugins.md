@@ -36,7 +36,7 @@ schema v4が新規pluginの既定contractである。v3のdisplay/configuration�
     "renderer_api_version": 1,
     "bridge_api_version": 1,
     "contributions": [
-      { "id": "annotation-action", "slot": "review.annotation.actions", "document": "./ui/action.ui.json", "order": 100 }
+      { "id": "annotation-action", "slot": "annotation-workflow.annotation.actions", "document": "./ui/action.ui.json", "order": 100 }
     ]
   },
   "requires": [
@@ -53,7 +53,7 @@ schema v4が新規pluginの既定contractである。v3のdisplay/configuration�
 - `commands`、`storage_provider`、`issue_provider`、`annotation_flow_provider`は任意。command名は小文字英数字と`-`を使う。
 - schema v2–v4の`storage_provider`と`annotation_flow_provider`は`api_version: 1`が必須。schema v1–v3の既存manifest/provider APIはone-beta互換のため引き続き受理する。
 - schema v3/v4の`display`はtitle、短いsummary、安全なREADME相対pathを宣言する。`configuration`はCoreが描画するstring/integer/boolean/selectだけを使い、任意HTMLは指定できない。
-- schema v4の`server`はAPI/bridge version、module、JSON contractを宣言する。`ui`はrenderer/bridge version、allowlist slotへのJSON document、任意の`browser_module`を宣言できる。`browser_module`は導入済みplugin内のcanonical local ES moduleだけをCore route経由で実行し、remote script・任意HTML・plugin CSSは許可しない。trusted host codeとして扱うため、未信頼pluginは導入しない。
+- schema v4の`server`はAPI/bridge version、module、JSON contractを宣言する。`ui`はrenderer/bridge version、Core slot（`review.header`/`review.stage`/`review.sidebar`/`settings.detail`）または他pluginのextension pointへのJSON document、任意の`browser_module`、自pluginが受け入れる`extension_points`を宣言できる（[plugin-ui-bridge.md §2.2](plugin-ui-bridge.md)）。`browser_module`は導入済みplugin内のcanonical local ES moduleだけをCore route経由で実行し、remote script・任意HTML・plugin CSSは許可しない。trusted host codeとして扱うため、未信頼pluginは導入しない。
 - schema v4の`requires`/`provides`はcapability名とexact `api_version: 1`を宣言する。required capability不足は明示的にunavailableとなり、暗黙fallbackしない。
 - credentialは`source: environment`で環境変数名だけを宣言する。値をUIや`.vreview/plugin-settings.json`へ保存しない。
 - `module`はplugin rootからの`./`始まりのcanonical POSIX relative pathでなければならない。絶対path、`..`、backslashは受理しない。
@@ -62,7 +62,7 @@ schema v4が新規pluginの既定contractである。v3のdisplay/configuration�
 
 ## Base scaffold
 
-最小構成はCLIで生成できる。生成先はworkspace rootの`plugins/<id>/`で、schema v3互換manifest、`index.js`、`package.json`、README、Node testを含む。command/providerだけならそのまま利用できる。server capabilityまたは宣言的UIを追加する場合はmanifestをschema v4へ更新し、server contract/UI documentを追加する。
+最小構成はCLIで生成できる。生成先はworkspace rootの`plugins/<id>/`で、schema v4 manifest（`requires`でreview capabilityを宣言）、server module（`server/index.js`）とbridge contract（`server.contract.json`）、`annotation-workflow.annotation.actions`へのUI contribution（`ui/annotation-action.ui.json`）、editor用の型re-export（`types.d.ts`）、`index.js`、`package.json`、README、Node testを含む。hello commandとUI contributionは生成直後からそのまま動作する。serverのquery/commandを増やす場合はcontractと`server/index.js`を、extension pointをhostする場合は`ui.extension_points`をそれぞれ書き換える。
 
 ```sh
 visual-review plugin create --help

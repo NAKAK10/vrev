@@ -83,11 +83,26 @@ test("creates a one-level plugin base that can be installed and executed", async
   assert.match(scaffold.directory, /\/plugins\/example-base$/);
   assert.equal(existsSync(path.join(scaffold.directory, "visual-review.plugin.json")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "package.json")), true);
-  const manifest = JSON.parse(readFileSync(path.join(scaffold.directory, "visual-review.plugin.json"), "utf8")) as { schema_version: number; display: { title: string; readme: string }; configuration: unknown[] };
-  assert.equal(manifest.schema_version, 3);
-  assert.equal(manifest.display.title, "example-base");
-  assert.equal(manifest.display.readme, "./README.md");
+  assert.equal(existsSync(path.join(scaffold.directory, "server/index.js")), true);
+  assert.equal(existsSync(path.join(scaffold.directory, "server.contract.json")), true);
+  assert.equal(existsSync(path.join(scaffold.directory, "ui/annotation-action.ui.json")), true);
+  assert.equal(existsSync(path.join(scaffold.directory, "types.d.ts")), true);
+  const manifest = parsePluginManifest(JSON.parse(readFileSync(path.join(scaffold.directory, "visual-review.plugin.json"), "utf8")));
+  assert.equal(manifest.schema_version, 4);
+  assert.equal(manifest.display?.title, "example-base");
+  assert.equal(manifest.display?.readme, "./README.md");
   assert.deepEqual(manifest.configuration, []);
+  assert.deepEqual(manifest.commands, [{ name: "hello", module: "./index.js", export: "hello" }]);
+  assert.deepEqual(manifest.server, { module: "./server/index.js", api_version: 1, bridge_api_version: 1, contract: "./server.contract.json" });
+  assert.deepEqual(manifest.ui?.contributions, [{ id: "annotation-action", slot: "annotation-workflow.annotation.actions", document: "./ui/annotation-action.ui.json", order: 100 }]);
+  assert.deepEqual(manifest.requires, [{ capability: "review", api_version: 1, optional: false }]);
+  assert.deepEqual(manifest.provides, []);
+  const contract = parsePluginBridgeContract(JSON.parse(readFileSync(path.join(scaffold.directory, "server.contract.json"), "utf8")));
+  assert.deepEqual(contract, { schema_version: 1, queries: [], commands: [] });
+  const document = parsePluginUiDocument(JSON.parse(readFileSync(path.join(scaffold.directory, "ui/annotation-action.ui.json"), "utf8")));
+  assert.equal(document.root.type, "stack");
+  assert.equal(document.root.children?.[0]?.type, "button");
+  assert.equal((document.root.children?.[0]?.on?.click?.[0] as { type?: string } | undefined)?.type, "toast.show");
   assert.throws(() => createPluginScaffold("example-base", root), /already exists/);
 
   await installPlugin(scaffold.directory, root);
@@ -292,12 +307,15 @@ test("integrates install, list, run, and remove with the built CLI", () => {
   assert.match(removed.stdout, /Removed cli-plugin/);
 });
 
-test("CLI plugin create help documents the schema-v3 template", () => {
+test("CLI plugin create help documents the schema-v4 template", () => {
   const cli = new URL("../src/cli.js", import.meta.url);
   const result = spawnSync(process.execPath, [cli.pathname, "plugin", "create", "--help"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /schema v3/);
-  assert.match(result.stdout, /configuration template/);
+  assert.match(result.stdout, /schema v4/);
+  assert.match(result.stdout, /server\/index\.js/);
+  assert.match(result.stdout, /server\.contract\.json/);
+  assert.match(result.stdout, /ui\/annotation-action\.ui\.json/);
+  assert.match(result.stdout, /types\.d\.ts/);
   assert.match(result.stdout, /source=environment/);
 });
 

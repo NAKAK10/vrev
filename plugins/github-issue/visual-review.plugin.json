@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "github-issue",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "display": {
     "title": "GitHub Issue",
     "summary": "レビューから確認済みのGitHub Issueを作成します。",
@@ -23,9 +23,16 @@
     "contributions": [
       {
         "id": "issue-actions",
-        "slot": "review.annotation.actions",
+        "slot": "annotation-workflow.annotation.actions",
         "document": "./ui/issue.ui.json",
         "order": 200
+      },
+      {
+        "id": "issue-request-action",
+        "slot": "review.comment-dialog.actions",
+        "document": "./ui/issue-request.ui.json",
+        "order": 100,
+        "title": "GitHub Issue依頼"
       }
     ]
   },

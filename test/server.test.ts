@@ -614,6 +614,58 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   assert.equal(archived.thread.length, preservedThreadLength);
 });
 
+test("the issue.request bridge command persists an Issue request annotation", async () => {
+  const before = visualReview.store.load().annotations.length;
+  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.request`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: baseUrl },
+    body: JSON.stringify({
+      protocol: "plugin-bridge/1",
+      request_id: "issue-request-bridge",
+      idempotency_key: "issue-request-bridge",
+      input: { anchor: { selector: "h1", kind: "dom" }, comment: "GitHub Issue として整理してほしい" },
+    }),
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json() as {
+    ok: boolean;
+    data: { annotation_id: string };
+    effects: Array<{ type: string; resources: string[] }>;
+  };
+  assert.equal(result.ok, true);
+  assert.ok(result.data.annotation_id);
+  assert.deepEqual(result.effects, [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }]);
+  assert.equal(visualReview.store.load().annotations.length, before + 1);
+
+  const requested = visualReview.store.load().annotations.find(({ id }) => id === result.data.annotation_id)!;
+  assert.equal(requested.status, "open");
+  assert.equal(requested.issue_state, "requested");
+  assert.equal(requested.kind, "dom");
+  assert.equal(requested.page_path, ".code/htmls/pages/index.html");
+  assert.equal(requested.comment, "GitHub Issue として整理してほしい");
+  assert.deepEqual(requested.anchor, { selector: "h1" });
+});
+
+test("the issue.request bridge command rejects an invalid payload", async () => {
+  const before = visualReview.store.load().annotations.length;
+  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.request`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: baseUrl },
+    body: JSON.stringify({
+      protocol: "plugin-bridge/1",
+      request_id: "issue-request-invalid",
+      idempotency_key: "issue-request-invalid",
+      input: { anchor: { selector: "h1", kind: "dom" }, comment: "" },
+    }),
+  });
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: { code: "VALIDATION_FAILED", message: "annotation input is invalid", retryable: false, request_id: "issue-request-invalid" },
+  });
+  assert.equal(visualReview.store.load().annotations.length, before);
+});
+
 test("supports file-state and annotation/message/status APIs through ReviewStore", async () => {
   const stateResponse = await fetch(`${baseUrl}/api/file-state?path=.code%2Fhtmls%2Fpages%2Fother.html`);
   const state = await stateResponse.json() as { path: string; sha256: string };

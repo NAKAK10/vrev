@@ -389,6 +389,11 @@ a { color: inherit; }
 .vr-form[data-variant="comment-form"] .vr-textarea { min-height: 150px; }
 .vr-row[data-variant="dialog-actions"] { justify-content: flex-end; padding-top: 2px; }
 .vr-row[data-variant="dialog-actions"] .vr-button { min-width: 104px; }
+/* Extension-point contributions (e.g. review.comment-dialog.actions) sit between キャンセル and
+   注釈を保存 on one line: the slot host contributes no box of its own, and each contributed root
+   (typically a stack) lays its children out as a row instead of the default column stack. */
+.vr-row[data-variant="dialog-actions"] > .vr-slot { display: contents; min-width: 0; overflow: visible; border-left: 0; background: transparent; }
+.vr-row[data-variant="dialog-actions"] > .vr-slot > [data-slot] { display: flex; flex-direction: row; align-items: center; gap: var(--vr-space-2); }
 .vr-plugin-detail-content > .vr-section { padding: 0; }
 .vr-plugin-detail-content > .vr-section + .vr-section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--vr-color-border); }
 .vr-plugin-detail-content .vr-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }

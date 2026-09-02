@@ -6,7 +6,6 @@ import test from "node:test";
 
 import { ensureDefaultPlugins } from "../src/cli.js";
 import { installPlugin, layoutSettingsPath, loadPluginUiSurface, updateLayoutSettings, type LayoutSettingsUpdateInput } from "../src/index.js";
-import type { PluginUiSlotV1 } from "../src/plugin-manifest.js";
 
 function workspace(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-ui-surface-"));
@@ -16,20 +15,34 @@ function workspace(): string {
 
 const MINIMAL_DOCUMENT = JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } });
 
+/** A document whose root stack hosts the given extension point via a `slot` node. */
+function slotHostDocument(extensionPointId: string): unknown {
+  return { schema_version: 1, root: { type: "stack", children: [{ type: "slot", props: { name: { literal: extensionPointId } } }] } };
+}
+
 interface FixtureContribution {
   id: string;
-  slot: PluginUiSlotV1;
+  /** A Core slot, or the id of an extension point declared by an enabled plugin. */
+  slot: string;
   order?: number;
   title?: string;
   browserModule?: boolean;
+  /** Written as the contribution document instead of the minimal app-shell. */
+  document?: unknown;
 }
 
-async function installFixturePlugin(root: string, id: string, contributions: FixtureContribution[]): Promise<void> {
+interface FixtureExtensionPoint {
+  id: string;
+  title?: string;
+  maxContributions?: number;
+}
+
+async function installFixturePlugin(root: string, id: string, contributions: FixtureContribution[], extensionPoints: FixtureExtensionPoint[] = []): Promise<void> {
   const source = path.join(root, "sources", id);
   mkdirSync(path.join(source, "ui"), { recursive: true });
   writeFileSync(path.join(source, "README.md"), "# Fixture\n");
   for (const contribution of contributions) {
-    writeFileSync(path.join(source, `ui/${contribution.id}.json`), MINIMAL_DOCUMENT);
+    writeFileSync(path.join(source, `ui/${contribution.id}.json`), contribution.document === undefined ? MINIMAL_DOCUMENT : JSON.stringify(contribution.document));
     if (contribution.browserModule) writeFileSync(path.join(source, `ui/${contribution.id}.js`), "export function mount(){ return () => {}; }\n");
   }
   writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
@@ -41,6 +54,12 @@ async function installFixturePlugin(root: string, id: string, contributions: Fix
     ui: {
       renderer_api_version: 1,
       bridge_api_version: 1,
+      ...(extensionPoints.length === 0 ? {} : { extension_points: extensionPoints.map((point) => ({
+        id: point.id,
+        title: point.title ?? point.id,
+        context_schema: { type: "object", properties: {}, additionalProperties: false },
+        ...(point.maxContributions === undefined ? {} : { max_contributions: point.maxContributions }),
+      })) }),
       contributions: contributions.map((contribution, index) => ({
         id: contribution.id,
         slot: contribution.slot,
@@ -148,4 +167,100 @@ test("falls back to default layout settings when the persisted file is malformed
   const surface = loadPluginUiSurface(root);
   assert.equal(surface.layout.stage_switcher_position, "bottom-right");
   assert.deepEqual(surface.layout.header_items.map(({ key }) => key), ["solo/header-only"]);
+});
+
+test("bundled default plugins expose extension points and resolve cross-plugin contributions", async () => {
+  const root = workspace();
+  await ensureDefaultPlugins(root);
+  const surface = loadPluginUiSurface(root);
+
+  const points = new Map(surface.extension_points.map((point) => [point.id, point]));
+  assert.equal(points.get("review.overlays")?.plugin_id, "review");
+  const commentDialog = points.get("review.comment-dialog.actions");
+  assert.ok(commentDialog);
+  assert.equal(commentDialog.plugin_id, "review");
+  assert.deepEqual(commentDialog.form_fields, ["comment"]);
+  assert.deepEqual(Object.keys(commentDialog.events), ["completed"]);
+  assert.equal(commentDialog.max_contributions, 4);
+  const annotationActions = points.get("annotation-workflow.annotation.actions");
+  assert.ok(annotationActions);
+  assert.equal(annotationActions.plugin_id, "annotation-workflow");
+  assert.equal(annotationActions.max_contributions, 8);
+
+  const issueSlots = new Map(surface.contributions.filter(({ plugin_id }) => plugin_id === "github-issue").map(({ id, slot }) => [id, slot]));
+  assert.equal(issueSlots.get("issue-request-action"), "review.comment-dialog.actions");
+  assert.equal(issueSlots.get("issue-actions"), "annotation-workflow.annotation.actions");
+  assert.deepEqual(surface.diagnostics.filter(({ code }) => code === "UNAVAILABLE"), []);
+});
+
+test("a contribution targeting an unknown extension point is dropped with an UNAVAILABLE diagnostic", async () => {
+  const root = workspace();
+  await installFixturePlugin(root, "orphan", [{ id: "orphan-action", slot: "nowhere.actions" }]);
+
+  const surface = loadPluginUiSurface(root);
+  assert.equal(surface.contributions.some(({ id }) => id === "orphan-action"), false);
+  assert.deepEqual(surface.diagnostics, [{
+    plugin_id: "orphan",
+    contribution_id: "orphan-action",
+    code: "UNAVAILABLE",
+    message: "extension point nowhere.actions is not provided by any enabled plugin",
+  }]);
+});
+
+test("contributions beyond max_contributions are dropped in manifest order", async () => {
+  const root = workspace();
+  await installFixturePlugin(root, "host", [
+    { id: "host-panel", slot: "review.header", document: slotHostDocument("host.actions") },
+  ], [{ id: "host.actions", maxContributions: 1 }]);
+  await installFixturePlugin(root, "first", [{ id: "guest-action", slot: "host.actions" }]);
+  await installFixturePlugin(root, "second", [{ id: "guest-action", slot: "host.actions" }]);
+
+  const surface = loadPluginUiSurface(root);
+  assert.deepEqual(surface.contributions.filter(({ slot }) => slot === "host.actions").map(({ plugin_id }) => plugin_id), ["first"]);
+  assert.deepEqual(surface.diagnostics, [{
+    plugin_id: "second",
+    contribution_id: "guest-action",
+    code: "UNAVAILABLE",
+    message: "extension point host.actions exceeds max_contributions",
+  }]);
+});
+
+test("a document slot node the plugin does not declare is an INVALID_DOCUMENT", async () => {
+  const root = workspace();
+  await installFixturePlugin(root, "host", [
+    { id: "host-panel", slot: "review.header", document: slotHostDocument("host.actions") },
+  ], [{ id: "host.actions" }]);
+  await installFixturePlugin(root, "impostor", [
+    { id: "impostor-panel", slot: "review.header", document: slotHostDocument("host.actions") },
+  ]);
+
+  const surface = loadPluginUiSurface(root);
+  assert.deepEqual(surface.contributions.map(({ id }) => id), ["host-panel"]);
+  assert.deepEqual(surface.diagnostics, [{
+    plugin_id: "impostor",
+    contribution_id: "impostor-panel",
+    code: "INVALID_DOCUMENT",
+    message: "slot host.actions is not declared in ui.extension_points",
+  }]);
+});
+
+test("a plugin can host an extension point that another plugin contributes to", async () => {
+  const root = workspace();
+  await installFixturePlugin(root, "host", [
+    { id: "host-panel", slot: "review.header", document: slotHostDocument("host.actions") },
+  ], [{ id: "host.actions" }]);
+  await installFixturePlugin(root, "guest", [{ id: "guest-action", slot: "host.actions" }]);
+
+  const surface = loadPluginUiSurface(root);
+  assert.deepEqual(surface.diagnostics, []);
+  assert.deepEqual(surface.extension_points, [{
+    id: "host.actions",
+    plugin_id: "host",
+    title: "host.actions",
+    context_schema: { type: "object", properties: {}, additionalProperties: false },
+    form_fields: [],
+    events: {},
+  }]);
+  const guestAction = surface.contributions.find(({ plugin_id, id }) => plugin_id === "guest" && id === "guest-action");
+  assert.equal(guestAction?.slot, "host.actions");
 });

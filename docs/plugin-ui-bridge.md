@@ -51,7 +51,7 @@ Implementation status: Phase 7–8 complete; legacy renderer remains available f
 | `review.header` | headerの右側へ追加表示する（toolbar等） | 複数可。Coreのlayout settingsで並び替え |
 | `review.stage` | 左側の描画領域を占有する表示 | 複数宣言可。同時に表示されるのは1つで、2つ以上ある場合はCoreが切り替えmenuを描画領域に重ねて表示する |
 | `review.sidebar` | 右側のcontent columnへ追加表示する | 複数可。Coreのlayout settingsで並び替え |
-| `review.annotation.actions` / `review.overlays` / `settings.detail` | 従来どおり | |
+| `settings.detail` | 従来どおり | |
 | `review.main` | 廃止。manifestはparseできるが描画されず、surfaceが`UNAVAILABLE` diagnosticを返す | |
 
 各contributionは任意の`title`（1–80文字）を持てる。titleは設定画面の並び替えlistと描画切り替えmenuの表示名に使い、未指定時はplugin `display.title`を使う。contribution keyは`<plugin_id>/<contribution_id>`である。
@@ -74,6 +74,90 @@ Coreは`.vreview/layout-settings.json`（Git管理外）に次を保存し、sha
 - `switcher_position`は`top-left | top-right | bottom-left | bottom-right`で、既定は`bottom-right`。描画領域が競合した場合の切り替えmenuの表示位置である。
 
 Surface response（`GET /api/plugin-host/v1/surfaces/review`）の`layout`は`revision`、`header_items`、`sidebar_items`、`stage_views`、`active_stage`、`stage_switcher_position`を返し、`contributions`はslotごとの表示順で並んでいる。設定用endpointは`GET/PUT /api/settings/layout`（PUTは`{ revision, header?, sidebar?, stage? }`、conflictは409）であり、`/settings`ページがこれを編集する。`/settings/plugins`（install済みplugin）へは`/settings`から遷移する。
+
+## 2.2 Plugin-hosted extension points（plugin間UI連携）
+
+Core slot以外に、pluginは自分のdocument内へ他pluginの部品を受け入れる**extension point**を宣言できる。GitHub Issue pluginがreview pluginのコメント入力dialog（キャンセルの右側）へ「GitHub Issueを依頼」buttonを追加するのがこの仕組みの最初の利用例である。
+
+### 宣言（host側 manifest）
+
+```json
+"ui": {
+  "renderer_api_version": 1,
+  "bridge_api_version": 1,
+  "extension_points": [
+    {
+      "id": "review.comment-dialog.actions",
+      "title": "コメント入力ダイアログの操作",
+      "description": "対象を選択してコメントを入力しているとき、キャンセルの右側に追加される操作",
+      "context_schema": {
+        "type": "object",
+        "properties": {
+          "anchor": { "type": "object", "properties": {}, "additionalProperties": true }
+        },
+        "required": ["anchor"],
+        "additionalProperties": true
+      },
+      "form_fields": ["comment"],
+      "events": {
+        "completed": { "type": "object", "properties": { "annotation_id": { "type": "string", "maxLength": 128 } }, "additionalProperties": false }
+      },
+      "max_contributions": 4
+    }
+  ],
+  "contributions": []
+}
+```
+
+- `id`は`<宣言plugin id>.`で始まり（`^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+$`、96文字以内）、Core slot名と重複できない。
+- `context_schema`はhostが`slot` nodeの`context`で渡す値の型である。bridge contractと同じbounded JSON Schema subsetを使い、extension pointだけは`"additionalProperties": true`でopaque objectを表現できる。
+- `form_fields`はcontributorが`{ "form": name }` bindingで読める、hostのform field名である。
+- `events`はcontributorが`slot.emit`で送れるevent名とpayload schemaである。
+- `max_contributions`を超えた分は`UNAVAILABLE` diagnosticになる。
+
+### host document
+
+hostは自分のextension pointだけを`slot` nodeで配置できる。`slot` nodeの`on`でcontributorからのeventを受け取る。
+
+```json
+{ "type": "row", "props": { "variant": { "literal": "dialog-actions" } }, "children": [
+  { "type": "button", "props": { "label": { "literal": "キャンセル" } }, "on": { "click": [{ "type": "dialog.close", "dialog": "comment-dialog" }] } },
+  { "type": "slot", "props": { "name": { "literal": "review.comment-dialog.actions" }, "context": { "slot_context": "/review/selection" } },
+    "on": { "completed": [{ "type": "dialog.close", "dialog": "comment-dialog" }, { "type": "resource.refresh", "resource": "session" }] } },
+  { "type": "button", "props": { "label": { "literal": "注釈を保存" }, "type": { "literal": "submit" }, "variant": { "literal": "primary" } } }
+] }
+```
+
+### contributor側
+
+manifest `ui.contributions[].slot`にextension point idを指定する。documentからはhost contextを`{ "slot_context": "/path" }`、host formを`{ "form": name }`で読み、完了時は`slot.emit`でhostへ通知する。
+
+```json
+{ "type": "command.execute", "command": "issue.request",
+  "input": { "anchor": { "slot_context": "/anchor" }, "comment": { "form": "comment" } },
+  "on_success": [
+    { "type": "slot.emit", "event": "completed", "payload": { "annotation_id": { "result": "/annotation_id" } } },
+    { "type": "toast.show", "variant": "success", "message": { "literal": "GitHub Issueの作成依頼を注釈として保存しました。" } }
+  ] }
+```
+
+### Coreの検証
+
+- manifest: extension point idの形式・prefix、schema subset、event名（`^[a-z][a-z0-9-]{0,31}$`）、上限（extension point 16、events 8、form_fields 16）。
+- surface load: contributionの`slot`がCore slotでも有効なpluginのextension pointでもなければ`UNAVAILABLE`。plugin documentの`slot` nodeが自pluginのextension pointを指していなければ`INVALID_DOCUMENT`。
+- renderer: `context`値を`context_schema`で検証し、不一致ならslotを描画しない。`slot.emit`は宣言済みeventだけをhostの`on`へ配送し、payloadはevent schemaで検証する。
+
+### 同梱pluginのextension point
+
+| Extension point | Host | 用途 |
+|---|---|---|
+| `review.comment-dialog.actions` | review | コメント入力dialogの操作（キャンセルの右側） |
+| `review.overlays` | review | レビュー対象上のoverlay |
+| `annotation-workflow.annotation.actions` | annotation-workflow | 注釈cardの操作（旧`review.annotation.actions`） |
+
+### 型
+
+plugin開発者は`@nakak10/visual-review`から`VisualReviewPluginManifest`、`PluginUiExtensionPointV1`、`PluginUiContributionV1`、`PluginUiDocumentV1`、`PluginUiSurfaceExtensionPointV1`、`PluginServerProviderV1`、`PluginBridgeContractV1`をimportできる。`visual-review plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
 
 ## 3. Limits
 

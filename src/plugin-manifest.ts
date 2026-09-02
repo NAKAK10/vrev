@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { readJson } from "./file-utils.js";
+import { parseBoundedJsonSchema } from "./plugin-bridge-contract.js";
 
 export const PLUGIN_MANIFEST_FILE = "visual-review.plugin.json";
 
@@ -42,18 +43,35 @@ export interface PluginServerManifestV1 extends PluginModuleReference {
   contract: string;
 }
 
-export type PluginUiSlotV1 =
+/** Slots hosted by the Core renderer itself. `review.main` is deprecated: parsed but never rendered. */
+export type PluginUiCoreSlotV1 =
   | "review.main"
   | "review.header"
   | "review.stage"
   | "review.sidebar"
-  | "review.annotation.actions"
-  | "review.overlays"
   | "settings.detail";
+
+/** A JSON-schema-shaped event payload contract, keyed by event name (see `PluginUiExtensionPointV1.events`). */
+export type PluginUiExtensionEventSchemaV1 = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+/**
+ * An extension point a plugin hosts via a `slot` node in one of its own UI documents, for other
+ * plugins to contribute into (`ui.contributions[].slot`). Declared in `ui.extension_points[]`.
+ */
+export interface PluginUiExtensionPointV1 {
+  id: string;
+  title: string;
+  description?: string;
+  context_schema: Readonly<Record<string, unknown>>;
+  form_fields: string[];
+  events: PluginUiExtensionEventSchemaV1;
+  max_contributions?: number;
+}
 
 export interface PluginUiContributionV1 {
   id: string;
-  slot: PluginUiSlotV1;
+  /** A Core slot, or the id of an extension point declared by some plugin's `ui.extension_points`. */
+  slot: string;
   document: string;
   browser_module?: string;
   order: number;
@@ -63,6 +81,7 @@ export interface PluginUiContributionV1 {
 export interface PluginUiManifestV1 {
   renderer_api_version: 1;
   bridge_api_version: 1;
+  extension_points?: PluginUiExtensionPointV1[];
   contributions: PluginUiContributionV1[];
 }
 
@@ -100,7 +119,10 @@ const SEMVER_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A
 const EXPORT_PATTERN = /^(?:default|[A-Za-z_$][\w$]*)$/;
 const CONTRIBUTION_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z][a-z0-9]*){0,7}$/;
-const UI_SLOTS = new Set<PluginUiSlotV1>(["review.main", "review.header", "review.stage", "review.sidebar", "review.annotation.actions", "review.overlays", "settings.detail"]);
+export const PLUGIN_UI_CORE_SLOTS: ReadonlySet<PluginUiCoreSlotV1> = new Set(["review.main", "review.header", "review.stage", "review.sidebar", "settings.detail"]);
+const EXTENSION_POINT_ID_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+$/;
+const EXTENSION_EVENT_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+const FORM_FIELD_PATTERN = /^[a-z](?:[a-z0-9_.-]{0,62}[a-z0-9_])?$/;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 function object(value: unknown, label: string): Record<string, unknown> {
@@ -130,6 +152,55 @@ function versionedModuleReference(value: unknown, label: string): VersionedPlugi
   const reference = moduleReference(record, label, ["api_version"]);
   if (record.api_version !== 1) throw new Error(`${label}.api_version must be 1`);
   return { ...reference, api_version: 1 };
+}
+
+function parseExtensionPoints(value: unknown, pluginId: string): PluginUiExtensionPointV1[] {
+  if (!Array.isArray(value) || value.length > 16) throw new Error("ui.extension_points must be an array");
+  const ids = new Set<string>();
+  return value.map((item, index): PluginUiExtensionPointV1 => {
+    const label = `ui.extension_points[${index}]`;
+    const point = object(item, label);
+    exactKeys(point, ["id", "title", "description", "context_schema", "form_fields", "events", "max_contributions"], label);
+    if (typeof point.id !== "string" || point.id.length > 96 || !EXTENSION_POINT_ID_PATTERN.test(point.id)) throw new Error(`${label}.id is invalid`);
+    if (!point.id.startsWith(`${pluginId}.`)) throw new Error(`${label}.id must start with "${pluginId}."`);
+    if (PLUGIN_UI_CORE_SLOTS.has(point.id as PluginUiCoreSlotV1)) throw new Error(`${label}.id must not equal a Core slot`);
+    if (ids.has(point.id)) throw new Error(`${label}.id is duplicated`);
+    ids.add(point.id);
+    if (typeof point.title !== "string" || point.title.length < 1 || point.title.length > 80 || !point.title.trim() || CONTROL_CHAR_PATTERN.test(point.title)) throw new Error(`${label}.title is invalid`);
+    if (point.description !== undefined && (typeof point.description !== "string" || point.description.length > 400 || CONTROL_CHAR_PATTERN.test(point.description))) throw new Error(`${label}.description is invalid`);
+    const contextSchema = parseBoundedJsonSchema(point.context_schema, `${label}.context_schema`, { allowOpenObjects: true });
+    let formFields: string[] = [];
+    if (point.form_fields !== undefined) {
+      if (!Array.isArray(point.form_fields) || point.form_fields.length > 16) throw new Error(`${label}.form_fields is invalid`);
+      const seen = new Set<string>();
+      formFields = point.form_fields.map((field, fieldIndex) => {
+        if (typeof field !== "string" || field.length > 64 || !FORM_FIELD_PATTERN.test(field) || seen.has(field)) throw new Error(`${label}.form_fields[${fieldIndex}] is invalid or duplicated`);
+        seen.add(field);
+        return field;
+      });
+    }
+    let events: PluginUiExtensionEventSchemaV1 = {};
+    if (point.events !== undefined) {
+      const eventsRecord = object(point.events, `${label}.events`);
+      if (Object.keys(eventsRecord).length > 8) throw new Error(`${label}.events has too many entries`);
+      const parsedEvents: Record<string, Readonly<Record<string, unknown>>> = {};
+      for (const [name, schema] of Object.entries(eventsRecord)) {
+        if (!EXTENSION_EVENT_NAME_PATTERN.test(name)) throw new Error(`${label}.events contains an invalid name: ${name}`);
+        parsedEvents[name] = parseBoundedJsonSchema(schema, `${label}.events.${name}`, { allowOpenObjects: true });
+      }
+      events = parsedEvents;
+    }
+    if (point.max_contributions !== undefined && (!Number.isInteger(point.max_contributions) || (point.max_contributions as number) < 1 || (point.max_contributions as number) > 32)) throw new Error(`${label}.max_contributions is invalid`);
+    return {
+      id: point.id,
+      title: point.title,
+      ...(point.description === undefined ? {} : { description: point.description as string }),
+      context_schema: contextSchema,
+      form_fields: formFields,
+      events,
+      ...(point.max_contributions === undefined ? {} : { max_contributions: point.max_contributions as number }),
+    };
+  });
 }
 
 export function parsePluginManifest(value: unknown): VisualReviewPluginManifest {
@@ -221,9 +292,10 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
     }
     if (record.ui !== undefined) {
       const uiRecord = object(record.ui, "ui");
-      exactKeys(uiRecord, ["renderer_api_version", "bridge_api_version", "contributions"], "ui");
+      exactKeys(uiRecord, ["renderer_api_version", "bridge_api_version", "extension_points", "contributions"], "ui");
       if (uiRecord.renderer_api_version !== 1) throw new Error("ui.renderer_api_version must be 1");
       if (uiRecord.bridge_api_version !== 1) throw new Error("ui.bridge_api_version must be 1");
+      const extensionPoints = uiRecord.extension_points === undefined ? undefined : parseExtensionPoints(uiRecord.extension_points, record.id as string);
       if (!Array.isArray(uiRecord.contributions) || uiRecord.contributions.length === 0 || uiRecord.contributions.length > 32) throw new Error("ui.contributions is invalid");
       const contributionIds = new Set<string>();
       const contributions = uiRecord.contributions.map((item, index): PluginUiContributionV1 => {
@@ -231,7 +303,9 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
         exactKeys(contribution, ["id", "slot", "document", "browser_module", "order", "title"], `ui.contributions[${index}]`);
         if (typeof contribution.id !== "string" || !CONTRIBUTION_ID_PATTERN.test(contribution.id) || contributionIds.has(contribution.id)) throw new Error(`ui.contributions[${index}].id is invalid or duplicated`);
         contributionIds.add(contribution.id);
-        if (typeof contribution.slot !== "string" || !UI_SLOTS.has(contribution.slot as PluginUiSlotV1)) throw new Error(`ui.contributions[${index}].slot is invalid`);
+        if (typeof contribution.slot !== "string" || contribution.slot.length > 96 || !(PLUGIN_UI_CORE_SLOTS.has(contribution.slot as PluginUiCoreSlotV1) || EXTENSION_POINT_ID_PATTERN.test(contribution.slot))) {
+          throw new Error(`ui.contributions[${index}].slot is invalid`);
+        }
         const document = moduleReference({ module: contribution.document }, `ui.contributions[${index}].document`).module;
         const browserModule = contribution.browser_module === undefined ? undefined : moduleReference({ module: contribution.browser_module }, `ui.contributions[${index}].browser_module`).module;
         if (browserModule && !/\.(?:m?js)$/i.test(browserModule)) throw new Error(`ui.contributions[${index}].browser_module must be a JavaScript module`);
@@ -241,14 +315,14 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
         }
         return {
           id: contribution.id,
-          slot: contribution.slot as PluginUiSlotV1,
+          slot: contribution.slot,
           document,
           ...(browserModule ? { browser_module: browserModule } : {}),
           order: contribution.order as number,
           ...(contribution.title !== undefined ? { title: contribution.title as string } : {}),
         };
       });
-      ui = { renderer_api_version: 1, bridge_api_version: 1, contributions };
+      ui = { renderer_api_version: 1, bridge_api_version: 1, ...(extensionPoints === undefined ? {} : { extension_points: extensionPoints }), contributions };
     }
     const parseCapabilities = <T extends PluginCapabilityRequirementV1 | PluginCapabilityProvisionV1>(value: unknown, label: string, requirement: boolean): T[] => {
       if (value === undefined) return [];

@@ -30,7 +30,25 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], labe
   if (unexpected) throw new Error(`${label} contains unsupported field: ${unexpected}`);
 }
 
-function validateSchema(value: unknown, label: string, depth = 0): Readonly<Record<string, unknown>> {
+export interface BoundedJsonSchemaOptionsV1 {
+  /**
+   * Extension points only: allow an object schema to declare `additionalProperties: true`,
+   * meaning an opaque object where extra keys are permitted. Bridge contracts never allow this.
+   */
+  allowOpenObjects?: boolean;
+}
+
+/**
+ * Parses and validates the bounded JSON-schema subset shared by bridge contracts and plugin UI
+ * extension points. Bridge contracts keep the strict `additionalProperties: false` requirement;
+ * extension points may opt into `allowOpenObjects` for opaque object schemas (anchors, annotation
+ * projections, and similar host-defined shapes that a contributor should treat as opaque).
+ */
+export function parseBoundedJsonSchema(value: unknown, label: string, options: BoundedJsonSchemaOptionsV1 = {}): Readonly<Record<string, unknown>> {
+  return validateSchema(value, label, options, 0);
+}
+
+function validateSchema(value: unknown, label: string, options: BoundedJsonSchemaOptionsV1, depth: number): Readonly<Record<string, unknown>> {
   if (depth > MAX_SCHEMA_DEPTH) throw new Error(`${label} is too deeply nested`);
   const schema = record(value, label);
   exactKeys(schema, ["type", "properties", "required", "additionalProperties", "items", "enum", "minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems"], label);
@@ -43,12 +61,15 @@ function validateSchema(value: unknown, label: string, depth = 0): Readonly<Reco
     if (schema[key] !== undefined && (typeof schema[key] !== "number" || !Number.isFinite(schema[key]))) throw new Error(`${label}.${key} is invalid`);
   }
   if (schema.type === "object") {
-    if (schema.additionalProperties !== false) throw new Error(`${label}.additionalProperties must be false`);
+    const openObject = options.allowOpenObjects === true && schema.additionalProperties === true;
+    if (schema.additionalProperties !== false && !openObject) {
+      throw new Error(options.allowOpenObjects ? `${label}.additionalProperties must be false or true` : `${label}.additionalProperties must be false`);
+    }
     const properties = record(schema.properties ?? {}, `${label}.properties`);
     if (Object.keys(properties).length > MAX_SCHEMA_PROPERTIES) throw new Error(`${label}.properties has too many entries`);
     for (const [key, child] of Object.entries(properties)) {
       if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) throw new Error(`${label}.properties contains an invalid key`);
-      validateSchema(child, `${label}.properties.${key}`, depth + 1);
+      validateSchema(child, `${label}.properties.${key}`, options, depth + 1);
     }
     if (schema.required !== undefined) {
       if (!Array.isArray(schema.required) || new Set(schema.required).size !== schema.required.length || schema.required.some((key) => typeof key !== "string" || !(key in properties))) throw new Error(`${label}.required is invalid`);
@@ -58,7 +79,7 @@ function validateSchema(value: unknown, label: string, depth = 0): Readonly<Reco
   }
   if (schema.type === "array") {
     if (schema.items === undefined) throw new Error(`${label}.items is required`);
-    validateSchema(schema.items, `${label}.items`, depth + 1);
+    validateSchema(schema.items, `${label}.items`, options, depth + 1);
   } else if (schema.items !== undefined || schema.minItems !== undefined || schema.maxItems !== undefined) {
     throw new Error(`${label} has array-only fields`);
   }
@@ -80,8 +101,8 @@ function parseOperations(value: unknown, label: "queries" | "commands"): PluginB
     return {
       name: operation.name,
       permission: operation.permission,
-      input_schema: validateSchema(operation.input_schema, `${label}[${index}].input_schema`),
-      output_schema: validateSchema(operation.output_schema, `${label}[${index}].output_schema`),
+      input_schema: parseBoundedJsonSchema(operation.input_schema, `${label}[${index}].input_schema`),
+      output_schema: parseBoundedJsonSchema(operation.output_schema, `${label}[${index}].output_schema`),
       [resourceKey]: [...resources] as string[],
     };
   });

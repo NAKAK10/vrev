@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "review",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "display": {
     "title": "レビュー",
     "summary": "レビュー注釈、履歴、永続化を提供します。",
@@ -17,6 +17,52 @@
   "ui": {
     "renderer_api_version": 1,
     "bridge_api_version": 1,
+    "extension_points": [
+      {
+        "id": "review.overlays",
+        "title": "レビュー対象のオーバーレイ",
+        "context_schema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "review.comment-dialog.actions",
+        "title": "コメント入力ダイアログの操作",
+        "description": "対象を選択してコメントを入力しているとき、キャンセルの右側に追加される操作。contextはanchorを必須とし、page_path/annotation_idはnullの場合がある",
+        "context_schema": {
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "anchor"
+          ],
+          "additionalProperties": true
+        },
+        "form_fields": [
+          "comment"
+        ],
+        "events": {
+          "completed": {
+            "type": "object",
+            "properties": {
+              "annotation_id": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "max_contributions": 4
+      }
+    ],
     "contributions": [
       {
         "id": "review-header",

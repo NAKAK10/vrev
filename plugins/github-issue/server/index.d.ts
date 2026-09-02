@@ -12,7 +12,18 @@ export interface IssueProjectionStoreV1 {
   setIssueDraftReady(annotationId: string, title: string, body: string): unknown;
   completeIssueDraft(annotationId: string, title: string, url: string): unknown;
 }
-export interface IssueReviewCapabilityV1 { readonly apiVersion: 1; readonly store: IssueProjectionStoreV1 }
+export interface IssueAnnotationCreateInputV1 {
+  anchor: unknown;
+  comment: string;
+  expected_revision?: unknown;
+  mode?: "annotation" | "issue-request";
+}
+export interface IssueAnnotationCreateResultV1 { review: unknown; annotation: IssueProjectionAnnotationV1 }
+export interface IssueReviewCapabilityV1 {
+  readonly apiVersion: 1;
+  readonly store: IssueProjectionStoreV1;
+  readonly annotations: { create(input: IssueAnnotationCreateInputV1): IssueAnnotationCreateResultV1 };
+}
 export interface IssueTaskCapabilityV1 {
   readonly apiVersion: 1;
   coordinatorInstructions(): string;

@@ -4,14 +4,31 @@ import {
   type ReviewStoreContract,
   type ReviewStoreOptions,
 } from "./review-store.js";
+import type { Annotation, AnnotationKind, Review } from "./review-types.js";
 
 export const REVIEW_CAPABILITY_ID = "review";
 export const REVIEW_CAPABILITY_API_VERSION = 1;
 export const REVIEW_DOMAIN_DEPENDENCIES_CAPABILITY_ID = "host.review-domain";
 
+export interface ReviewAnnotationCreateInputV1 {
+  anchor: unknown;
+  comment: string;
+  expected_revision?: unknown;
+  mode?: "annotation" | "issue-request";
+}
+
+export interface ReviewAnnotationCreateResultV1 {
+  review: Review;
+  annotation: Annotation;
+}
+
 export interface ReviewCapabilityV1 {
   readonly apiVersion: 1;
   readonly store: ReviewStoreContract;
+  readonly annotations: {
+    /** Browser-shaped input: anchor carries optional page_path/kind like the bridge command. Returns the created annotation. */
+    create(input: ReviewAnnotationCreateInputV1): ReviewAnnotationCreateResultV1;
+  };
 }
 
 export interface ReviewBridgePresentationV1 {
@@ -42,6 +59,32 @@ interface BridgeResult {
   error: { code: "PLUGIN_PROTOCOL_ERROR"; message: string; retryable: false; request_id: string };
 }
 
+export function createReviewAnnotationsV1(store: ReviewStoreContract): ReviewCapabilityV1["annotations"] {
+  return Object.freeze({
+    create(input: ReviewAnnotationCreateInputV1): ReviewAnnotationCreateResultV1 {
+      if (typeof input.comment !== "string" || !input.comment.trim() || typeof input.anchor !== "object"
+        || input.anchor === null || Array.isArray(input.anchor)) throw new Error("annotation input is invalid");
+      const anchor = input.anchor as Record<string, unknown>;
+      const pagePath = typeof anchor.page_path === "string" ? anchor.page_path : store.entryPath;
+      const kind: AnnotationKind = anchor.kind === "dom" ? "dom" : "region";
+      const { kind: _kind, page_path: _pagePath, ...persistedAnchor } = anchor;
+      const beforeIds = new Set(store.load().annotations.map(({ id }) => id));
+      const payload = {
+        kind,
+        page_path: pagePath,
+        source_hash: store.sourceHash(pagePath),
+        anchor: persistedAnchor,
+        comment: input.comment.trim(),
+        actor: "human" as const,
+      };
+      const review = input.mode === "issue-request" ? store.createIssueRequest(payload) : store.createAnnotation(payload, input.expected_revision);
+      const annotation = review.annotations.find(({ id }) => !beforeIds.has(id));
+      if (!annotation) throw new Error("annotation was not created");
+      return { review, annotation };
+    },
+  });
+}
+
 /** Creates the capability used by compatibility transports and dependent plugins. */
 export function createReviewCapability(
   dependencies: ReviewDomainDependencies,
@@ -49,7 +92,8 @@ export function createReviewCapability(
   options: ReviewStoreOptions,
 ): ReviewCapabilityV1 {
   const domain = createReviewDomain(dependencies);
-  return Object.freeze({ apiVersion: 1 as const, store: new domain.ReviewStore(target, options) });
+  const store = new domain.ReviewStore(target, options);
+  return Object.freeze({ apiVersion: 1 as const, store, annotations: createReviewAnnotationsV1(store) });
 }
 
 function bridgeError(request: ReviewBridgeRequestV1, code: string, message: string): ReviewBridgeResultV1 {
@@ -57,14 +101,15 @@ function bridgeError(request: ReviewBridgeRequestV1, code: string, message: stri
 }
 
 /** Plugin-owned transport projection used by the one-beta HTTP compatibility host. */
-export function createReviewBridgeAdapter(store: ReviewStoreContract, presentation: ReviewBridgePresentationV1) {
+export function createReviewBridgeAdapter(review: ReviewCapabilityV1, presentation: ReviewBridgePresentationV1) {
+  const store = review.store;
   return Object.freeze({
     async query(name: string, request: ReviewBridgeRequestV1): Promise<ReviewBridgeResultV1> {
       if (name !== "session.get") return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
-      const review = store.load();
+      const loaded = store.load();
       return {
         ok: true,
-        revision: `review:${review.revision}`,
+        revision: `review:${loaded.revision}`,
         data: {
           target: {
             entry_path: store.entryPath,
@@ -87,23 +132,11 @@ export function createReviewBridgeAdapter(store: ReviewStoreContract, presentati
     async command(name: string, request: ReviewBridgeRequestV1): Promise<ReviewBridgeResultV1> {
       if (name !== "annotation.create") return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
       const { input } = request;
-      if (typeof input.comment !== "string" || !input.comment.trim() || typeof input.anchor !== "object"
-        || input.anchor === null || Array.isArray(input.anchor)) return bridgeError(request, "VALIDATION_FAILED", "annotation input is invalid");
-      const anchor = input.anchor as Record<string, unknown>;
-      const pagePath = typeof anchor.page_path === "string" ? anchor.page_path : store.entryPath;
-      const kind = anchor.kind === "dom" ? "dom" : "region";
-      const { kind: _kind, page_path: _pagePath, ...persistedAnchor } = anchor;
       try {
-        store.createAnnotation({
-          kind,
-          page_path: pagePath,
-          source_hash: store.sourceHash(pagePath),
-          anchor: persistedAnchor,
-          comment: input.comment.trim(),
-          actor: "human",
-        }, request.expected_revision);
+        review.annotations.create({ anchor: input.anchor, comment: input.comment as string, expected_revision: request.expected_revision, mode: "annotation" });
       } catch (error) {
         if (error instanceof Error && error.message === "review revision conflict") return bridgeError(request, "CONFLICT", error.message);
+        if (error instanceof Error && error.message === "annotation input is invalid") return bridgeError(request, "VALIDATION_FAILED", error.message);
         throw error;
       }
       const active = store.loadActive();

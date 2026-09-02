@@ -11,6 +11,7 @@ import {
   extractIssueDraftOutput,
   type IssueDraftOutput,
 } from "../plugins/github-issue/server/index.js";
+import { createReviewAnnotationsV1 } from "../plugins/review/server/review-capability.js";
 import type { ReviewCapabilityV1, RunnerRegistryV1, WorkflowReviewStore } from "../plugins/annotation-workflow/server/workflow-types.js";
 import type { ReviewStoreContract } from "../plugins/review/server/review-store.js";
 
@@ -36,7 +37,7 @@ export class JobManager extends PluginJobManager {
       };
     }
     const capability: ReviewCapabilityV1 = { apiVersion: 1, store: store as unknown as WorkflowReviewStore };
-    const taskCapability = createIssueTaskCapability({ apiVersion: 1, store });
+    const taskCapability = createIssueTaskCapability({ apiVersion: 1, store, annotations: createReviewAnnotationsV1(store) });
     super(capability, { executor: options.executor ?? createSpawnExecutor(), ...(runnerRegistry ? { runnerRegistry } : {}), taskCapability });
   }
 }

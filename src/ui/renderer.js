@@ -57,6 +57,33 @@ function predicate(value, scope) {
   if (value.in) return Array.isArray(right) && right.includes(left);
   return value.ne || value.not_equals ? !Object.is(left, right) : Object.is(left, right);
 }
+function lengthWithin(length, minimum, maximum) { return (minimum === undefined || length >= minimum) && (maximum === undefined || length <= maximum); }
+function rangeWithin(value, minimum, maximum) { return (minimum === undefined || value >= minimum) && (maximum === undefined || value <= maximum); }
+// Bounded JSON-schema subset matcher, ported from src/plugin-host-runtime.ts. Extension points
+// alone may set object schemas to `additionalProperties: true`, meaning "opaque object, extra
+// keys allowed" (needed for anchors/annotation projections passed as slot context/events).
+function matchesSchema(value, schema) {
+  if (!schema || typeof schema !== "object") return false;
+  if (schema.enum !== undefined && !schema.enum.some((candidate) => Object.is(candidate, value))) return false;
+  switch (schema.type) {
+    case "null": return value === null;
+    case "string": return typeof value === "string" && lengthWithin(value.length, schema.minLength, schema.maxLength);
+    case "number": return typeof value === "number" && Number.isFinite(value) && rangeWithin(value, schema.minimum, schema.maximum);
+    case "integer": return typeof value === "number" && Number.isSafeInteger(value) && rangeWithin(value, schema.minimum, schema.maximum);
+    case "boolean": return typeof value === "boolean";
+    case "array": return Array.isArray(value) && lengthWithin(value.length, schema.minItems, schema.maxItems)
+      && value.every((item) => matchesSchema(item, schema.items));
+    case "object": {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+      const properties = schema.properties || {};
+      const object = value;
+      if (schema.additionalProperties !== true && Object.keys(object).some((key) => !(key in properties))) return false;
+      if ((schema.required || []).some((key) => !(key in object))) return false;
+      return Object.entries(object).every(([key, item]) => !(key in properties) || matchesSchema(item, properties[key]));
+    }
+    default: return false;
+  }
+}
 function contributionLocalState(contribution) {
   const key = `visual-review:renderer:1:${contribution.plugin_id}:${contribution.id}`;
   const state = {};
@@ -157,6 +184,7 @@ function dialogFor(scope, id) { return dialogs.get(`${scope.instanceKey || "root
 function showDialog(dialog, scope, definition) {
   if (!(dialog instanceof HTMLDialogElement) || dialog.open) return;
   dialogOpeners.set(dialog, document.activeElement);
+  for (const slot of dialog.querySelectorAll(".vr-slot")) slot.__renderSlot?.();
   dialog.showModal();
   dialog.scrollTop = 0;
   requestAnimationFrame(() => {
@@ -316,10 +344,10 @@ function renderSingle(definition, scope) {
   for (const child of definition.children || []) (node.__content || node).append(renderNode(child, scope));
   if (type === "list" && values.empty_message && node.childElementCount === 0) { const empty = element("p", "vr-empty-state"); empty.textContent = String(values.empty_message); node.append(empty); }
   if (type === "slot") {
-    const slot = String(values.name || "");
-    const matches = surface.contributions.filter((item) => item.slot === slot);
-    for (const contribution of matches) node.append(renderContribution(contribution, values.context ?? scope.slotContext, scope.instanceKey));
-    node.hidden = matches.length === 0;
+    // The slot context can change after the initial render (e.g. review.selection is committed
+    // before the host dialog opens), so keep the renderer callable and re-run it from showDialog.
+    node.__renderSlot = () => renderSlot(node, definition, scope);
+    node.__renderSlot();
   }
   if (["input", "textarea", "select", "switch", "checkbox", "viewport-selector"].includes(type) && values.label) {
     const field = element("label", `vr-field vr-field-${type}`);
@@ -330,7 +358,30 @@ function renderSingle(definition, scope) {
   }
   return node;
 }
+function renderSlot(node, definition, scope) {
+  node.replaceChildren();
+  const slot = String(binding(definition.props?.name, scope) || "");
+  const point = (surface.extension_points || []).find((item) => item.id === slot);
+  if (!point) {
+    // A Core slot name used inside a plugin document is invalid at surface load time and
+    // should not reach the renderer; render nothing defensively rather than guessing a shape.
+    node.hidden = true;
+    return;
+  }
+  const contextValue = binding(definition.props?.context, scope) ?? scope.slotContext;
+  if (!matchesSchema(contextValue, point.context_schema)) {
+    console.warn("extension point context is invalid", slot);
+    node.hidden = true;
+    return;
+  }
+  const matches = surface.contributions.filter((item) => item.slot === slot);
+  for (const contribution of matches) node.append(renderContribution(contribution, contextValue, scope.instanceKey, { definition, scope, point }));
+  node.hidden = matches.length === 0;
+}
 function bindEvents(node, definition, scope) {
+  // A slot node's `on` map holds handlers for events a contributor emits via `slot.emit`, not
+  // DOM events on the slot's host element — those are dispatched directly from execute().
+  if (definition.type === "slot") return;
   for (const [name, instructions] of Object.entries(definition.on || {})) {
     const eventName = ({ change: "change", input: "input", click: "click", submit: "submit", toggle: "toggle", close: "close", cancel: "cancel", confirm: "click" })[name] || name;
     node.addEventListener(eventName, (event) => {
@@ -431,6 +482,14 @@ async function execute(instructions, scope) {
     else if (instruction.type === "navigate.external") { const url = String(binding(instruction.url, scope)); if ((!instruction.confirmation || confirm(String(instruction.confirmation))) && /^https?:\/\//.test(url)) open(url, "_blank", "noopener"); }
     else if (instruction.type === "toast.show") toast(String(binding(instruction.message, scope)), instruction.variant);
     else if (instruction.type === "command.execute") await command(instruction, scope);
+    else if (instruction.type === "slot.emit") {
+      const host = scope.slotHost;
+      if (!host || !(instruction.event in (host.point.events || {}))) { console.warn("slot.emit target unavailable", instruction.event); continue; }
+      const payload = Object.fromEntries(Object.entries(instruction.payload || {}).map(([key, value]) => [key, binding(value, scope)]));
+      const eventSchema = host.point.events[instruction.event];
+      if (eventSchema && !matchesSchema(payload, eventSchema)) { console.warn("slot.emit payload is invalid", instruction.event); continue; }
+      await execute(host.definition.on?.[instruction.event] || [], { ...host.scope, event: payload });
+    }
   }
 }
 async function autoRunNewAnnotation(scope) {
@@ -629,9 +688,9 @@ async function loadResource(contribution, id, scope, shouldRender = true) {
   }
   if (shouldRender) rerender();
 }
-function renderContribution(contribution, slotContext = {}, parentInstanceKey = "") {
+function renderContribution(contribution, slotContext = {}, parentInstanceKey = "", slotHost = null) {
   const runtime = runtimeFor(contribution, parentInstanceKey);
-  const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: parentInstanceKey, slotContext: { ...(slotContext && typeof slotContext === "object" ? slotContext : {}), review: { selection: reviewSelection } } };
+  const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: parentInstanceKey, slotContext: { ...(slotContext && typeof slotContext === "object" ? slotContext : {}), review: { selection: reviewSelection } }, slotHost };
   const rendered = renderNode(contribution.document.root, scope);
   if (rendered instanceof HTMLElement) {
     rendered.dataset.pluginId = contribution.plugin_id;

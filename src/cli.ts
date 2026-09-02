@@ -288,11 +288,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv[0] === "plugin") {
     const action = argv[1];
     if (action === undefined || action === "--help" || action === "-h") {
-      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n       visual-review plugin install <source>\n       visual-review plugin list\n       visual-review plugin remove <id>\n       visual-review plugin run <id> <command> [args...]\n\n'create' generates a schema-v3 manifest, README, configuration template, command, package, and test.");
+      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n       visual-review plugin install <source>\n       visual-review plugin list\n       visual-review plugin remove <id>\n       visual-review plugin run <id> <command> [args...]\n\n'create' generates a schema-v4 manifest, server module and bridge contract, UI contribution, types, README, command, package, and test.");
       return;
     }
     if (action === "create" && (argv[2] === "--help" || argv[2] === "-h")) {
-      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n\nCreates plugins/<id>/ with:\n  visual-review.plugin.json  schema v3 display/configuration template\n  README.md                  detailed description shown in plugin settings\n  index.js                   example command\n  package.json               Node.js 20+ package metadata\n  test.js                    zero-dependency Node test\n\nConfiguration fields are declarative; use source=environment for credentials.");
+      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n\nCreates plugins/<id>/ with:\n  visual-review.plugin.json     schema v4 manifest (display, server, UI contribution)\n  server/index.js               minimal plugin server provider\n  server.contract.json          empty plugin bridge contract\n  ui/annotation-action.ui.json  declarative UI contribution document\n  types.d.ts                    SDK type re-exports for editor typing\n  README.md                     detailed description shown in plugin settings\n  index.js                      example command\n  package.json                  Node.js 20+ package metadata\n  test.js                       zero-dependency Node test\n\nConfiguration fields are declarative; use source=environment for credentials.");
       return;
     }
     if (action === "create" && argv[2]) {

@@ -577,7 +577,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
   });
   const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createIssueWithInstalledPlugin(store.target.projectRoot, draft));
   const issueTask = createIssueTaskCapability(
-    { apiVersion: 1, store },
+    reviewCapability,
     { provider: { createIssue: (_projectRoot, draft) => issueCreator(draft) } },
   );
   const commandJournal = new Map<string, { payload: string; result: Promise<BridgeAdapterResult>; at: number }>();

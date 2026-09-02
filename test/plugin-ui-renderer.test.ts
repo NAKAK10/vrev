@@ -279,6 +279,28 @@ test("base shell owns the review header/stage/sidebar layout and plugin-scoped l
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|DOMParser|document\.write|\beval\s*\(|new Function/);
 });
 
+test("renderer resolves plugin-hosted extension points, validates context/event schemas, and dispatches slot.emit to the host", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  assert.match(source, /function matchesSchema\(value, schema\)/);
+  assert.match(source, /schema\.additionalProperties !== true && Object\.keys\(object\)\.some/);
+  assert.match(source, /\(surface\.extension_points \|\| \[\]\)\.find\(\(item\) => item\.id === slot\)/);
+  assert.match(source, /extension point context is invalid/);
+  assert.match(source, /matchesSchema\(contextValue, point\.context_schema\)/);
+  assert.match(source, /renderContribution\(contribution, contextValue, scope\.instanceKey, \{ definition, scope, point \}\)/);
+  assert.match(source, /function renderContribution\(contribution, slotContext = \{\}, parentInstanceKey = "", slotHost = null\)/);
+  assert.match(source, /slotContext:.*, slotHost \}/);
+  assert.match(source, /if \(definition\.type === "slot"\) return;/);
+  assert.match(source, /instruction\.type === "slot\.emit"/);
+  assert.match(source, /const host = scope\.slotHost;/);
+  assert.match(source, /instruction\.event in \(host\.point\.events \|\| \{\}\)/);
+  assert.match(source, /slot\.emit target unavailable/);
+  assert.match(source, /slot\.emit payload is invalid/);
+  assert.match(source, /await execute\(host\.definition\.on\?\.\[instruction\.event\] \|\| \[\], \{ \.\.\.host\.scope, event: payload \}\)/);
+  assert.match(css, /\.vr-row\[data-variant="dialog-actions"\] > \.vr-slot \{ display: contents/);
+  assert.match(css, /\.vr-row\[data-variant="dialog-actions"\] > \.vr-slot > \[data-slot\] \{ display: flex; flex-direction: row/);
+});
+
 test("bundled plugin UI documents stay JSON while declared browser modules are explicit local assets", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
