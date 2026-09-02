@@ -180,10 +180,10 @@ test("issue-task capability's label() maps issue_state/status combinations to st
     text: "Issueラフ作成中", tone: "pending",
   });
   assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "in_progress" })), {
-    text: "AI Issue下書き中", tone: "active",
+    text: "AI Issueラフ作成中", tone: "active",
   });
   assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "failed" })), {
-    text: "Issue下書き失敗", tone: "failed",
+    text: "Issueラフ作成失敗", tone: "failed",
   });
   assert.deepEqual(issueTask.label(annotation({ issue_state: "ready", status: "addressed" })), {
     text: "Issueラフ確認待ち", tone: "ready",
@@ -191,6 +191,40 @@ test("issue-task capability's label() maps issue_state/status combinations to st
   assert.deepEqual(issueTask.label(annotation({ issue_state: "created", status: "resolved", issue_url: "https://github.com/example/project/issues/1" })), {
     text: "Issue作成済み", tone: "done",
   });
+});
+
+test("issue-task capability's filter chips match the badges one-to-one", () => {
+  const issueTask = issueTaskFixture();
+  const annotation = (overrides: Partial<IssueProjectionAnnotationV1>): IssueProjectionAnnotationV1 => ({
+    id: "annotation-1",
+    status: "open",
+    ...overrides,
+  });
+  const cases: Array<[Partial<IssueProjectionAnnotationV1>, string]> = [
+    [{ issue_state: "requested", status: "open" }, "issue-requested"],
+    [{ issue_state: "requested", status: "in_progress" }, "issue-drafting"],
+    [{ issue_state: "requested", status: "failed" }, "issue-draft-failed"],
+    [{ issue_state: "ready", status: "addressed" }, "issue-ready"],
+    [{ issue_state: "created", status: "resolved" }, "issue-created"],
+  ];
+
+  const chips = issueTask.filters();
+  assert.deepEqual(chips.map(({ id }) => id), cases.map(([, id]) => id));
+
+  // Every badge an annotation can wear is also the label of the chip it is filtered by.
+  for (const [overrides, expectedId] of cases) {
+    const subject = annotation(overrides);
+    assert.equal(issueTask.filter(subject), expectedId);
+    assert.equal(issueTask.label(subject)?.text, chips.find(({ id }) => id === expectedId)?.label);
+  }
+});
+
+test("issue-task capability's filter() returns null when no category applies", () => {
+  const issueTask = issueTaskFixture();
+
+  assert.equal(issueTask.filter({ id: "annotation-1", status: "open" }), null);
+  assert.equal(issueTask.filter({ id: "annotation-1", status: "addressed", issue_state: "requested" }), null);
+  assert.equal(issueTask.filter({} as unknown as IssueProjectionAnnotationV1), null);
 });
 
 test("issue-task capability's label() returns null when there is no meaningful badge", () => {

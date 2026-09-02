@@ -157,9 +157,9 @@ manifest `ui.contributions[].slot`にextension point idを指定する。documen
 
 ### 注釈cardの状態ラベル
 
-annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI対応済み・解決済み）だけを知り、Issueなどの外部taskの概念を持たない。外部taskを所有するplugin（同梱では`github-issue`）は`issue-task` capability（`WorkflowTaskCapabilityV1`）の任意method `label(annotation)`で`{ text, tone }`を返し、annotation-workflowは`annotations.list`の`status_label`/`status_tone`としてcardのbadgeへ反映する。`tone`は`pending`/`active`/`ready`/`done`/`failed`のいずれかで、`text`は32文字以内。`null`または不正な値なら既定labelへfallbackする。github-issueは「Issueラフ作成中」「AI Issue下書き中」「Issueラフ確認待ち」「Issue作成済み」「Issue下書き失敗」を返し、pluginを無効化するとcardは既定labelに戻る。Issue固有のfield（`issue_state`、`issue_url`）はextension point contextの`additionalProperties: true`経由でcontributorだけが読む。
+annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI対応済み・解決済み）だけを知り、Issueなどの外部taskの概念を持たない。外部taskを所有するplugin（同梱では`github-issue`）は`issue-task` capability（`WorkflowTaskCapabilityV1`）の任意method `label(annotation)`で`{ text, tone }`を返し、annotation-workflowは`annotations.list`の`status_label`/`status_tone`としてcardのbadgeへ反映する。`tone`は`pending`/`active`/`ready`/`done`/`failed`のいずれかで、`text`は32文字以内。`null`または不正な値なら既定labelへfallbackする。github-issueは「Issueラフ作成中」「AI Issueラフ作成中」「Issueラフ作成失敗」「Issueラフ確認待ち」「Issue作成済み」を返し、pluginを無効化するとcardは既定labelに戻る。Issue固有のfield（`issue_state`、`issue_url`）はextension point contextの`additionalProperties: true`経由でcontributorだけが読む。
 
-同じcapabilityの任意method `filters()`は注釈一覧の絞り込みchipに追加する分類（`{ id, label }`、idは`^[a-z][a-z0-9-]{0,31}$`でworkflow statusと衝突不可、最大16件）を返し、`filter(annotation)`はその注釈が属する分類idを返す。分類が返された注釈はstatus chipではなくその分類chipで絞り込まれる。`annotations.list`は既定5 status + task分類を`filters`として返し、sidebarのchipは`hidden`（未checkのid集合）で絞り込む。github-issueは「Issueラフ作成中」「Issueラフ確認待ち」「Issue作成済み」を返す。
+同じcapabilityの任意method `filters()`は注釈一覧の絞り込みchipに追加する分類（`{ id, label }`、idは`^[a-z][a-z0-9-]{0,31}$`でworkflow statusと衝突不可、最大16件）を返し、`filter(annotation)`はその注釈が属する分類idを返す。分類が返された注釈はstatus chipではなくその分類chipで絞り込まれる。`annotations.list`は既定5 status + task分類を`filters`として返し、sidebarのchipは`hidden`（未checkのid集合）で絞り込む。github-issueはbadgeと同じ5つのcategoryをchipとして返す。badgeとchipを単一のcategory表から導出することで、表示labelと絞り込みchipが常に1対1で一致する。
 
 ### 型
 

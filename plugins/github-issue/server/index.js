@@ -5,11 +5,27 @@ export const ISSUE_TASK_CAPABILITY_ID = "issue-task";
 export const ISSUE_TASK_CAPABILITY_API_VERSION = 1;
 const REVIEW_CAPABILITY_ID = "review";
 
-const ISSUE_TASK_FILTERS = Object.freeze([
-  Object.freeze({ id: "issue-requested", label: "Issueラフ作成中" }),
-  Object.freeze({ id: "issue-ready", label: "Issueラフ確認待ち" }),
-  Object.freeze({ id: "issue-created", label: "Issue作成済み" }),
+/**
+ * One table drives both the annotation card badge and the sidebar filter chip, so the two can
+ * never drift: every category here is a chip, and an annotation resolved to it wears that label.
+ */
+const ISSUE_TASK_CATEGORIES = Object.freeze([
+  Object.freeze({ id: "issue-requested", label: "Issueラフ作成中", tone: "pending", issueState: "requested", status: "open" }),
+  Object.freeze({ id: "issue-drafting", label: "AI Issueラフ作成中", tone: "active", issueState: "requested", status: "in_progress" }),
+  Object.freeze({ id: "issue-draft-failed", label: "Issueラフ作成失敗", tone: "failed", issueState: "requested", status: "failed" }),
+  Object.freeze({ id: "issue-ready", label: "Issueラフ確認待ち", tone: "ready", issueState: "ready", status: null }),
+  Object.freeze({ id: "issue-created", label: "Issue作成済み", tone: "done", issueState: "created", status: null }),
 ]);
+
+const ISSUE_TASK_FILTERS = Object.freeze(ISSUE_TASK_CATEGORIES.map(({ id, label }) => Object.freeze({ id, label })));
+
+/** The category an annotation belongs to, or null when its workflow status applies instead. */
+function issueTaskCategory(annotation) {
+  if (!annotation || typeof annotation !== "object") return null;
+  const { issue_state: issueState, status } = annotation;
+  if (typeof issueState !== "string") return null;
+  return ISSUE_TASK_CATEGORIES.find((category) => category.issueState === issueState && (category.status === null || category.status === status)) ?? null;
+}
 
 export function createIssueTaskCapability(review, options = {}) {
   const store = review.store;
@@ -38,30 +54,14 @@ export function createIssueTaskCapability(review, options = {}) {
       return annotation.issue_state === "ready" || annotation.issue_state === "created" ? "complete" : "pending";
     },
     label(annotation) {
-      if (!annotation || typeof annotation !== "object") return null;
-      const issueState = annotation.issue_state;
-      const status = annotation.status;
-      if (typeof issueState !== "string") return null;
-      if (issueState === "requested") {
-        if (status === "open") return Object.freeze({ text: "Issueラフ作成中", tone: "pending" });
-        if (status === "in_progress") return Object.freeze({ text: "AI Issue下書き中", tone: "active" });
-        if (status === "failed") return Object.freeze({ text: "Issue下書き失敗", tone: "failed" });
-        return null;
-      }
-      if (issueState === "ready") return Object.freeze({ text: "Issueラフ確認待ち", tone: "ready" });
-      if (issueState === "created") return Object.freeze({ text: "Issue作成済み", tone: "done" });
-      return null;
+      const category = issueTaskCategory(annotation);
+      return category ? Object.freeze({ text: category.label, tone: category.tone }) : null;
     },
     filters() {
       return ISSUE_TASK_FILTERS;
     },
     filter(annotation) {
-      if (!annotation || typeof annotation !== "object") return null;
-      const issueState = annotation.issue_state;
-      if (issueState === "requested") return "issue-requested";
-      if (issueState === "ready") return "issue-ready";
-      if (issueState === "created") return "issue-created";
-      return null;
+      return issueTaskCategory(annotation)?.id ?? null;
     },
     create(annotationId, rawDraft) {
       const draft = validateStandaloneDraft(annotationId, rawDraft);
