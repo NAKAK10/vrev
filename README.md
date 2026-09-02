@@ -141,6 +141,8 @@ visual-review plugin list
 
 有効/無効、manifestで宣言した必要情報、README、外部AIコマンド登録は左上の設定画面へ集約されます。workspace値はGit管理外の`.vreview/plugin-settings.json`へ保存し、token/passwordは保存せず環境変数項目として存在だけを表示します。
 
+`/settings/plugins`からもnpm specやGitHubリンクでpluginをinstall・removeできます。npm specはexactなversionを、GitHub specはtag/commit SHAを`#`で固定してください（未固定のGitHub specは拒否します）。install時にplugin codeは実行されず、追加直後は無効状態で始まるため、内容を確認してから有効化してください。認証情報を含むURLは拒否します。同梱pluginはUIから削除できず、無効化だけができます。
+
 プラグインcommandは次の形式で実行します。
 
 ```bash

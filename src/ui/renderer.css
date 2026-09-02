@@ -462,3 +462,9 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation-duration: .01ms !important; }
 }
+
+.vr-plugin-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.vr-field-input input[type="text"] { width: 100%; padding: 10px 12px; border-radius: var(--vr-radius-sm); border: 1px solid var(--vr-color-border); background: var(--vr-color-surface); color: var(--vr-color-text); font: inherit; }
+@media (max-width: 640px) {
+  .vr-plugin-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+}

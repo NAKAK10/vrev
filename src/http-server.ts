@@ -7,12 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createBundledBridgeCatalog, type BundledBridgeAdapter } from "./bundled-plugin-catalog.js";
+import { bundledPluginsRoot } from "./bundled-plugins-root.js";
 import { fileSha256 } from "./file-utils.js";
 import { createIssueTaskCapability, type GitHubIssueDraft } from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { layoutSettingsRevision, readLayoutSettings, updateLayoutSettings, type LayoutSettingsUpdateInput } from "./layout-settings.js";
 import { resolveTarget } from "./paths.js";
-import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
+import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, type InstalledPlugin } from "./plugin-registry.js";
 import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, type PluginIssueResult } from "./plugin-runtime.js";
 import { effectivePluginSettings, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "./plugin-settings.js";
 import { createReviewCapability } from "./review-capability.js";
@@ -511,11 +512,22 @@ function pluginEnabled(id: string, projectRoot: string): boolean {
   return effective.enabled && effective.missing.length === 0;
 }
 
+/**
+ * True when a plugin's recorded source resolves inside the CLI package's own
+ * bundled-plugins copy. Provenance is judged purely from the source path so
+ * this never branches on a specific plugin id (see the architecture test).
+ */
+function isBundledPluginSource(source: string): boolean {
+  if (!path.isAbsolute(source)) return false;
+  const relative = path.relative(bundledPluginsRoot(), path.resolve(source));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function pluginManagementPayload(projectRoot: string): object {
   const settings = readPluginSettings(projectRoot);
   return {
     revision: pluginSettingsRevision(settings),
-    plugins: listPlugins(projectRoot).map(({ id, version, manifest }) => {
+    plugins: listPlugins(projectRoot).map(({ id, version, manifest, source, installed_at, resolved }) => {
       const effective = effectivePluginSettings(manifest, projectRoot);
       const configuration = (manifest.configuration ?? []).map((field) => ({
         ...field,
@@ -532,6 +544,10 @@ function pluginManagementPayload(projectRoot: string): object {
         missing: effective.missing,
         configuration,
         has_readme: Boolean(manifest.display?.readme ?? existsSync(path.join(installedPluginDirectory(id, projectRoot), "README.md"))),
+        source,
+        installed_at,
+        resolved: resolved ?? null,
+        bundled: isBundledPluginSource(source),
       };
     }),
   };
@@ -697,6 +713,49 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             return serveFile(response, path.join(settingsUiRoot, path.basename(pathname)));
           }
           if (request.method === "GET" && pathname === "/api/settings/plugins") return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+          if (request.method === "POST" && pathname === "/api/settings/plugins") {
+            const payload = await readJson(request);
+            if (typeof payload.source !== "string" || !payload.source.length || payload.source.length > 2048) throw new HttpError(400, "plugin source is invalid");
+            let installed: Awaited<ReturnType<typeof installPlugin>>;
+            try {
+              installed = await installPlugin(payload.source, store.target.projectRoot);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "plugin install failed";
+              throw new HttpError(message.startsWith("plugin is already installed") ? 409 : 400, message);
+            }
+            // Newly installed third-party plugins never auto-enable from the HTTP install route,
+            // even when the default effective state (with no workspace override) is enabled.
+            // Retry a few times if another request updates plugin settings concurrently.
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+              const effective = effectivePluginSettings(installed.plugin.manifest, store.target.projectRoot);
+              if (!effective.enabled) break;
+              const settings = readPluginSettings(store.target.projectRoot);
+              try {
+                updatePluginSettings(installed.plugin.id, installed.plugin.manifest, { revision: pluginSettingsRevision(settings), enabled: false, configuration: {} }, store.target.projectRoot);
+                break;
+              } catch (error) {
+                if (!(error instanceof Error) || error.message !== "plugin settings revision conflict" || attempt === 4) throw error;
+              }
+            }
+            return sendJson(response, 201, {
+              installed: {
+                id: installed.plugin.id,
+                version: installed.plugin.version,
+                source: installed.plugin.source,
+                resolved: installed.plugin.resolved ?? null,
+                warnings: installed.warnings,
+              },
+              ...pluginManagementPayload(store.target.projectRoot),
+            });
+          }
+          const removeMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)$/.exec(pathname);
+          if (request.method === "DELETE" && removeMatch?.[1]) {
+            const plugin: InstalledPlugin | undefined = listPlugins(store.target.projectRoot).find(({ id }) => id === removeMatch[1]);
+            if (!plugin) throw new HttpError(404, "plugin not found");
+            if (isBundledPluginSource(plugin.source)) throw new HttpError(409, "bundled plugin cannot be removed; disable it instead");
+            removePlugin(plugin.id, store.target.projectRoot);
+            return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+          }
           const readmeMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/readme$/.exec(pathname);
           if (request.method === "GET" && readmeMatch?.[1]) return sendJson(response, 200, { readme: readInstalledPluginReadme(readmeMatch[1], store.target.projectRoot) });
           const updateMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)$/.exec(pathname);

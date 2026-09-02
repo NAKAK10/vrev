@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -18,9 +18,18 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { gunzipSync } from "node:zlib";
 
-import { atomicWriteJson, readJson, withFileLock } from "./file-utils.js";
+import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
 import { findWorkspaceRoot } from "./paths.js";
 import { parsePluginManifest, readPluginManifest, type VisualReviewPluginManifest } from "./plugin-manifest.js";
+import { parsePluginSource } from "./plugin-source.js";
+
+export interface InstalledPluginResolution {
+  kind: "local" | "npm" | "git";
+  ref?: string;
+  integrity?: string;
+  digest: string;
+  resolved_at: string;
+}
 
 export interface InstalledPlugin {
   id: string;
@@ -28,6 +37,7 @@ export interface InstalledPlugin {
   source: string;
   installed_at: string;
   manifest: VisualReviewPluginManifest;
+  resolved?: InstalledPluginResolution;
 }
 
 export interface PluginRegistry {
@@ -38,6 +48,7 @@ export interface PluginRegistry {
 export interface PluginInstallResult {
   plugin: InstalledPlugin;
   directory: string;
+  warnings: string[];
 }
 
 export interface BundledPluginUpgradeResult extends PluginInstallResult {
@@ -55,19 +66,6 @@ function storagePaths(workspace = process.cwd()): { registry: string; plugins: s
   return { registry: path.join(vreview, "plugins.json"), plugins, vreview };
 }
 
-function validateSource(source: string): void {
-  if (!source.trim() || source !== source.trim() || /[\0-\x1f\x7f]/.test(source)) throw new Error("plugin source must be a nonblank value without control characters");
-  const candidate = source.replace(/^git\+/, "");
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
-    let url: URL;
-    try { url = new URL(candidate); } catch { throw new Error("plugin source URL is invalid"); }
-    if (url.username || url.password) throw new Error("plugin source URL must not contain credentials");
-    for (const key of url.searchParams.keys()) {
-      if (/(?:auth|token|secret|password|api[-_]?key)/i.test(key)) throw new Error("plugin source URL must not contain credential parameters");
-    }
-  }
-}
-
 function ensurePluginIgnores(vreview: string): void {
   mkdirSync(vreview, { recursive: true });
   const ignorePath = path.join(vreview, ".gitignore");
@@ -81,6 +79,24 @@ function emptyRegistry(): PluginRegistry {
   return { schema_version: 1, plugins: [] };
 }
 
+function parseResolution(value: unknown): InstalledPluginResolution | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("plugin registry entry resolution is invalid");
+  const record = value as Record<string, unknown>;
+  if (!["local", "npm", "git"].includes(record.kind as string) || typeof record.digest !== "string" || typeof record.resolved_at !== "string") {
+    throw new Error("plugin registry entry resolution is invalid");
+  }
+  if (record.ref !== undefined && typeof record.ref !== "string") throw new Error("plugin registry entry resolution is invalid");
+  if (record.integrity !== undefined && typeof record.integrity !== "string") throw new Error("plugin registry entry resolution is invalid");
+  return {
+    kind: record.kind as InstalledPluginResolution["kind"],
+    digest: record.digest,
+    resolved_at: record.resolved_at,
+    ...(typeof record.ref === "string" ? { ref: record.ref } : {}),
+    ...(typeof record.integrity === "string" ? { integrity: record.integrity } : {}),
+  };
+}
+
 function parseRegistry(value: unknown): PluginRegistry {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("plugin registry must be an object");
   const record = value as Record<string, unknown>;
@@ -92,7 +108,8 @@ function parseRegistry(value: unknown): PluginRegistry {
     if (entry.id !== manifest.id || entry.version !== manifest.version || typeof entry.source !== "string" || typeof entry.installed_at !== "string") {
       throw new Error("plugin registry entry is invalid");
     }
-    return { id: manifest.id, version: manifest.version, source: entry.source, installed_at: entry.installed_at, manifest };
+    const resolved = parseResolution(entry.resolved);
+    return { id: manifest.id, version: manifest.version, source: entry.source, installed_at: entry.installed_at, manifest, ...(resolved ? { resolved } : {}) };
   });
   if (new Set(plugins.map(({ id }) => id)).size !== plugins.length) throw new Error("plugin registry contains duplicate ids");
   return { schema_version: 1, plugins };
@@ -120,6 +137,27 @@ function assertSafeTree(directory: string): void {
 function copySafeTree(source: string, destination: string): void {
   assertSafeTree(source);
   cpSync(source, destination, { recursive: true, dereference: false, errorOnExist: true, force: false });
+}
+
+/**
+ * Deterministic content digest for a local plugin tree: sha256 over sorted
+ * "relative-posix-path\0<file sha256>\n" lines, independent of copy order or timestamps.
+ */
+function treeDigest(directory: string): string {
+  const files: { relative: string; absolute: string }[] = [];
+  const visit = (current: string, prefix: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const absolute = path.join(current, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) visit(absolute, relative);
+      else files.push({ relative, absolute });
+    }
+  };
+  visit(directory, "");
+  files.sort((a, b) => (a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0));
+  const hash = createHash("sha256");
+  for (const file of files) hash.update(`${file.relative}\0${fileSha256(file.absolute)}\n`);
+  return hash.digest("hex");
 }
 
 function run(command: string, args: string[], cwd: string): Promise<string> {
@@ -210,29 +248,78 @@ function extractNpmArchive(archivePath: string, destination: string): void {
   }
 }
 
-async function prepareSource(source: string, cwd: string, temporaryRoot: string): Promise<{ directory: string; recordedSource: string }> {
-  const local = path.resolve(cwd, source);
-  if (existsSync(local)) {
-    if (lstatSync(local).isSymbolicLink()) throw new Error("plugin source must not be a symbolic link");
+interface PreparedSource {
+  directory: string;
+  recordedSource: string;
+  warnings: string[];
+  resolved: InstalledPluginResolution;
+}
+
+async function prepareSource(source: string, cwd: string, temporaryRoot: string): Promise<PreparedSource> {
+  const parsed = parsePluginSource(source, cwd);
+  const warnings: string[] = [];
+  const resolvedAt = new Date().toISOString();
+
+  if (parsed.kind === "local") {
+    if (lstatSync(parsed.path).isSymbolicLink()) throw new Error("plugin source must not be a symbolic link");
     const prepared = path.join(temporaryRoot, "plugin");
-    copySafeTree(local, prepared);
-    return { directory: prepared, recordedSource: local };
+    copySafeTree(parsed.path, prepared);
+    return {
+      directory: prepared,
+      recordedSource: parsed.path,
+      warnings,
+      resolved: { kind: "local", digest: treeDigest(prepared), resolved_at: resolvedAt },
+    };
   }
+
+  if (parsed.kind === "npm" && !parsed.pinned) warnings.push(`npm spec is not pinned to an exact version: ${parsed.spec}`);
+  if (parsed.kind === "git") warnings.push(...parsed.warnings);
+
   const packDirectory = path.join(temporaryRoot, "pack");
   mkdirSync(packDirectory);
   const output = await run("npm", ["pack", source, "--json", "--ignore-scripts"], packDirectory);
   let result: unknown;
   try { result = JSON.parse(output) as unknown; } catch { throw new Error("npm pack returned invalid JSON"); }
-  const filename = Array.isArray(result) && result.length === 1 && typeof (result[0] as { filename?: unknown })?.filename === "string"
-    ? (result[0] as { filename: string }).filename : null;
+  const entry = Array.isArray(result) && result.length === 1 && typeof result[0] === "object" && result[0] !== null
+    ? (result[0] as Record<string, unknown>) : null;
+  const filename = entry && typeof entry.filename === "string" ? entry.filename : null;
   if (filename === null || path.basename(filename) !== filename) throw new Error("npm pack did not return a safe archive filename");
+  const archivePath = path.join(packDirectory, filename);
+  const digest = fileSha256(archivePath);
+  const integrity = typeof entry?.integrity === "string" ? entry.integrity : undefined;
+  const packedVersion = typeof entry?.version === "string" ? entry.version : undefined;
   const prepared = path.join(temporaryRoot, "plugin");
-  extractNpmArchive(path.join(packDirectory, filename), prepared);
-  return { directory: prepared, recordedSource: source };
+  extractNpmArchive(archivePath, prepared);
+
+  let ref: string | undefined;
+  if (parsed.kind === "git") {
+    const packageJsonPath = path.join(prepared, "package.json");
+    let gitHead: unknown;
+    if (existsSync(packageJsonPath)) {
+      try { gitHead = (JSON.parse(readFileSync(packageJsonPath, "utf8")) as { gitHead?: unknown }).gitHead; } catch { /* fall back below */ }
+    }
+    if (typeof gitHead === "string" && gitHead) ref = gitHead;
+    else if (parsed.ref && /^[0-9a-f]{40}$/i.test(parsed.ref)) ref = parsed.ref;
+    else ref = parsed.ref ?? undefined;
+  } else {
+    ref = packedVersion;
+  }
+
+  return {
+    directory: prepared,
+    recordedSource: source,
+    warnings,
+    resolved: {
+      kind: parsed.kind,
+      digest,
+      resolved_at: resolvedAt,
+      ...(ref !== undefined ? { ref } : {}),
+      ...(integrity !== undefined ? { integrity } : {}),
+    },
+  };
 }
 
 export async function installPlugin(source: string, workspace = process.cwd()): Promise<PluginInstallResult> {
-  validateSource(source);
   const paths = storagePaths(workspace);
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-"));
   try {
@@ -246,7 +333,14 @@ export async function installPlugin(source: string, workspace = process.cwd()): 
       const staging = path.join(paths.plugins, `.${manifest.id}.${randomUUID()}.tmp`);
       const destination = path.join(paths.plugins, manifest.id);
       if (existsSync(destination)) throw new Error(`plugin directory already exists: ${manifest.id}`);
-      const plugin: InstalledPlugin = { id: manifest.id, version: manifest.version, source: prepared.recordedSource, installed_at: new Date().toISOString(), manifest };
+      const plugin: InstalledPlugin = {
+        id: manifest.id,
+        version: manifest.version,
+        source: prepared.recordedSource,
+        installed_at: new Date().toISOString(),
+        manifest,
+        resolved: prepared.resolved,
+      };
       try {
         copySafeTree(prepared.directory, staging);
         renameSync(staging, destination);
@@ -256,7 +350,7 @@ export async function installPlugin(source: string, workspace = process.cwd()): 
         rmSync(destination, { recursive: true, force: true });
         throw error;
       }
-      return { plugin, directory: destination };
+      return { plugin, directory: destination, warnings: prepared.warnings };
     });
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
@@ -338,17 +432,19 @@ export function upgradeBundledPlugin(
 
     const staging = path.join(paths.plugins, `.${existing.id}.${randomUUID()}.upgrade`);
     const backup = path.join(paths.plugins, `.${existing.id}.${randomUUID()}.backup`);
-    const plugin: InstalledPlugin = {
-      id: bundledManifest.id,
-      version: bundledManifest.version,
-      source,
-      installed_at: new Date().toISOString(),
-      manifest: bundledManifest,
-    };
     let oldMoved = false;
     let replacementMoved = false;
+    let plugin: InstalledPlugin;
     try {
       copySafeTree(source, staging);
+      plugin = {
+        id: bundledManifest.id,
+        version: bundledManifest.version,
+        source,
+        installed_at: new Date().toISOString(),
+        manifest: bundledManifest,
+        resolved: { kind: "local", digest: treeDigest(staging), resolved_at: new Date().toISOString() },
+      };
       renameSync(destination, backup);
       oldMoved = true;
       renameSync(staging, destination);
@@ -363,7 +459,7 @@ export function upgradeBundledPlugin(
       throw error;
     }
     rmSync(backup, { recursive: true, force: true });
-    return { plugin, directory: destination, previousVersion: existing.version };
+    return { plugin, directory: destination, previousVersion: existing.version, warnings: [] };
   });
 }
 

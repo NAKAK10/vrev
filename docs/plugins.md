@@ -96,6 +96,24 @@ local directoryはsymlinkと通常file/directory以外を拒否してcopyする�
 
 npm sourceではinstall scriptやdependency installを実行しない。公開pluginはNode標準APIだけで自己完結させるか、runtime dependencyを成果物へbundleしてpackageへ含める必要がある。同梱plugin packageはrelease workflowから個別にGitHub Packagesへpublishされる。
 
+### Source kind分類
+
+`installPlugin`へ渡すsourceは、実行前に`local`／`npm`／`git`のいずれかへ分類する（`src/plugin-source.ts`の`parsePluginSource`）。分類はfilesystemの存在確認だけで行い、networkへは一切アクセスしない。
+
+- `local`: `./`・`../`・`/`・`~/`・Windows drive・`file:`（続く部分が`./`等の相対markerで始まる場合だけ）で始まるsource、または`path.resolve(cwd, source)`がdisk上に存在するsource。前者の形式で存在しないpathは`npm`へfallbackせずただちに拒否する。
+- `git`: `git+`・`git://`・`ssh://`・`github:`・`gitlab:`・`bitbucket:`・`gist:`で始まるsource、host名がgithub.com/gitlab.com/bitbucket.orgのhttp(s) URL、またはnpmのGitHub shorthand（`owner/repo`、`/`は1つだけ、`.`や`..`の segmentは不可）。**`#<ref>`によるtag/commit SHAの固定を必須とし、未固定のgit sourceは拒否する。**
+- `npm`: 上記いずれにも該当しないsource。`name@range`として解釈し、exact SemVerでないrangeは拒否せずwarningを返す（未固定npm specは許可するが警告する）。
+
+いずれの分類でも、credentialを含むURL（userinfo、`token`/`secret`/`password`/`api-key`等のquery parameter）は拒否する。`npm`/`git` sourceは共通して`npm pack <spec> --json --ignore-scripts`で取得・展開する。
+
+### `resolved`フィールド
+
+installに成功したentryへは`resolved`（`{ kind, ref?, integrity?, digest, resolved_at }`）を記録する。`digest`はtarball bytes（npm/git）またはlocal treeの決定的digest（`treeDigest`: sorted `relative-posix-path\0<file sha256>\n`のsha256）。`integrity`は`npm pack --json`が返す値（npm/git限定）。`ref`はnpmのexact version、gitのcommit SHA（抽出した`package.json`の`gitHead`優先、無ければ指定`#ref`）。`resolved`は既存registryとの互換のため任意fieldであり、旧いregistry JSONは`resolved`なしのまま読み込める。
+
+### 設定画面からのinstall/remove
+
+`ui.plugin_management`が非表示でない workspace では、`POST /api/settings/plugins`（body: `{ "source": "..." }`）と`DELETE /api/settings/plugins/:id`をHTTP経由でも提供する。installはCLIと同じ検証・展開経路を通り、plugin codeを実行しない。既定で有効になるpluginでも、このrouteからのinstallは常に無効状態で記録する（bundled first-partyのCLI bootstrapは対象外）。bundled plugin（sourceがCLI packageの`bundled-plugins`配下を指すもの）はこのrouteから削除できない。
+
 ## Declarative UI and plugin management
 
 1.1.9ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。レビュー画面のshell（header・左の描画領域・右のcontent column）はCoreが所有し、pluginは`review.header`（header右側への追加）、`review.stage`（左側の描画。2つ以上あればCoreが切り替えmenuを提供）、`review.sidebar`（右側への追加）の各slotへ部品だけを提供する。公式`review` pluginはheader用のレビュー操作toolbarとstage用の対象表示を提供し、workflow/custom-command/Issue pluginのdocumentをslotへ合成する。headerとsidebarの表示順、表示するstage、切り替えmenuの位置（四隅、既定は右下）は`/settings`で編集し、Git管理外の`.vreview/layout-settings.json`へ保存する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。

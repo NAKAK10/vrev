@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { bundledPluginsRoot } from "./bundled-plugins-root.js";
 import { normalizeGitHubIssueDraft } from "./github-issue.js";
 import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
@@ -162,12 +163,12 @@ const DEFAULT_PLUGIN_IDS = ["review", "github-issue", "custom-command", "annotat
 
 export async function ensureDefaultPlugins(
   workspaceRoot: string,
-  bundledPluginsRoot = fileURLToPath(new URL("./bundled-plugins", import.meta.url)),
+  defaultBundledPluginsRoot = bundledPluginsRoot(),
 ): Promise<string[]> {
   const installedIds = new Set(listPlugins(workspaceRoot).map(({ id }) => id));
   const installed: string[] = [];
   for (const id of DEFAULT_PLUGIN_IDS) {
-    const bundledSource = path.resolve(bundledPluginsRoot, id);
+    const bundledSource = path.resolve(defaultBundledPluginsRoot, id);
     if (installedIds.has(id)) {
       const result = upgradeBundledPlugin(bundledSource, workspaceRoot);
       if (result) installed.push(`${result.plugin.id}@${result.plugin.version}`);
@@ -318,12 +319,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (action === "install" && argv.length === 3) {
       const result = await installPlugin(argv[2]!);
       console.log(`Installed ${result.plugin.id}@${result.plugin.version}`);
+      for (const warning of result.warnings) console.error(`warning: ${warning}`);
       return;
     }
     if (action === "list" && argv.length === 2) {
       const plugins = listPlugins();
       if (plugins.length === 0) console.log("No plugins installed.");
-      else for (const plugin of plugins) console.log(`${plugin.id}\t${plugin.version}\t${plugin.source}`);
+      else for (const plugin of plugins) {
+        const resolved = plugin.resolved ? `${plugin.resolved.kind}\t${plugin.resolved.ref ?? plugin.resolved.digest.slice(0, 12)}` : "";
+        console.log(`${plugin.id}\t${plugin.version}\t${plugin.source}\t${resolved}`);
+      }
       return;
     }
     if (action === "remove" && argv.length === 3) {

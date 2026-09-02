@@ -76,6 +76,12 @@ visual-review plugin install ./visual-review-plugins/plugins/example
 
 install元の直下には`visual-review.plugin.json`が必要です。repository全体や親の`plugins/` directoryをまとめてinstallすることはできません。
 
+## 設定画面からinstallする
+
+CLIを開かず、ブラウザの`/settings/plugins`からもnpm spec・GitHub link・localパスでpluginをinstall・removeできます。「プラグインを追加」欄へsourceを入力して「インストール」を押すだけです。npm specはexact versionを、GitHub specはtag/commit SHAを`#`で固定してください（未固定のGitHub specはCLIと同様に拒否します）。install時にplugin codeは実行されず、追加直後は無効状態で始まるため、内容を確認してから有効化してください。各プラグイン行の「削除」からremoveできますが、同梱pluginには表示されません（無効化のみ可能です）。
+
+installに成功したプラグインのsource種別と解決情報（npmのversion、GitHubのref、local treeのdigest）は、`plugin list`の出力および設定画面の各行に`npm · 1.2.3 · sha256 …`のような形式で表示されます。
+
 ## 確認・実行・削除
 
 ```sh

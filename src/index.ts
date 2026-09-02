@@ -1,4 +1,5 @@
 export * from "./adapters.js";
+export * from "./bundled-plugins-root.js";
 export * from "./capability-registry.js";
 export * from "./custom-command-test.js";
 export * from "./file-utils.js";
@@ -20,6 +21,7 @@ export * from "./process-supervisor.js";
 export * from "./plugin-runtime.js";
 export * from "./plugin-settings.js";
 export * from "./plugin-scaffold.js";
+export * from "./plugin-source.js";
 export * from "./review-capability.js";
 export * from "./review-store.js";
 export * from "./server-lease.js";

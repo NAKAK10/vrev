@@ -850,6 +850,59 @@ function rerender() {
   if (activeId) document.getElementById(activeId)?.focus({ preventScroll: true });
   requestAnimationFrame(redrawMarks);
 }
+function pluginProvenanceLabel(plugin) {
+  if (plugin.bundled) return "同梱";
+  const resolved = plugin.resolved;
+  if (!resolved) return "";
+  const digestPrefix = resolved.digest ? `sha256 ${resolved.digest.slice(0, 4)}…` : "";
+  if (resolved.kind === "npm") return ["npm", resolved.ref, digestPrefix].filter(Boolean).join(" · ");
+  if (resolved.kind === "git") return ["git", resolved.ref ? resolved.ref.slice(0, 12) : null, digestPrefix].filter(Boolean).join(" · ");
+  return ["local", digestPrefix].filter(Boolean).join(" · ");
+}
+async function removeInstalledPlugin(plugin, button, row) {
+  if (!confirm(`${plugin.title}を削除しますか？`)) return;
+  button.disabled = true; row.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}`, { method: "DELETE" });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || "プラグインを削除できませんでした。"); }
+    toast(`${plugin.title}を削除しました。`, "info");
+    location.reload();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "プラグインを削除できませんでした。", "error");
+    button.disabled = false; row.removeAttribute("aria-busy");
+  }
+}
+function pluginInstallSection() {
+  const section = element("section", "vr-settings-card");
+  const heading = element("h2", "vr-section-title"); heading.textContent = "プラグインを追加"; section.append(heading);
+  const description = element("p", "vr-field-description");
+  description.textContent = "npm指定はバージョンを固定し、GitHub指定はタグまたはcommit SHAを#で固定してください。install時にプラグインのコードは実行されず、追加直後は無効状態で始まります。";
+  section.append(description);
+  const field = element("label", "vr-field vr-field-input");
+  const label = element("span", "vr-field-label"); label.textContent = "インストール元"; field.append(label);
+  const input = element("input"); input.type = "text"; input.placeholder = "@scope/plugin@1.2.3 / github:owner/repo#v1.2.3 / ./plugins/example";
+  field.append(input); section.append(field);
+  const install = element("button", "vr-button"); install.type = "button"; install.textContent = "インストール";
+  install.addEventListener("click", async () => {
+    const source = input.value.trim();
+    if (!source) return toast("インストール元を入力してください。", "error");
+    install.disabled = true; install.setAttribute("aria-busy", "true"); install.textContent = "インストール中…";
+    try {
+      const response = await fetch("/api/settings/plugins", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "プラグインをインストールできませんでした。");
+      toast(`${body.installed.id}@${body.installed.version}をインストールしました。`, "info");
+      for (const warning of body.installed.warnings || []) toast(warning, "info");
+      location.reload();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "プラグインをインストールできませんでした。", "error");
+    } finally {
+      install.disabled = false; install.removeAttribute("aria-busy"); install.textContent = "インストール";
+    }
+  });
+  section.append(install);
+  return section;
+}
 async function renderSettings() {
   root.dataset.page = "settings";
   const [managementResponse, surfaceResponse] = await Promise.all([fetch("/api/settings/plugins"), fetch("/api/plugin-host/v1/surfaces/review")]);
@@ -863,10 +916,12 @@ async function renderSettings() {
   const page = element("main", "vr-settings-page");
   const intro = element("section", "vr-settings-intro"); const introHeading = element("h2"); introHeading.textContent = "インストール済みプラグイン"; const introCopy = element("p"); introCopy.textContent = "機能の有効状態を切り替え、プラグインごとの説明と設定を確認できます。"; intro.append(introHeading, introCopy); page.append(intro);
   if (surface.diagnostics?.length) { const warning = element("p", "vr-settings-error"); warning.textContent = `${surface.diagnostics.length}件のプラグインUIを読み込めませんでした。詳細は各プラグインを確認してください。`; page.append(warning); }
+  page.append(pluginInstallSection());
   const list = element("section", "vr-settings-list"); list.setAttribute("aria-label", "インストール済みプラグイン");
   for (const plugin of management.plugins || []) {
     const row = element("article", "vr-plugin-row"); row.dataset.pluginId = plugin.id;
     const copy = element("div", "vr-plugin-copy"); const title = element("h3"); title.textContent = plugin.title; const summary = element("p"); summary.textContent = plugin.summary; copy.append(title, summary);
+    const provenance = element("span", "vr-field-description"); provenance.textContent = pluginProvenanceLabel(plugin); copy.append(provenance);
     const toggleLabel = element("label", "vr-plugin-toggle"); const toggle = element("input"); toggle.type = "checkbox"; toggle.role = "switch"; toggle.checked = plugin.enabled; toggle.setAttribute("aria-label", `${plugin.title}を有効にする`); const toggleText = element("span"); toggleText.textContent = "有効"; toggleLabel.append(toggle, toggleText);
     toggle.addEventListener("change", async () => {
       const previous = !toggle.checked; row.setAttribute("aria-busy", "true"); toggle.disabled = true;
@@ -879,7 +934,13 @@ async function renderSettings() {
     });
     const details = element("button", "vr-button"); details.type = "button"; details.textContent = "詳細"; details.setAttribute("aria-haspopup", "dialog");
     details.addEventListener("click", () => { location.hash = plugin.id; void openSettingsDetail(plugin, details); });
-    row.append(copy, toggleLabel, details); list.append(row);
+    row.append(copy, toggleLabel, details);
+    if (!plugin.bundled) {
+      const remove = element("button", "vr-button"); remove.type = "button"; remove.textContent = "削除";
+      remove.addEventListener("click", () => void removeInstalledPlugin(plugin, remove, row));
+      row.append(remove);
+    }
+    list.append(row);
   }
   page.append(list); shell.append(page, element("div", "toast-region")); root.replaceChildren(shell); root.setAttribute("aria-busy", "false"); queueMicrotask(paintToast); requestAnimationFrame(paintToast);
   const selected = (management.plugins || []).find(({ id }) => id === decodeURIComponent(location.hash.slice(1))); if (selected) await openSettingsDetail(selected, null);
