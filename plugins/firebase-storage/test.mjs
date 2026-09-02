@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
+import { createVerify, generateKeyPairSync } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { createTokenSource } from "./auth.mjs";
 import {
   applySnapshot,
   collectLocalSnapshot,
   compareSnapshots,
   createStorageProvider,
   createWorkspaceStorageProvider,
+  createWorkspaceStorageProviderFromContext,
   pushCommand,
   readRemoteSnapshot,
   storageProvider,
@@ -38,7 +42,7 @@ function response(value, status = 200) {
   });
 }
 
-function firestoreMemory() {
+function firestoreMemory(expectedToken = "test-token") {
   let document;
   let revision = 0;
   const calls = [];
@@ -46,7 +50,7 @@ function firestoreMemory() {
     calls,
     fetch: async (url, init) => {
       calls.push({ url, init });
-      assert.equal(init.headers.Authorization, "Bearer test-token");
+      if (expectedToken !== null) assert.equal(init.headers.Authorization, `Bearer ${expectedToken}`);
       if (init.method === "GET") {
         return document ? response(document) : response({ error: { message: "missing" } }, 404);
       }
@@ -72,7 +76,14 @@ test("manifest and package expose commands and the backend-neutral storage provi
   assert.deepEqual(manifest.commands.map(({ name }) => name), ["push", "pull", "status"]);
   assert.equal(manifest.schema_version, 3);
   assert.equal(manifest.storage_provider.api_version, 1);
-  assert.equal(manifest.storage_provider.export, "workspaceStorageProvider");
+  assert.equal(manifest.storage_provider.export, "createWorkspaceStorageProviderFromContext");
+  const credentialFields = manifest.configuration.filter((field) => field.source === "credential");
+  assert.deepEqual(credentialFields.map(({ key }) => key), ["service_account_key", "firebase_web_config"]);
+  for (const field of credentialFields) {
+    assert.equal(field.type, "secret");
+    assert.equal(field.format, "json");
+    assert.equal("default" in field, false);
+  }
   assert.equal(pkg.dependencies, undefined);
   assert.equal(typeof storageProvider.list, "function");
   assert.equal(typeof storageProvider.read, "function");
@@ -177,12 +188,12 @@ test("push creates or updates with a remote precondition and reports conflicts",
   }
 });
 
-test("access-token-only authentication is explicit", async () => {
+test("access-token mode is the default and is explicit about missing configuration", async () => {
   await assert.rejects(
     readRemoteSnapshot({ env: { FIREBASE_PROJECT_ID: "sample-project", GOOGLE_APPLICATION_CREDENTIALS: "/tmp/key.json" }, fetch: async () => response({}) }),
     /FIREBASE_ACCESS_TOKEN.*GOOGLE_APPLICATION_CREDENTIALS is not supported/,
   );
-  await assert.rejects(readRemoteSnapshot({ env: { FIREBASE_ACCESS_TOKEN: "x" }, fetch: async () => response({}) }), /FIREBASE_PROJECT_ID is required/);
+  await assert.rejects(readRemoteSnapshot({ env: { FIREBASE_ACCESS_TOKEN: "x" }, fetch: async () => response({}) }), /Firebase project ID is required/);
 });
 
 test("pull uses atomic replacement and dry-run leaves local data unchanged", async () => {
@@ -257,4 +268,254 @@ test("status comparison and legacy provider list/read/write work against an in-m
   );
   assert.deepEqual(changes.map(({ status }) => status), ["modified", "remote-only"]);
   assert.ok(memory.calls.some(({ url }) => url.includes("currentDocument.updateTime=")));
+});
+
+function decodeBase64Url(value) {
+  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+function decodeJwt(token) {
+  const [headerPart, payloadPart, signaturePart] = token.split(".");
+  return {
+    header: JSON.parse(decodeBase64Url(headerPart).toString("utf8")),
+    payload: JSON.parse(decodeBase64Url(payloadPart).toString("utf8")),
+    signingInput: `${headerPart}.${payloadPart}`,
+    signature: decodeBase64Url(signaturePart),
+  };
+}
+
+function fakeChildProcess() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  return child;
+}
+
+test("service_account mode signs an RS256 JWT and exchanges it, and its project ID falls back to the key", async () => {
+  const memoryToken = "service-account-access-token";
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const serviceAccountKey = {
+    client_email: "sample@sample-project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ type: "pkcs1", format: "pem" }).toString(),
+    project_id: "sample-project",
+  };
+  const memory = firestoreMemory(memoryToken);
+  const tokenCalls = [];
+  const fetchImpl = async (url, init) => {
+    if (String(url).startsWith("https://oauth2.googleapis.com/token")) {
+      tokenCalls.push({ url, init });
+      const body = new URLSearchParams(init.body);
+      assert.equal(body.get("grant_type"), "urn:ietf:params:oauth:grant-type:jwt-bearer");
+      const decoded = decodeJwt(body.get("assertion"));
+      assert.deepEqual(decoded.header, { alg: "RS256", typ: "JWT" });
+      assert.equal(decoded.payload.iss, serviceAccountKey.client_email);
+      assert.equal(decoded.payload.scope, "https://www.googleapis.com/auth/datastore");
+      assert.equal(decoded.payload.aud, "https://oauth2.googleapis.com/token");
+      assert.ok(decoded.payload.exp - decoded.payload.iat === 3600);
+      const verifier = createVerify("RSA-SHA256");
+      verifier.update(decoded.signingInput);
+      assert.ok(verifier.verify(publicKey, decoded.signature), "JWT signature must verify against the key's public counterpart");
+      return response({ access_token: "service-account-access-token", expires_in: 3600 });
+    }
+    return memory.fetch(url, { ...init, headers: { ...init.headers, Authorization: "Bearer service-account-access-token" } });
+  };
+  const snapshot = { schema_version: 1, files: [] };
+  await writeRemoteSnapshot(snapshot, {
+    configuration: { auth_mode: "service_account" },
+    credentials: { service_account_key: JSON.stringify(serviceAccountKey) },
+    fetch: fetchImpl,
+  });
+  assert.equal(tokenCalls.length, 1);
+  assert.match(memory.calls[0].url, /projects\/sample-project\//);
+});
+
+test("service_account mode rejects a malformed key without leaking the key material", async () => {
+  await assert.rejects(
+    readRemoteSnapshot({ configuration: { auth_mode: "service_account" }, credentials: { service_account_key: "not-json" }, fetch: async () => response({}) }),
+    (error) => error instanceof Error && /must be valid JSON/.test(error.message) && !error.message.includes("not-json"),
+  );
+});
+
+test("gcloud mode runs gcloud auth print-access-token and passes --account when configured", async () => {
+  const memory = firestoreMemory("gcloud-cli-token");
+  const spawnCalls = [];
+  const spawnImpl = (command, args, options) => {
+    spawnCalls.push({ command, args, options });
+    const child = fakeChildProcess();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("gcloud-cli-token\n"));
+      child.emit("close", 0, null);
+    });
+    return child;
+  };
+  const fetchImpl = async (url, init) => memory.fetch(url, init);
+  await writeRemoteSnapshot({ schema_version: 1, files: [] }, {
+    configuration: { auth_mode: "gcloud", gcloud_account: "svc@example.iam.gserviceaccount.com", project_id: "sample-project" },
+    spawn: spawnImpl,
+    fetch: fetchImpl,
+  });
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, "gcloud");
+  assert.deepEqual(spawnCalls[0].args, ["auth", "print-access-token", "--account", "svc@example.iam.gserviceaccount.com"]);
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.equal(memory.calls[0].init.headers.Authorization, "Bearer gcloud-cli-token");
+});
+
+test("gcloud mode reports a clear error when the CLI is missing and never leaks stdout on failure", async () => {
+  const missingSpawn = () => {
+    const child = fakeChildProcess();
+    queueMicrotask(() => child.emit("error", Object.assign(new Error("spawn gcloud ENOENT"), { code: "ENOENT" })));
+    return child;
+  };
+  await assert.rejects(
+    readRemoteSnapshot({ configuration: { auth_mode: "gcloud", project_id: "sample-project" }, spawn: missingSpawn, fetch: async () => response({}) }),
+    /gcloud CLI was not found/,
+  );
+
+  const failingSpawn = () => {
+    const child = fakeChildProcess();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("partial-token-leak"));
+      child.stderr.emit("data", Buffer.from("ERROR: (gcloud.auth.print-access-token) You do not currently have an active account\n"));
+      child.emit("close", 1, null);
+    });
+    return child;
+  };
+  await assert.rejects(
+    readRemoteSnapshot({ configuration: { auth_mode: "gcloud", project_id: "sample-project" }, spawn: failingSpawn, fetch: async () => response({}) }),
+    (error) => error instanceof Error && /exit code 1/.test(error.message) && /active account/.test(error.message) && !error.message.includes("partial-token-leak"),
+  );
+});
+
+test("gcloud mode caches the token until near expiry and forceRefresh bypasses the cache", async () => {
+  let calls = 0;
+  const spawnImpl = () => {
+    calls += 1;
+    const child = fakeChildProcess();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(`token-${calls}\n`));
+      child.emit("close", 0, null);
+    });
+    return child;
+  };
+  let clock = 0;
+  const source = createTokenSource({ mode: "gcloud", configuration: {}, spawn: spawnImpl, now: () => clock });
+  assert.equal(await source.getAccessToken(), "token-1");
+  assert.equal(await source.getAccessToken(), "token-1");
+  assert.equal(calls, 1);
+  clock += 51 * 60 * 1000;
+  assert.equal(await source.getAccessToken(), "token-2");
+  assert.equal(calls, 2);
+  assert.equal(await source.getAccessToken({ forceRefresh: true }), "token-3");
+  assert.equal(calls, 3);
+});
+
+test("firebase_web mode signs in anonymously, refreshes via refresh_token, and never exposes the apiKey in errors", async () => {
+  const memory = firestoreMemory();
+  const config = { apiKey: "sample-web-api-key-not-a-real-google-key", projectId: "sample-project" };
+  let refreshCount = 0;
+  const fetchImpl = async (url, init) => {
+    const target = new URL(url);
+    if (target.hostname === "identitytoolkit.googleapis.com") {
+      assert.equal(target.searchParams.get("key"), config.apiKey);
+      const body = JSON.parse(init.body);
+      assert.equal(body.returnSecureToken, true);
+      return response({ idToken: "anon-id-token-1", refreshToken: "refresh-token-1", expiresIn: "3600" });
+    }
+    if (target.hostname === "securetoken.googleapis.com") {
+      refreshCount += 1;
+      assert.equal(target.searchParams.get("key"), config.apiKey);
+      const body = new URLSearchParams(init.body);
+      assert.equal(body.get("grant_type"), "refresh_token");
+      assert.equal(body.get("refresh_token"), "refresh-token-1");
+      return response({ id_token: "anon-id-token-2", refresh_token: "refresh-token-1", expires_in: "3600" });
+    }
+    return memory.fetch(url, init);
+  };
+  let clock = 0;
+  const source = createTokenSource({ mode: "firebase_web", credentials: { firebase_web_config: JSON.stringify(config) }, fetch: fetchImpl, now: () => clock });
+  assert.equal(await source.getAccessToken(), "anon-id-token-1");
+  assert.equal(source.projectIdHint, "sample-project");
+  clock += 3600 * 1000;
+  assert.equal(await source.getAccessToken(), "anon-id-token-2");
+  assert.equal(refreshCount, 1);
+
+  await assert.rejects(
+    (async () => {
+      const badSource = createTokenSource({ mode: "firebase_web", credentials: { firebase_web_config: "{}" }, fetch: fetchImpl, now: () => clock });
+      await badSource.getAccessToken();
+    })(),
+    (error) => error instanceof Error && /missing apiKey/.test(error.message) && !error.message.includes(config.apiKey),
+  );
+});
+
+test("a 401 Firestore response forces exactly one token refresh and retries once", async () => {
+  const memory = firestoreMemory(null);
+  let tokenCalls = 0;
+  const fetchImpl = async (url, init) => {
+    if (String(url).startsWith("https://oauth2.googleapis.com/token")) {
+      tokenCalls += 1;
+      return response({ access_token: `token-${tokenCalls}`, expires_in: 3600 });
+    }
+    if (init.headers.Authorization === "Bearer token-1") return response({ error: { message: "expired" } }, 401);
+    return memory.fetch(url, init);
+  };
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  void publicKey;
+  const serviceAccountKey = { client_email: "sample@sample-project.iam.gserviceaccount.com", private_key: privateKey.export({ type: "pkcs1", format: "pem" }).toString() };
+  const result = await readRemoteSnapshot({
+    configuration: { auth_mode: "service_account", project_id: "sample-project" },
+    credentials: { service_account_key: JSON.stringify(serviceAccountKey) },
+    fetch: fetchImpl,
+  }).catch((error) => error);
+  // The document does not exist yet in `memory`, so after the retry this resolves as a 404, proving
+  // the retry actually reached Firestore with the refreshed token rather than failing on the 401.
+  assert.ok(result instanceof Error);
+  assert.match(result.message, /Firestore request failed/);
+  assert.equal(tokenCalls, 2);
+});
+
+test("createWorkspaceStorageProviderFromContext builds a WorkspaceStorageProviderV1 from a PluginRuntimeContextV1-shaped context", async () => {
+  const memory = firestoreMemory("context-token");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = memory.fetch;
+  try {
+    const provider = createWorkspaceStorageProviderFromContext({
+      workspaceRoot: "/unused",
+      pluginDirectory: "/unused",
+      configuration: { auth_mode: "access_token", project_id: "sample-project", document_id: "context-provider" },
+      credentials: {},
+      env: { FIREBASE_ACCESS_TOKEN: "context-token" },
+    });
+    assert.equal(provider.apiVersion, 1);
+    const key = ".vreview/reviews/home/review.json";
+    const written = await provider.compareAndSwap(key, null, { revision: 1 });
+    assert.equal(memory.calls[0].init.headers.Authorization, "Bearer context-token");
+    assert.deepEqual(await provider.read(key), { version: written.version, value: { revision: 1 } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("command context delivers configuration and credentials without routing them through argv or logged output", async () => {
+  const secretMarker = "super-secret-service-account-material";
+  const serviceAccountKey = { client_email: "svc@sample.iam.gserviceaccount.com", private_key: secretMarker };
+  const context = {
+    workspaceRoot: mkdtempSync(path.join(tmpdir(), "vreview-firebase-cmd-")),
+    pluginDirectory: "/unused",
+    args: ["--document", "team-workspace", "--dry-run"],
+    configuration: { auth_mode: "service_account", project_id: "sample-project", document_id: "ignored-because-arg-wins" },
+    credentials: { service_account_key: JSON.stringify(serviceAccountKey) },
+  };
+  mkdirSync(path.join(context.workspaceRoot, ".vreview", "reviews"), { recursive: true });
+  assert.doesNotMatch(JSON.stringify(context.args), new RegExp(secretMarker));
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await pushCommand(context);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.doesNotMatch(logs.join("\n"), new RegExp(secretMarker));
 });

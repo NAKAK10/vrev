@@ -11,6 +11,7 @@ export * from "./layout-settings.js";
 export * from "./paths.js";
 export * from "./plugin-bridge.js";
 export * from "./plugin-bridge-contract.js";
+export * from "./plugin-credentials.js";
 export * from "./plugin-host-runtime.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-registry.js";

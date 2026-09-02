@@ -29,12 +29,13 @@ export interface PluginConfigurationField {
   key: string;
   title: string;
   description?: string;
-  type: "string" | "integer" | "boolean" | "select";
-  source: "workspace" | "environment";
+  type: "string" | "integer" | "boolean" | "select" | "secret";
+  source: "workspace" | "environment" | "credential";
   required: boolean;
   environment?: string;
   default?: string | number | boolean;
   options?: Array<{ value: string; label: string }>;
+  format?: "text" | "json";
 }
 
 export interface PluginServerManifestV1 extends PluginModuleReference {
@@ -243,16 +244,17 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
     const keys = new Set<string>();
     configuration = record.configuration.map((item, index) => {
       const field = object(item, `configuration[${index}]`);
-      exactKeys(field, ["key", "title", "description", "type", "source", "required", "environment", "default", "options"], `configuration[${index}]`);
+      exactKeys(field, ["key", "title", "description", "type", "source", "required", "environment", "default", "options", "format"], `configuration[${index}]`);
       if (typeof field.key !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(field.key) || keys.has(field.key)) throw new Error(`configuration[${index}].key is invalid or duplicated`);
       keys.add(field.key);
       if (typeof field.title !== "string" || !field.title.trim() || field.title.length > 100) throw new Error(`configuration[${index}].title is invalid`);
       if (field.description !== undefined && (typeof field.description !== "string" || field.description.length > 300)) throw new Error(`configuration[${index}].description is invalid`);
-      if (!['string', 'integer', 'boolean', 'select'].includes(String(field.type))) throw new Error(`configuration[${index}].type is invalid`);
-      if (field.source !== "workspace" && field.source !== "environment") throw new Error(`configuration[${index}].source is invalid`);
+      if (!['string', 'integer', 'boolean', 'select', 'secret'].includes(String(field.type))) throw new Error(`configuration[${index}].type is invalid`);
+      if (field.source !== "workspace" && field.source !== "environment" && field.source !== "credential") throw new Error(`configuration[${index}].source is invalid`);
+      if ((field.type === "secret") !== (field.source === "credential")) throw new Error(`configuration[${index}].type and source must both be a credential`);
       if (typeof field.required !== "boolean") throw new Error(`configuration[${index}].required must be boolean`);
       if (field.source === "environment" && (typeof field.environment !== "string" || !/^[A-Z][A-Z0-9_]{0,127}$/.test(field.environment))) throw new Error(`configuration[${index}].environment is invalid`);
-      if (field.source === "workspace" && field.environment !== undefined) throw new Error(`configuration[${index}].environment is not allowed`);
+      if (field.source !== "environment" && field.environment !== undefined) throw new Error(`configuration[${index}].environment is not allowed`);
       let options: Array<{ value: string; label: string }> | undefined;
       if (field.type === "select") {
         if (!Array.isArray(field.options) || field.options.length === 0 || field.options.length > 50) throw new Error(`configuration[${index}].options is invalid`);
@@ -263,7 +265,10 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
           return { value: choice.value, label: choice.label };
         });
       } else if (field.options !== undefined) throw new Error(`configuration[${index}].options is not allowed`);
+      if (field.source === "credential" && field.default !== undefined) throw new Error(`configuration[${index}].default is not allowed`);
       if (field.default !== undefined && !["string", "number", "boolean"].includes(typeof field.default)) throw new Error(`configuration[${index}].default is invalid`);
+      if (field.format !== undefined && field.source !== "credential") throw new Error(`configuration[${index}].format is not allowed`);
+      if (field.format !== undefined && field.format !== "text" && field.format !== "json") throw new Error(`configuration[${index}].format is invalid`);
       return {
         key: field.key,
         title: field.title,
@@ -274,6 +279,7 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
         ...(typeof field.environment === "string" ? { environment: field.environment } : {}),
         ...(field.default === undefined ? {} : { default: field.default as string | number | boolean }),
         ...(options === undefined ? {} : { options }),
+        ...(field.format === undefined ? {} : { format: field.format as "text" | "json" }),
       };
     });
   }

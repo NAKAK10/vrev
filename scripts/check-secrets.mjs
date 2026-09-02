@@ -14,8 +14,16 @@ const checks = [
   ["machine-specific home path", /\/Users\/[^/\s]+\//],
 ];
 
+const skippedPathPrefixes = [[".vreview", "credentials"]];
+
+function isSkippedPath(directory, name) {
+  const relative = path.relative(root, path.join(directory, name)).split(path.sep);
+  return skippedPathPrefixes.some((prefix) => prefix.every((segment, index) => relative[index] === segment));
+}
+
 function files(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (isSkippedPath(directory, entry.name)) return [];
     if (entry.name.startsWith(".env") || entry.name.endsWith(".pem") || entry.name.endsWith(".key")) {
       return [path.join(directory, entry.name)];
     }

@@ -14,6 +14,7 @@ import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { layoutSettingsRevision, readLayoutSettings, updateLayoutSettings, type LayoutSettingsUpdateInput } from "./layout-settings.js";
 import { resolveTarget } from "./paths.js";
 import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, type InstalledPlugin } from "./plugin-registry.js";
+import { deletePluginCredential, readPluginCredentialPresence, setPluginCredential } from "./plugin-credentials.js";
 import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, type PluginIssueResult } from "./plugin-runtime.js";
 import { effectivePluginSettings, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "./plugin-settings.js";
 import { createReviewCapability } from "./review-capability.js";
@@ -529,11 +530,19 @@ function pluginManagementPayload(projectRoot: string): object {
     revision: pluginSettingsRevision(settings),
     plugins: listPlugins(projectRoot).map(({ id, version, manifest, source, installed_at, resolved }) => {
       const effective = effectivePluginSettings(manifest, projectRoot);
-      const configuration = (manifest.configuration ?? []).map((field) => ({
-        ...field,
-        ...(field.source === "environment" ? { present: Boolean(field.environment && process.env[field.environment]) } : {}),
-        value: field.source === "workspace" ? effective.configuration[field.key] ?? null : null,
-      }));
+      const hasCredentialField = (manifest.configuration ?? []).some((field) => field.source === "credential");
+      const credentialPresence = hasCredentialField ? readPluginCredentialPresence(id, projectRoot) : {};
+      const configuration = (manifest.configuration ?? []).map((field) => {
+        if (field.source === "credential") {
+          const presence = credentialPresence[field.key];
+          return { ...field, present: Boolean(presence), updated_at: presence?.updated_at ?? null, fingerprint: presence?.fingerprint ?? null, value: null };
+        }
+        return {
+          ...field,
+          ...(field.source === "environment" ? { present: Boolean(field.environment && process.env[field.environment]) } : {}),
+          value: field.source === "workspace" ? effective.configuration[field.key] ?? null : null,
+        };
+      });
       return {
         id,
         version,
@@ -775,6 +784,30 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
               throw error;
             }
             return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+          }
+          const credentialMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/credentials\/([a-z][a-z0-9_]{0,63})$/.exec(pathname);
+          if (credentialMatch?.[1] && credentialMatch[2]) {
+            const plugin = listPlugins(store.target.projectRoot).find(({ id }) => id === credentialMatch[1]);
+            if (!plugin) throw new HttpError(404, "plugin not found");
+            const field = (plugin.manifest.configuration ?? []).find((candidate) => candidate.key === credentialMatch[2] && candidate.source === "credential");
+            if (!field) throw new HttpError(404, "credential field not declared");
+            if (request.method === "PUT") {
+              const payload = await readJson(request);
+              if (typeof payload.value !== "string") throw new HttpError(400, "credential value must be a string");
+              if (Buffer.byteLength(payload.value, "utf8") > 64 * 1024) throw new HttpError(400, "credential value is too large");
+              if (/\u0000/.test(payload.value)) throw new HttpError(400, "credential value must not contain NUL characters");
+              if (field.format === "json") {
+                let parsed: unknown;
+                try { parsed = JSON.parse(payload.value); } catch { throw new HttpError(400, "credential value must be valid JSON"); }
+                if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new HttpError(400, "credential value must be a JSON object");
+              }
+              setPluginCredential(plugin.id, field.key, payload.value, store.target.projectRoot);
+              return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+            }
+            if (request.method === "DELETE") {
+              deletePluginCredential(plugin.id, field.key, store.target.projectRoot);
+              return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
+            }
           }
           throw new HttpError(404, "route not found");
         }

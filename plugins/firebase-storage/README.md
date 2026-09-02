@@ -2,7 +2,22 @@
 
 Firestore REST を使い、Visual Review workspace の共有可能な JSON を 1 document に同期する、依存 package なしの sample plugin です。Node.js 20 の組み込み `fetch` のみを使います。
 
-> この版が明示的に対応する認証は **OAuth 2 access token (`FIREBASE_ACCESS_TOKEN`) のみ**です。service account key、Application Default Credentials、`GOOGLE_APPLICATION_CREDENTIALS` の読み込みや token refresh は行いません。
+## 認証方式
+
+設定画面（`/settings/plugins`）の「認証方式」（`auth_mode`）で 4 通りから選べます。いずれも token 取得は `auth.mjs` が担い、`push`/`pull`/`status` や storage provider から共通で使われます。
+
+| `auth_mode` | 概要 | 必要な設定 |
+|---|---|---|
+| `access_token`（既定） | 環境変数の OAuth access token をそのまま使う。plugin 自体は token を発行しません。 | 環境変数 `FIREBASE_ACCESS_TOKEN` |
+| `service_account` | サービスアカウント key の `private_key` で RS256 JWT を自己署名し、`https://oauth2.googleapis.com/token` へ交換します（scope `https://www.googleapis.com/auth/datastore`）。 | credential `service_account_key`（JSON） |
+| `gcloud` | `gcloud auth print-access-token` を child process として起動します（`--account` は `gcloud_account` を指定した場合のみ付与）。 | ローカルの gcloud CLI、任意で workspace 設定 `gcloud_account` |
+| `firebase_web` | `firebaseConfig` の `apiKey` で Firebase Auth の匿名ログイン（`accounts:signUp`）を行い、以降は `securetoken.googleapis.com` で refresh token を使い延長します。 | credential `firebase_web_config`（JSON） |
+
+取得した token は有効期限の 60 秒前まで（`gcloud` は 50 分固定）plugin 内でcacheし、Firestore が 401 を返した場合は 1 回だけ強制refreshして再試行します。
+
+`service_account`/`firebase_web` の credential は **設定画面からのみ**登録します。値は `.vreview/credentials/firebase-storage.json`（directory mode `0700`、file mode `0600`、`.vreview/.gitignore` へ自動追記）へ保存され、Git管理外です。画面・API へ値そのものが返ることはなく、登録済みかどうか（`present`）・更新日時・先頭8文字のfingerprintだけを表示します。repository、`.vreview/plugin-settings.json`、log、command引数のいずれにも値を書き込みません。
+
+`firebase_web` を使う場合、Firestore Security Rules は匿名principal（`request.auth != null` など）に対象documentへのread/write権限を許可している必要があります。匿名ユーザーは長期的なaccount所有者ではないため、rulesの設計と運用側の責任で範囲を絞ってください。
 
 ## 導入
 
@@ -16,17 +31,17 @@ visual-review plugin install @nakak10/visual-review-firebase-storage
 visual-review plugin install ./plugins/firebase-storage
 ```
 
-Firebase project で Firestore database を作成し、利用者が対象 document を read/write できる OAuth access token を安全な手段で取得して、実行 process の環境変数へ渡します。token や service account JSON は repository、plugin 設定、`.vreview` に保存しないでください。
+Firebase project で Firestore database を作成し、選んだ認証方式で対象 document を read/write できる権限を用意してください。
 
 ```sh
-export FIREBASE_PROJECT_ID='your-project-id'
-export FIREBASE_ACCESS_TOKEN="$(gcloud auth print-access-token)" # 例。plugin 自体は gcloud を呼びません
+# access_token の例
+export FIREBASE_ACCESS_TOKEN="$(gcloud auth print-access-token)"
 export FIREBASE_COLLECTION_ID='visual-review-workspaces'          # optional
 export FIREBASE_DOCUMENT_ID='team-workspace'                      # optional
 export FIREBASE_DATABASE_ID='(default)'                           # optional
 ```
 
-`FIREBASE_PROJECT_ID` は常に必須です。network access を伴う操作には `FIREBASE_ACCESS_TOKEN` も必須です。既定 collection は `visual-review-workspaces`、document は `default`、database は `(default)` です。複数 workspace を扱う場合は衝突を避けるため document ID を明示してください。ID は 1〜128 文字の英数字、`.`、`_`、`-` に制限しています（database の `(default)` のみ例外）。
+project ID は明示した `project_id`（設定画面のworkspace設定）を最優先し、未設定なら環境変数 `FIREBASE_PROJECT_ID`、次に `service_account_key` の `project_id`、次に `firebase_web_config` の `projectId` の順で補完します。いずれも解決できない場合はエラーになります。既定 collection は `visual-review-workspaces`、document は `default`、database は `(default)` です。複数 workspace を扱う場合は衝突を避けるため document ID を明示してください。ID は 1〜128 文字の英数字、`.`、`_`、`-` に制限しています（database の `(default)` のみ例外）。
 
 ## Commands
 
@@ -102,18 +117,20 @@ await provider.delete(key, written.version);
 
 stale versionは`StorageConflictError`として失敗し、無条件上書きしません。plugin生成時に`projectId`、`accessToken`、`collectionId`、`documentId`、`databaseId`を固定したい場合は`createWorkspaceStorageProvider(options)`を使えます。
 
+manifestの`storage_provider.export`は`createWorkspaceStorageProviderFromContext`（factory function）です。Visual Review本体のloaderは有効化済みplugin向けにこのfunctionを一度だけ`PluginRuntimeContextV1`（`workspaceRoot`、`pluginDirectory`、`configuration`、`credentials`、`env`）付きで呼び出し、戻り値の`WorkspaceStorageProviderV1`を使います。従来どおり環境変数のみで動く`workspaceStorageProvider`（`export const`のobject）も後方互換のため残していますが、新規installはmanifest経由のfactory export側が使われます。
+
 従来の`storageProvider`（`list/read/write`）もcommand内部・移行互換用にexportしますが、manifestからは公開しません。`pull`は現時点では明示的なlegacy同期操作であり、running serverのauthoritative storageを差し替える用途には使わないでください。
 
 ## Security / operations
 
-- access token は Firestore の必要な document だけを操作できる最小権限・短寿命のものを使用してください。
-- この sample は token を log、file、Firestore payload に保存しません。
-- Firestore Security Rules / IAM、backup、retention、token refresh は運用側の責任です。
+- どの認証方式でも、Firestore の必要な document だけを操作できる最小権限のprincipalを使用してください。
+- この plugin は token・service account key・firebaseConfig を log、review JSON、Firestore payload、`.vreview/plugin-settings.json`、command引数に一切保存しません。secretは`.vreview/credentials/firebase-storage.json`（file mode `0600`）にのみ保存され、Coreの設定APIは登録済みかどうか・更新日時・fingerprintしか返しません。
+- Firestore Security Rules / IAM、backup、retention、token/refresh tokenの失効は運用側の責任です。`firebase_web`利用時は匿名principalへ許可するrulesの範囲に特に注意してください。
 - document URL は固定の Google Firestore endpoint だけを使用します。
 
 ## Test
 
-外部接続や credential は不要です。mock `fetch` と temporary workspace で自己完結します。
+外部接続や実際の credential は不要です。mock `fetch`・mock `spawn`・temporary workspace で自己完結します。`service_account`のJWT署名は使い捨てのRSA鍵ペア（`node:crypto`の`generateKeyPairSync`）をtest内で生成して検証し、鍵material自体はrepositoryに含みません。
 
 ```sh
 cd plugins/firebase-storage
