@@ -7,7 +7,6 @@ const dialogs = new Map();
 const formDrafts = new Map();
 const dialogOpeners = new WeakMap();
 const pluginRuntimeCleanups = new Map();
-const expandedTextKeys = new Set();
 let surface;
 let settingsRenderPromise = null;
 let activeToast = null;
@@ -164,40 +163,6 @@ function control(node, nodeProps, scope) {
     if (declaration) { scope.state[declaration.key] = value; scope.persist(); }
   });
 }
-function prepareExpandableText(node, values, definition, scope) {
-  const lines = Math.min(10, Math.max(1, Math.round(Number(values.line_clamp) || 0)));
-  if (!values.expandable || !lines || !definition.id) return;
-  const key = `${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:${definition.id}`;
-  node.dataset.lineClamp = String(lines);
-  node.style.setProperty("--vr-line-clamp", String(lines));
-  const setExpanded = (expanded) => {
-    node.classList.toggle("is-expanded", expanded);
-    node.setAttribute("aria-expanded", String(expanded));
-    node.title = expanded ? "クリックして折りたたむ" : "クリックして全文を表示";
-    if (expanded) expandedTextKeys.add(key); else expandedTextKeys.delete(key);
-  };
-  const makeExpandable = () => {
-    node.dataset.expandable = "true";
-    if (node.tagName !== "BUTTON") { node.setAttribute("role", "button"); node.tabIndex = 0; }
-    setExpanded(expandedTextKeys.has(key));
-  };
-  if (expandedTextKeys.has(key)) makeExpandable();
-  else requestAnimationFrame(() => {
-    if (!node.isConnected) return;
-    const clampedHeight = node.getBoundingClientRect().height;
-    node.classList.add("is-expanded");
-    const fullHeight = node.getBoundingClientRect().height;
-    node.classList.remove("is-expanded");
-    if (fullHeight > clampedHeight + 1) makeExpandable();
-  });
-  const toggle = (event) => {
-    if (node.dataset.expandable !== "true") return;
-    event.preventDefault(); event.stopImmediatePropagation();
-    setExpanded(!node.classList.contains("is-expanded"));
-  };
-  node.addEventListener("click", toggle);
-  if (node.tagName !== "BUTTON") node.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") toggle(event); });
-}
 function renderCheckboxGroup(node, values, definition, scope) {
   node.setAttribute("role", "group");
   if (values.label) node.setAttribute("aria-label", String(values.label));
@@ -277,7 +242,6 @@ function renderSingle(definition, scope) {
   if (type === "panel" && values.aria_label) node.setAttribute("aria-label", String(values.aria_label));
   if (type === "button" || type === "load-more") { node.textContent = String(values.label || ""); if (values.type) node.type = String(values.type); }
   if (type === "link") { node.textContent = String(values.label || ""); if (typeof values.href === "string") node.href = values.href; if (values.external) { node.target = "_blank"; node.rel = "noopener noreferrer"; } }
-  prepareExpandableText(node, values, definition, scope);
   if (["input", "textarea"].includes(type)) { if (type === "input" && values.type) node.type = String(values.type); control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
   if (["select", "viewport-selector"].includes(type)) {
     control(node, values, { ...scope, valuePath: definition.props?.value?.local });

@@ -26,6 +26,7 @@
         "id": "review-sidebar",
         "slot": "review.sidebar",
         "document": "./ui/sidebar.ui.json",
+        "browser_module": "./ui/sidebar.js",
         "order": 100
       },
       {

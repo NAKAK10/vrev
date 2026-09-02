@@ -55,6 +55,7 @@ test("disabled workflow contribution is absent and expands the target stage", as
 test("renderer documents reject executable and unknown component properties", () => {
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "text", props: { style: { literal: "position:fixed" } } } }), /forbidden/);
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", props: { arbitrary: { literal: true } } } }), /unsupported field/);
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "text", props: { line_clamp: { literal: 3 } } } }), /unsupported field/);
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: Array.from({ length: 17 }, () => ({ type: "local.toggle", path: "/open" })) } } }), /at most 16/);
 });
 
@@ -118,9 +119,7 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /container\.dataset\.viewport === "custom"/);
   assert.match(source, /frame\.style\.width = `\$\{container\.__viewportWidth\}px`/);
   assert.match(source, /currentStage\.__viewportWidth = nextStage\.__viewportWidth/);
-  assert.match(source, /function prepareExpandableText\(node, values, definition, scope\)/);
-  assert.match(source, /expandedTextKeys\.has\(key\)/);
-  assert.match(source, /event\.stopImmediatePropagation\(\)/);
+  assert.doesNotMatch(source, /prepareExpandableText|expandedTextKeys|workflowExpandable/);
   assert.match(source, /main\?\.browser_module_url.*mountPluginRuntime\(main, connectedMain\)/s);
   assert.match(source, /if \(rendered\.isConnected\) void mountPluginRuntime/);
 });
@@ -144,8 +143,7 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.match(css, /\.vr-target-diagnostic-close[^}]*pointer-events: auto/s);
   assert.match(css, /\.vr-target-stage\[data-viewport="custom"\] iframe[^}]*max-width: none/s);
   assert.match(css, /custom-viewport-size/);
-  assert.match(css, /\[data-line-clamp\]:not\(\.is-expanded\)[^}]*-webkit-line-clamp: var\(--vr-line-clamp\)/s);
-  assert.match(css, /\[data-expandable="true"\][^}]*cursor: pointer/s);
+  assert.doesNotMatch(css, /workflow-expandable|workflow-expanded|vr-line-clamp/);
   assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
   assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
   assert.match(source, /dialog\[open\] \.vr-dialog-body/);
@@ -162,6 +160,8 @@ test("bundled review documents bind localized annotation content, filters, overl
   const rendererSource = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   const reviewRuntime = readFileSync(path.join(process.cwd(), "plugins/review/ui/review.js"), "utf8");
   const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
+  const workflowRuntime = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.js"), "utf8");
+  const workflowManifest = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { ui: { contributions: Array<{ id: string; browser_module?: string }> } };
   const issueText = readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/issue.ui.json"), "utf8");
   assert.doesNotThrow(() => parsePluginUiDocument(review));
   const reviewDocument = review as { local_state: Array<{ key: string; default: unknown; persist?: boolean }>; root: unknown };
@@ -178,8 +178,13 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
   assert.match(sidebarText, /"kind_label"|\/kind_label/);
   assert.match(sidebarText, /"type": "checkbox-group"/);
-  assert.match(sidebarText, /"id": "annotation-comment"[^]*"line_clamp": \{ "literal": 3 \}[^]*"expandable": \{ "literal": true \}/);
-  assert.match(sidebarText, /"id": "thread-body"[^]*"line_clamp": \{ "literal": 3 \}[^]*"expandable": \{ "literal": true \}/);
+  assert.match(sidebarText, /"id": "annotation-comment"/);
+  assert.match(sidebarText, /"id": "thread-body"/);
+  assert.equal(workflowManifest.ui.contributions.find(({ id }) => id === "review-sidebar")?.browser_module, "./ui/sidebar.js");
+  assert.match(workflowRuntime, /-webkit-line-clamp/);
+  assert.match(workflowRuntime, /event\.stopImmediatePropagation\(\)/);
+  assert.match(workflowRuntime, /event\.key !== "Enter".*event\.key !== " "/);
+  assert.match(workflowRuntime, /root\.addEventListener\("click", click, true\)/);
   assert.match(sidebarText, /"id": "batch-run".*"resource": "workflow-settings", "path": "\/auto_run".*"literal": false/);
   assert.match(sidebarText, /"id": "annotation-ai-run".*"item": "\/status".*"literal": "open".*"path": "\/auto_run".*"literal": true.*"label": \{ "literal": "AI修正" \}.*"command": "jobs\.enqueue".*"annotation_id": \{ "item": "\/id" \}/);
   assert.match(sidebarText, /"limit": \{ "literal": 24 \}/);
