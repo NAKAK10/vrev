@@ -98,6 +98,27 @@ test("browser runtime keeps declarative DOM Core-owned and mounts only declared 
   assert.doesNotMatch(source, /allow-same-origin allow-forms allow-scripts/);
 });
 
+test("checkbox-group supports an inverted binding where checked means excluded from the bound set", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  assert.match(source, /values\.inverted === true/);
+  assert.match(source, /input\.checked = values\.inverted === true \? !selected\.has\(value\) : selected\.has\(value\)/);
+
+  const documentSource = readFileSync(path.join(process.cwd(), "src/plugin-ui-document.ts"), "utf8");
+  const checkboxGroupLine = documentSource.split("\n").find((line) => line.includes('"checkbox-group":'));
+  assert.ok(checkboxGroupLine, "checkbox-group prop allowlist not found");
+  assert.match(checkboxGroupLine!, /"inverted"/);
+
+  assert.doesNotThrow(() =>
+    parsePluginUiDocument({
+      schema_version: 1,
+      root: {
+        type: "checkbox-group",
+        props: { value: { local: "/hidden" }, options: { literal: [] }, inverted: { literal: true } },
+      },
+    }),
+  );
+});
+
 test("renderer acceptance paths scope repeated annotation actions and implement target regions, focus, dialogs, and pending controls", () => {
   const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   assert.match(source, /definition\.repeat\.key/);

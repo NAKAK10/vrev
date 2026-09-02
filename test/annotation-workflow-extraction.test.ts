@@ -187,6 +187,68 @@ test("annotations.list applies a task-capability status label override and falls
   assert.equal(invalid.status_tone, null);
 });
 
+test("annotations.list merges task-provided filter categories and hides by unchecked filter id", async () => {
+  const root = repository();
+  const review = {
+    apiVersion: 1 as const,
+    store: {
+      target: { projectRoot: root },
+      load: () => ({
+        revision: 1,
+        annotations: [
+          { id: "annotation-task", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-unknown", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-plain", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-resolved", status: "resolved", kind: "region", thread: [] },
+        ],
+        events: [],
+      }),
+      loadActive: () => ({ annotations: [] }),
+      addMessage() {},
+      setStatus() {},
+    },
+  };
+  const taskCapability = {
+    coordinatorInstructions: () => "",
+    acceptCoordinatorOutput: () => [],
+    state: () => "none" as const,
+    // "open" collides with a workflow status and "Bad Id" is malformed; both must be dropped.
+    filters: () => [{ id: "task-a", label: "タスクA" }, { id: "open", label: "衝突" }, { id: "Bad Id", label: "x" }],
+    filter: (annotation: { id: string }) => {
+      if (annotation.id === "annotation-task") return "task-a";
+      if (annotation.id === "annotation-unknown") return "unknown";
+      return null;
+    },
+  };
+  const manager = { list: () => ({ revision: 1, batches: [], jobs: [] }), enqueue: () => ({ batch_id: "", jobs: [] }), retry: () => ({ batch_id: "", jobs: [] }), cancel: () => {}, taskCapability };
+  const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never);
+  type ListData = { data: { filters: Array<{ value: string; label: string }>; items: Array<{ id: string; filter_id: string }> } };
+
+  const all = await bridge.query("annotations.list", { request_id: "all", input: { hidden: [], kinds: ["dom", "region"] } }) as ListData;
+  assert.deepEqual(all.data.filters, [
+    { value: "open", label: "未対応" },
+    { value: "in_progress", label: "AI対応中" },
+    { value: "failed", label: "失敗" },
+    { value: "addressed", label: "AI対応済み" },
+    { value: "resolved", label: "解決済み" },
+    { value: "task-a", label: "タスクA" },
+  ]);
+  assert.deepEqual(all.data.items.map(({ id, filter_id }) => [id, filter_id]), [
+    ["annotation-task", "task-a"],
+    // An undeclared category falls back to the annotation's own status.
+    ["annotation-unknown", "open"],
+    ["annotation-plain", "open"],
+    ["annotation-resolved", "resolved"],
+  ]);
+
+  const withoutTask = await bridge.query("annotations.list", { request_id: "hide-task", input: { hidden: ["task-a"], kinds: ["dom", "region"] } }) as ListData;
+  assert.deepEqual(withoutTask.data.items.map(({ id }) => id), ["annotation-unknown", "annotation-plain", "annotation-resolved"]);
+
+  const withoutOpen = await bridge.query("annotations.list", { request_id: "hide-open", input: { hidden: ["open"], kinds: ["dom", "region"] } }) as ListData;
+  // The task-categorised annotation stays visible even though its status is "open".
+  assert.deepEqual(withoutOpen.data.items.map(({ id }) => id), ["annotation-task", "annotation-resolved"]);
+});
+
 test("disabling annotation-workflow rejects legacy job APIs while review stays available", async () => {
   const root = repository();
   await ensureDefaultPlugins(root);

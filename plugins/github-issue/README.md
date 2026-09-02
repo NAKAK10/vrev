@@ -30,4 +30,6 @@ Issue bodyはcommand line argumentではなく標準入力へ渡します。実�
 
 ## Annotation card status badges
 
-`issue-task` capabilityは`label(annotation)`を通じてannotation cardのstatus badgeを供給します。Issue依頼のflowに沿って「Issue依頼」→「AI Issue下書き中」→「Issueラフ確認待ち」→「Issue作成済み」と遷移し、下書き生成に失敗した場合は「Issue下書き失敗」を表示します。これらのbadgeはgithub-issue pluginがannotation-workflow pluginへ提供するもので、本pluginを無効化するとcardはworkflow側のdefault labelに戻ります。
+`issue-task` capabilityは`label(annotation)`を通じてannotation cardのstatus badgeを供給します。Issue依頼のflowに沿って「Issueラフ作成中」→「AI Issue下書き中」→「Issueラフ確認待ち」→「Issue作成済み」と遷移し、下書き生成に失敗した場合は「Issue下書き失敗」を表示します。これらのbadgeはgithub-issue pluginがannotation-workflow pluginへ提供するもので、本pluginを無効化するとcardはworkflow側のdefault labelに戻ります。
+
+同じcapabilityの`filters()`/`filter(annotation)`により、注釈一覧の絞り込みチップにも「Issueラフ作成中」「Issueラフ確認待ち」「Issue作成済み」が追加されます。Issue依頼した注釈は「未対応」チップではなくこれらのチップで絞り込まれます。

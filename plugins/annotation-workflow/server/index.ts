@@ -3,7 +3,7 @@ import type { ProcessSupervisorPortV1 } from "./adapters.js";
 import { createSupervisorExecutor } from "./adapters.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { parseRunnerSelection, updateWorkflowSettings, workflowSettingsProjection } from "./settings.js";
-import type { ReviewCapabilityV1, RunnerRegistryV1, WorkflowAnnotation, WorkflowTaskCapabilityV1, WorkflowTaskLabelV1, WorkflowTaskToneV1 } from "./workflow-types.js";
+import type { ReviewCapabilityV1, RunnerRegistryV1, WorkflowAnnotation, WorkflowTaskCapabilityV1, WorkflowTaskFilterV1, WorkflowTaskLabelV1, WorkflowTaskToneV1 } from "./workflow-types.js";
 
 export const ANNOTATION_WORKFLOW_CAPABILITY_ID = "annotation-workflow";
 export const ANNOTATION_WORKFLOW_CAPABILITY_API_VERSION = 1;
@@ -49,6 +49,48 @@ function safeTaskLabel(capability: WorkflowTaskCapabilityV1 | undefined, annotat
   return result;
 }
 
+const WORKFLOW_STATUS_ORDER = ["open", "in_progress", "failed", "addressed", "resolved"] as const;
+const TASK_FILTER_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const MAX_TASK_FILTERS = 16;
+
+/**
+ * Filter categories an optional task plugin owns. The workflow itself only knows its five
+ * statuses; a task plugin may add its own chips so its annotations are not lumped under a status.
+ */
+function safeTaskFilters(capability: WorkflowTaskCapabilityV1 | undefined): WorkflowTaskFilterV1[] {
+  let declared: readonly WorkflowTaskFilterV1[];
+  try {
+    declared = capability?.filters?.() ?? [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(declared)) return [];
+  const reserved = new Set<string>(WORKFLOW_STATUS_ORDER);
+  const seen = new Set<string>();
+  const accepted: WorkflowTaskFilterV1[] = [];
+  for (const entry of declared) {
+    if (accepted.length >= MAX_TASK_FILTERS) break;
+    if (!entry || typeof entry !== "object") continue;
+    const { id, label } = entry;
+    if (typeof id !== "string" || !TASK_FILTER_ID.test(id) || reserved.has(id) || seen.has(id)) continue;
+    if (typeof label !== "string" || !label.trim() || label.length > 32) continue;
+    seen.add(id);
+    accepted.push({ id, label });
+  }
+  return accepted;
+}
+
+/** The task filter category an annotation belongs to, or null when its status filter applies. */
+function safeTaskFilter(capability: WorkflowTaskCapabilityV1 | undefined, annotation: WorkflowAnnotation, allowed: ReadonlySet<string>): string | null {
+  let result: string | null;
+  try {
+    result = capability?.filter?.(annotation) ?? null;
+  } catch {
+    return null;
+  }
+  return typeof result === "string" && allowed.has(result) ? result : null;
+}
+
 interface BridgeReviewStore {
   readonly target: { projectRoot: string };
   load(): { revision: number; annotations: Array<Record<string, unknown> & { id: string; status: string }>; events: Array<{ at: string; revision: number }> };
@@ -66,15 +108,23 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
       const { input } = request;
       if (name === "annotations.list") {
         const aggregate = store.load();
-        const statuses = Array.isArray(input.statuses) ? new Set(input.statuses.filter((item): item is string => typeof item === "string")) : null;
+        // `hidden` carries the unchecked filter ids, so a task plugin's new chip starts visible
+        // for everyone instead of being silently filtered out by a persisted status allowlist.
+        const hidden = new Set(Array.isArray(input.hidden) ? input.hidden.filter((item): item is string => typeof item === "string") : []);
         const kinds = Array.isArray(input.kinds) ? new Set(input.kinds.filter((item): item is string => typeof item === "string")) : null;
         const labels: Record<string, string> = { open: "未対応", in_progress: "AI対応中", failed: "失敗", addressed: "AI対応済み", resolved: "解決済み" };
-        const items = aggregate.annotations.filter((annotation) => (!statuses || statuses.has(annotation.status)) && (!kinds || kinds.has(String(annotation.kind))))
-          .map((annotation) => {
+        const taskFilters = safeTaskFilters(manager.taskCapability);
+        const taskFilterIds = new Set(taskFilters.map(({ id }) => id));
+        // The renderer's checkbox-group binds `value`/`label`, so chips are projected in that shape.
+        const filters = [...WORKFLOW_STATUS_ORDER.map((id) => ({ value: id, label: labels[id]! })), ...taskFilters.map(({ id, label }) => ({ value: id, label }))];
+        const items = aggregate.annotations
+          .map((annotation) => ({ annotation, category: safeTaskFilter(manager.taskCapability, annotation as unknown as WorkflowAnnotation, taskFilterIds) }))
+          .filter(({ annotation, category }) => !hidden.has(category ?? annotation.status) && (!kinds || kinds.has(String(annotation.kind))))
+          .map(({ annotation, category }) => {
             const override = safeTaskLabel(manager.taskCapability, annotation as unknown as WorkflowAnnotation);
-            return { ...annotation, status_label: override?.text ?? labels[annotation.status] ?? annotation.status, status_tone: override?.tone ?? null, kind_label: annotation.kind === "dom" ? "ノード" : "範囲", thread: (Array.isArray(annotation.thread) ? annotation.thread : []).map((message) => ({ ...message, actor_label: message.actor === "ai" ? "AI" : "人間" })) };
+            return { ...annotation, status_label: override?.text ?? labels[annotation.status] ?? annotation.status, status_tone: override?.tone ?? null, filter_id: category ?? annotation.status, kind_label: annotation.kind === "dom" ? "ノード" : "範囲", thread: (Array.isArray(annotation.thread) ? annotation.thread : []).map((message) => ({ ...message, actor_label: message.actor === "ai" ? "AI" : "人間" })) };
           });
-        return { ok: true, revision: `review:${aggregate.revision}`, data: { items, total: items.length, open_count: aggregate.annotations.filter(({ status }) => status === "open").length } };
+        return { ok: true, revision: `review:${aggregate.revision}`, data: { items, total: items.length, open_count: aggregate.annotations.filter(({ status }) => status === "open").length, filters } };
       }
       if (name === "history.list") {
         const aggregate = store.load();

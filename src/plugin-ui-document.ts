@@ -48,7 +48,7 @@ const COMPONENT_PROPS: Readonly<Record<string, readonly string[]>> = {
   select: ["name", "label", "description", "value", "options", "placeholder", "required", "disabled", "multiple", "error"],
   switch: ["name", "label", "description", "checked", "disabled"],
   checkbox: ["name", "label", "description", "value", "checked", "disabled"],
-  "checkbox-group": ["name", "label", "description", "value", "options", "disabled", "required", "error"],
+  "checkbox-group": ["name", "label", "description", "value", "options", "disabled", "required", "error", "inverted"],
   fieldset: ["label", "description", "disabled", "error"],
   legend: ["text", "value"],
   form: ["name", "busy", "disabled", "submit_on_enter"],

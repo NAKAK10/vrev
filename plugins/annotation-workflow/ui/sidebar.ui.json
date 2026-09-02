@@ -4,14 +4,14 @@
     { "key": "history_open", "type": "boolean", "default": false, "persist": false },
     { "key": "history_offset", "type": "integer", "default": 0, "min": 0, "max": 100000, "persist": false },
     { "key": "reply_drafts", "type": "keyed-text", "default": {}, "max_keys": 128, "max_value_length": 2000, "persist": false, "lifetime": "navigation" },
-    { "key": "statuses", "type": "bounded-set", "values": ["open", "in_progress", "failed", "addressed", "resolved"], "default": ["open", "in_progress", "failed", "addressed", "resolved"], "max_items": 5, "persist": true, "schema_version": 4, "empty_selection": "reset" },
+    { "key": "hidden_filters", "type": "bounded-set", "default": [], "max_items": 64, "persist": true, "schema_version": 1 },
     { "key": "kinds", "type": "bounded-set", "values": ["dom", "region"], "default": ["dom", "region"], "max_items": 2, "persist": true, "schema_version": 1, "empty_selection": "reset" },
     { "key": "runner", "type": "enum", "values": ["opencode", "claude", "codex", "copilot", "pi", "custom"], "default": "claude", "persist": true },
     { "key": "max_parallel", "type": "integer", "default": 2, "min": 1, "max": 10, "persist": true },
     { "key": "auto_run", "type": "boolean", "default": false, "persist": true }
   ],
   "resources": [
-    { "id": "annotations", "query": "annotations.list", "input": { "statuses": { "local": "/statuses" }, "kinds": { "local": "/kinds" } }, "refresh": "event", "dependency_policy": "immediate" },
+    { "id": "annotations", "query": "annotations.list", "input": { "hidden": { "local": "/hidden_filters" }, "kinds": { "local": "/kinds" } }, "refresh": "event", "dependency_policy": "immediate" },
     { "id": "history", "query": "history.list", "input": { "offset": { "local": "/history_offset" }, "limit": { "literal": 24 } }, "refresh": "event", "dependency_policy": "immediate" },
     { "id": "jobs", "query": "jobs.list", "input": {}, "refresh": "event" },
     { "id": "workflow-settings", "query": "workflow.settings", "input": {}, "refresh": "event" }
@@ -32,7 +32,7 @@
     ] },
     { "type": "section", "props": { "title": { "literal": "注釈" }, "variant": { "literal": "sidebar-annotations" } }, "children": [
       { "type": "count", "props": { "value": { "resource": "annotations", "path": "/total" }, "label": { "literal": "注釈" } } },
-      { "type": "checkbox-group", "props": { "label": { "literal": "状態で絞り込む" }, "value": { "local": "/statuses" }, "options": { "literal": [{ "value": "open", "label": "未対応" }, { "value": "in_progress", "label": "AI対応中" }, { "value": "failed", "label": "失敗" }, { "value": "addressed", "label": "AI対応済み" }, { "value": "resolved", "label": "解決済み" }] } } },
+      { "type": "checkbox-group", "props": { "label": { "literal": "状態で絞り込む" }, "value": { "local": "/hidden_filters" }, "inverted": { "literal": true }, "options": { "resource": "annotations", "path": "/filters" } } },
       { "type": "checkbox-group", "props": { "label": { "literal": "種類で絞り込む" }, "value": { "local": "/kinds" }, "options": { "literal": [{ "value": "dom", "label": "ノード" }, { "value": "region", "label": "範囲" }] } } },
       { "type": "list", "props": { "label": { "literal": "レビュー注釈" }, "empty_message": { "literal": "注釈はまだありません。" }, "variant": { "literal": "annotation-list" } }, "children": [
         { "type": "panel", "props": { "variant": { "literal": "annotation-card" }, "aria_label": { "item": "/comment" } }, "repeat": { "source": { "resource": "annotations", "path": "/items" }, "key": { "item": "/id" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] }, "children": [

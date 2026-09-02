@@ -43,6 +43,8 @@ function issueRequestFixture(calls: IssueAnnotationCreateInputV1[]) {
     acceptCoordinatorOutput: () => [],
     state: () => "none",
     label: () => null,
+    filters: () => [],
+    filter: () => null,
     create: () => { throw new Error("not implemented"); },
   };
   return createIssueBridgeAdapter(review, issueTask);
@@ -175,7 +177,7 @@ test("issue-task capability's label() maps issue_state/status combinations to st
   });
 
   assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "open" })), {
-    text: "Issue依頼", tone: "pending",
+    text: "Issueラフ作成中", tone: "pending",
   });
   assert.deepEqual(issueTask.label(annotation({ issue_state: "requested", status: "in_progress" })), {
     text: "AI Issue下書き中", tone: "active",

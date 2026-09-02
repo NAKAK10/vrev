@@ -5,6 +5,12 @@ export const ISSUE_TASK_CAPABILITY_ID = "issue-task";
 export const ISSUE_TASK_CAPABILITY_API_VERSION = 1;
 const REVIEW_CAPABILITY_ID = "review";
 
+const ISSUE_TASK_FILTERS = Object.freeze([
+  Object.freeze({ id: "issue-requested", label: "Issueラフ作成中" }),
+  Object.freeze({ id: "issue-ready", label: "Issueラフ確認待ち" }),
+  Object.freeze({ id: "issue-created", label: "Issue作成済み" }),
+]);
+
 export function createIssueTaskCapability(review, options = {}) {
   const store = review.store;
   const provider = options.provider ?? defaultIssueProvider;
@@ -37,13 +43,24 @@ export function createIssueTaskCapability(review, options = {}) {
       const status = annotation.status;
       if (typeof issueState !== "string") return null;
       if (issueState === "requested") {
-        if (status === "open") return Object.freeze({ text: "Issue依頼", tone: "pending" });
+        if (status === "open") return Object.freeze({ text: "Issueラフ作成中", tone: "pending" });
         if (status === "in_progress") return Object.freeze({ text: "AI Issue下書き中", tone: "active" });
         if (status === "failed") return Object.freeze({ text: "Issue下書き失敗", tone: "failed" });
         return null;
       }
       if (issueState === "ready") return Object.freeze({ text: "Issueラフ確認待ち", tone: "ready" });
       if (issueState === "created") return Object.freeze({ text: "Issue作成済み", tone: "done" });
+      return null;
+    },
+    filters() {
+      return ISSUE_TASK_FILTERS;
+    },
+    filter(annotation) {
+      if (!annotation || typeof annotation !== "object") return null;
+      const issueState = annotation.issue_state;
+      if (issueState === "requested") return "issue-requested";
+      if (issueState === "ready") return "issue-ready";
+      if (issueState === "created") return "issue-created";
       return null;
     },
     create(annotationId, rawDraft) {

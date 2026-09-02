@@ -65,6 +65,7 @@ export interface RunnerRegistryV1 {
 
 export type WorkflowTaskToneV1 = "pending" | "active" | "ready" | "done" | "failed";
 export interface WorkflowTaskLabelV1 { readonly text: string; readonly tone: WorkflowTaskToneV1 }
+export interface WorkflowTaskFilterV1 { readonly id: string; readonly label: string }
 
 /** Structural port supplied by an optional task plugin; no plugin implementation import is required. */
 export interface WorkflowTaskCapabilityV1 {
@@ -73,4 +74,8 @@ export interface WorkflowTaskCapabilityV1 {
   state(annotation: WorkflowAnnotation): "none" | "pending" | "complete";
   /** Optional status-badge override for an annotation this task owns; null = use the workflow default label. */
   label?(annotation: WorkflowAnnotation): WorkflowTaskLabelV1 | null;
+  /** Optional filter categories this task owns; ids must match ^[a-z][a-z0-9-]{0,31}$ and may not collide with workflow statuses. */
+  filters?(): readonly WorkflowTaskFilterV1[];
+  /** Optional: the id of the task filter category this annotation belongs to, or null when the workflow status filter applies. */
+  filter?(annotation: WorkflowAnnotation): string | null;
 }

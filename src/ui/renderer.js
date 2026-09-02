@@ -242,8 +242,8 @@ function renderCheckboxGroup(node, values, definition, scope) {
   const selected = new Set(Array.isArray(values.value) ? values.value : []);
   for (const option of values.options || []) {
     const value = typeof option === "object" ? option.value : option;
-    const label = element("label", "vr-checkbox-option"); const input = element("input"); input.type = "checkbox"; input.value = String(value); input.checked = selected.has(value); const text = element("span"); text.textContent = String(typeof option === "object" ? option.label : option); label.append(input, text); node.append(label);
-    input.addEventListener("change", () => { input.checked ? selected.add(value) : selected.delete(value); void execute([{ type: "local.set", path: definition.props.value.local, value: { literal: [...selected] } }], { ...scope, event: { value: [...selected] } }); });
+    const label = element("label", "vr-checkbox-option"); const input = element("input"); input.type = "checkbox"; input.value = String(value); input.checked = values.inverted === true ? !selected.has(value) : selected.has(value); const text = element("span"); text.textContent = String(typeof option === "object" ? option.label : option); label.append(input, text); node.append(label);
+    input.addEventListener("change", () => { if (values.inverted === true) { input.checked ? selected.delete(value) : selected.add(value); } else { input.checked ? selected.add(value) : selected.delete(value); } void execute([{ type: "local.set", path: definition.props.value.local, value: { literal: [...selected] } }], { ...scope, event: { value: [...selected] } }); });
   }
 }
 function prepareDialog(node, values, definition, scope) {
