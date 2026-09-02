@@ -44,6 +44,8 @@ export interface PluginServerManifestV1 extends PluginModuleReference {
 
 export type PluginUiSlotV1 =
   | "review.main"
+  | "review.header"
+  | "review.stage"
   | "review.sidebar"
   | "review.annotation.actions"
   | "review.overlays"
@@ -55,6 +57,7 @@ export interface PluginUiContributionV1 {
   document: string;
   browser_module?: string;
   order: number;
+  title?: string;
 }
 
 export interface PluginUiManifestV1 {
@@ -97,7 +100,8 @@ const SEMVER_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A
 const EXPORT_PATTERN = /^(?:default|[A-Za-z_$][\w$]*)$/;
 const CONTRIBUTION_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z][a-z0-9]*){0,7}$/;
-const UI_SLOTS = new Set<PluginUiSlotV1>(["review.main", "review.sidebar", "review.annotation.actions", "review.overlays", "settings.detail"]);
+const UI_SLOTS = new Set<PluginUiSlotV1>(["review.main", "review.header", "review.stage", "review.sidebar", "review.annotation.actions", "review.overlays", "settings.detail"]);
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -224,7 +228,7 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
       const contributionIds = new Set<string>();
       const contributions = uiRecord.contributions.map((item, index): PluginUiContributionV1 => {
         const contribution = object(item, `ui.contributions[${index}]`);
-        exactKeys(contribution, ["id", "slot", "document", "browser_module", "order"], `ui.contributions[${index}]`);
+        exactKeys(contribution, ["id", "slot", "document", "browser_module", "order", "title"], `ui.contributions[${index}]`);
         if (typeof contribution.id !== "string" || !CONTRIBUTION_ID_PATTERN.test(contribution.id) || contributionIds.has(contribution.id)) throw new Error(`ui.contributions[${index}].id is invalid or duplicated`);
         contributionIds.add(contribution.id);
         if (typeof contribution.slot !== "string" || !UI_SLOTS.has(contribution.slot as PluginUiSlotV1)) throw new Error(`ui.contributions[${index}].slot is invalid`);
@@ -232,7 +236,17 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
         const browserModule = contribution.browser_module === undefined ? undefined : moduleReference({ module: contribution.browser_module }, `ui.contributions[${index}].browser_module`).module;
         if (browserModule && !/\.(?:m?js)$/i.test(browserModule)) throw new Error(`ui.contributions[${index}].browser_module must be a JavaScript module`);
         if (!Number.isInteger(contribution.order) || (contribution.order as number) < -10_000 || (contribution.order as number) > 10_000) throw new Error(`ui.contributions[${index}].order is invalid`);
-        return { id: contribution.id, slot: contribution.slot as PluginUiSlotV1, document, ...(browserModule ? { browser_module: browserModule } : {}), order: contribution.order as number };
+        if (contribution.title !== undefined && (typeof contribution.title !== "string" || contribution.title.length < 1 || contribution.title.length > 80 || !contribution.title.trim() || CONTROL_CHAR_PATTERN.test(contribution.title))) {
+          throw new Error(`ui.contributions[${index}].title is invalid`);
+        }
+        return {
+          id: contribution.id,
+          slot: contribution.slot as PluginUiSlotV1,
+          document,
+          ...(browserModule ? { browser_module: browserModule } : {}),
+          order: contribution.order as number,
+          ...(contribution.title !== undefined ? { title: contribution.title as string } : {}),
+        };
       });
       ui = { renderer_api_version: 1, bridge_api_version: 1, contributions };
     }

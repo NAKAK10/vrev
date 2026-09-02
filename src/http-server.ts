@@ -10,6 +10,7 @@ import { createBundledBridgeCatalog, type BundledBridgeAdapter } from "./bundled
 import { fileSha256 } from "./file-utils.js";
 import { createIssueTaskCapability, type GitHubIssueDraft } from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
+import { layoutSettingsRevision, readLayoutSettings, updateLayoutSettings, type LayoutSettingsUpdateInput } from "./layout-settings.js";
 import { resolveTarget } from "./paths.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, type PluginIssueResult } from "./plugin-runtime.js";
@@ -636,7 +637,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, legacyUi ? "index.html" : "renderer.html"));
         if (request.method === "GET" && pathname === "/legacy") return serveFile(response, path.join(uiRoot, "index.html"));
         if (request.method === "GET" && pathname === "/api/plugin-host/v1/surfaces/review") {
-          return sendJson(response, 200, loadPluginUiSurface(store.target.projectRoot));
+          return sendJson(response, 200, { ...loadPluginUiSurface(store.target.projectRoot), page: { title: store.entryPath } });
         }
         const browserModule = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/ui-modules\/([a-z][a-z0-9-]{0,62})$/.exec(pathname);
         if (request.method === "GET" && browserModule?.[1] && browserModule[2]) {
@@ -672,6 +673,22 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         const bridgeEvents = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/events$/.exec(pathname);
         if (request.method === "GET" && bridgeEvents?.[1]) return serveBridgeEvents(request, response, bridgeEvents[1], store.target.projectRoot, bridgeEventHub);
+        if (request.method === "GET" && pathname === "/settings") return serveFile(response, path.join(uiRoot, "renderer.html"));
+        if (request.method === "GET" && pathname === "/api/settings/layout") {
+          const settings = readLayoutSettings(store.target.projectRoot);
+          return sendJson(response, 200, { revision: layoutSettingsRevision(settings), settings, features: { plugin_management: pluginManagementVisible } });
+        }
+        if (request.method === "PUT" && pathname === "/api/settings/layout") {
+          const payload = await readJson(request);
+          if (typeof payload.revision !== "string") throw new HttpError(400, "layout settings update is invalid");
+          try {
+            const updated = updateLayoutSettings(payload as unknown as LayoutSettingsUpdateInput, store.target.projectRoot);
+            return sendJson(response, 200, { revision: updated.revision, settings: updated.settings, features: { plugin_management: pluginManagementVisible } });
+          } catch (error) {
+            if (error instanceof Error && error.message === "layout settings revision conflict") throw new HttpError(409, error.message);
+            throw error;
+          }
+        }
         if (pathname.startsWith("/settings/") || pathname.startsWith("/api/settings/plugins")) {
           if (!pluginManagementVisible) throw new HttpError(404, "plugin management is hidden by workspace settings");
           if (request.method === "GET" && pathname === "/settings/plugins") return serveFile(response, legacyUi ? path.join(settingsUiRoot, "index.html") : path.join(uiRoot, "renderer.html"));

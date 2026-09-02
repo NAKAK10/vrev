@@ -6,6 +6,7 @@ export * from "./github-issue.js";
 export * from "./http-server.js";
 export * from "./job-manager.js";
 export * from "./job-store.js";
+export * from "./layout-settings.js";
 export * from "./paths.js";
 export * from "./plugin-bridge.js";
 export * from "./plugin-bridge-contract.js";

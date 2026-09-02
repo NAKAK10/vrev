@@ -203,8 +203,8 @@ test("annotation marks use translucent fills instead of red outlines", () => {
 });
 
 test("review target renders before nonessential sidebar resources finish", () => {
-  assert.match(rendererSource, /const main = surface\.contributions\.find\(\(\{ slot \}\) => slot === "review\.main"\)/);
-  assert.match(rendererSource, /if \(contribution === main\) await Promise\.all\(loads\)/);
+  assert.match(rendererSource, /const activeStage = surface\.contributions\.find\(\(contribution\) => `\$\{contribution\.plugin_id\}\/\$\{contribution\.id\}` === activeStageKey\)/);
+  assert.match(rendererSource, /if \(contribution === activeStage\) await Promise\.all\(loads\)/);
   assert.match(rendererSource, /rerender\(\);\s*if \(resourceLoads\.length\) void Promise\.all\(resourceLoads\)\.then\(\(\) => rerender\(\)\)/);
 });
 

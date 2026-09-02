@@ -42,6 +42,39 @@ Implementation status: Phase 7–8 complete; legacy renderer remains available f
 }
 ```
 
+## 2.1 Base shell, layout slots, and layout settings
+
+レビュー画面のshell（app-shell、header、左の描画領域、右のcontent column、toast region）はCore rendererが所有する。pluginはshell全体を宣言せず、manifest `ui.contributions` のslotへ部品だけを提供する。
+
+| Slot | 意味 | 多重度 |
+|---|---|---|
+| `review.header` | headerの右側へ追加表示する（toolbar等） | 複数可。Coreのlayout settingsで並び替え |
+| `review.stage` | 左側の描画領域を占有する表示 | 複数宣言可。同時に表示されるのは1つで、2つ以上ある場合はCoreが切り替えmenuを描画領域に重ねて表示する |
+| `review.sidebar` | 右側のcontent columnへ追加表示する | 複数可。Coreのlayout settingsで並び替え |
+| `review.annotation.actions` / `review.overlays` / `settings.detail` | 従来どおり | |
+| `review.main` | 廃止。manifestはparseできるが描画されず、surfaceが`UNAVAILABLE` diagnosticを返す | |
+
+各contributionは任意の`title`（1–80文字）を持てる。titleは設定画面の並び替えlistと描画切り替えmenuの表示名に使い、未指定時はplugin `display.title`を使う。contribution keyは`<plugin_id>/<contribution_id>`である。
+
+### Layout settings
+
+Coreは`.vreview/layout-settings.json`（Git管理外）に次を保存し、sha256 revisionによるCASで更新する。
+
+```json
+{
+  "schema_version": 1,
+  "header": { "order": ["review/review-header"] },
+  "sidebar": { "order": ["annotation-workflow/review-sidebar"] },
+  "stage": { "active": "review/review-stage", "switcher_position": "bottom-right" }
+}
+```
+
+- `order`に列挙されたkeyは列挙順に先頭へ並び、残りはmanifest `order`、plugin ID、contribution IDの順に続く。未導入pluginのkeyは無視する。
+- `stage.active`が現在のstage contributionに無い場合は先頭のstage contributionを表示する。
+- `switcher_position`は`top-left | top-right | bottom-left | bottom-right`で、既定は`bottom-right`。描画領域が競合した場合の切り替えmenuの表示位置である。
+
+Surface response（`GET /api/plugin-host/v1/surfaces/review`）の`layout`は`revision`、`header_items`、`sidebar_items`、`stage_views`、`active_stage`、`stage_switcher_position`を返し、`contributions`はslotごとの表示順で並んでいる。設定用endpointは`GET/PUT /api/settings/layout`（PUTは`{ revision, header?, sidebar?, stage? }`、conflictは409）であり、`/settings`ページがこれを編集する。`/settings/plugins`（install済みplugin）へは`/settings`から遷移する。
+
 ## 3. Limits
 
 | Item | Limit |
@@ -181,7 +214,7 @@ Allowed use:
 
 Rules:
 
-- plugin IDでnamespace化
+- plugin IDでnamespace化する。同じpluginのroot contribution（`review.header`と`review.stage`など）は1つのlocal state namespaceを共有し、declarationは各documentの和集合として扱う。repeat instanceは従来どおりinstanceごとに独立する
 - schema versionを持つ
 - scalar/enum/bounded setに加え、declarationで`max_keys`/`max_value_length`を持つbounded keyed-text mapを許可する
 - repeat scopeはstable item keyに紐づけ、resource refresh/filter/paginationでもdirty value・selection・focusを保持する
@@ -266,7 +299,7 @@ Multi-selectはbounded setとして扱い、empty selection/default/reset policy
 
 ## 8.2 Target stage and shared review selection
 
-Plugin間local stateは共有しない。Core surface context`review.selection`がstage/sidebar間のbounded interactionを仲介する。
+Plugin間local stateは共有しない（同一plugin内のroot contribution間では共有する）。Core surface context`review.selection`がstage/sidebar間のbounded interactionを仲介する。
 
 Typed intents/events:
 

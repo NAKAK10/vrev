@@ -109,7 +109,7 @@ test("serves built UI and compatible session/security headers", async () => {
     assert.ok((await response.text()).length > 10);
   }
   assert.ok(existsSync(new URL("../src/ui/index.html", import.meta.url)));
-  const pluginRuntime = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/review/ui-modules/review-main`);
+  const pluginRuntime = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/review/ui-modules/review-stage`);
   assert.equal(pluginRuntime.status, 200);
   assert.match(pluginRuntime.headers.get("content-type") ?? "", /javascript/);
   assert.match(await pluginRuntime.text(), /export function mount/);
@@ -272,6 +272,53 @@ test("plugin management is visible by default and can be explicitly hidden", asy
   } finally {
     await server.close();
   }
+});
+
+test("/settings serves the renderer shell and /api/settings/layout round trips with revision conflicts", async () => {
+  const settingsResponse = await fetch(`${baseUrl}/settings`);
+  assert.equal(settingsResponse.status, 200);
+  assert.match(await settingsResponse.text(), /id="renderer-root"/);
+
+  const layoutResponse = await fetch(`${baseUrl}/api/settings/layout`);
+  assert.equal(layoutResponse.status, 200);
+  const layoutPayload = await layoutResponse.json() as {
+    revision: string;
+    settings: { header: { order: string[] }; sidebar: { order: string[] }; stage: { active: string | null; switcher_position: string } };
+    features: { plugin_management: boolean };
+  };
+  assert.equal(typeof layoutPayload.revision, "string");
+  assert.equal(layoutPayload.features.plugin_management, true);
+
+  const updated = await fetch(`${baseUrl}/api/settings/layout`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: layoutPayload.revision, header: { order: ["review/review-header"] } }),
+  });
+  assert.equal(updated.status, 200);
+  const updatedPayload = await updated.json() as { revision: string; settings: { header: { order: string[] } } };
+  assert.deepEqual(updatedPayload.settings.header.order, ["review/review-header"]);
+  assert.notEqual(updatedPayload.revision, layoutPayload.revision);
+
+  const conflict = await fetch(`${baseUrl}/api/settings/layout`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: layoutPayload.revision, sidebar: { order: [] } }),
+  });
+  assert.equal(conflict.status, 409);
+  assert.match((await conflict.json() as { error: string }).error, /revision conflict/);
+
+  const invalid = await fetch(`${baseUrl}/api/settings/layout`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: updatedPayload.revision, stage: { switcher_position: "middle" } }),
+  });
+  assert.equal(invalid.status, 400);
+
+  const surfaceResponse = await fetch(`${baseUrl}/api/plugin-host/v1/surfaces/review`);
+  assert.equal(surfaceResponse.status, 200);
+  const surface = await surfaceResponse.json() as { layout: { active_stage: string | null }; page: { title: string } };
+  assert.equal(surface.layout.active_stage, "review/review-stage");
+  assert.equal(surface.page.title, ".code/htmls/pages/index.html");
 });
 
 test("safe mode preserves source bytes and relies on the compatible iframe sandbox", async () => {

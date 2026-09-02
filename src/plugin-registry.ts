@@ -72,7 +72,7 @@ function ensurePluginIgnores(vreview: string): void {
   mkdirSync(vreview, { recursive: true });
   const ignorePath = path.join(vreview, ".gitignore");
   if (existsSync(ignorePath) && lstatSync(ignorePath).isSymbolicLink()) throw new Error("plugin storage ignore file must not be a symbolic link");
-  const required = ["plugins/", "plugins.json", "plugin-settings.json", "custom-commands.json"];
+  const required = ["plugins/", "plugins.json", "plugin-settings.json", "custom-commands.json", "layout-settings.json"];
   const current = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
   writeFileSync(ignorePath, `${[...new Set([...current, ...required])].join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
 }

@@ -135,7 +135,9 @@ export function mount({ root }) {
     if (typeof event.target?.closest === "function" && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
     const mode = { v: "browse", n: "node", r: "region" }[event.key.toLowerCase()];
     if (!mode) return;
-    const button = root.querySelector(`.vr-selection-mode-button[data-value="${mode}"]`);
+    const button =
+      document.querySelector(`[data-plugin-id="review"][data-slot="review.header"] .vr-selection-mode-button[data-value="${mode}"]`) ??
+      root.querySelector(`.vr-selection-mode-button[data-value="${mode}"]`);
     if (!button) return;
     event.preventDefault();
     button.click();

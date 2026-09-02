@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "annotation-workflow",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "display": {
     "title": "注釈ワークフロー",
     "summary": "注釈保存後のAI自動実行と設定UIのポリシーを提供します。",
@@ -27,7 +27,8 @@
         "slot": "review.sidebar",
         "document": "./ui/sidebar.ui.json",
         "browser_module": "./ui/sidebar.js",
-        "order": 100
+        "order": 100,
+        "title": "注釈ワークフロー"
       },
       {
         "id": "workflow-settings",

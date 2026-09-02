@@ -112,6 +112,7 @@ test("installs a one-level nested local plugin without evaluating it, then loads
   assert.match(ignores, /^plugins\.json$/m);
   assert.match(ignores, /^plugin-settings\.json$/m);
   assert.match(ignores, /^custom-commands\.json$/m);
+  assert.match(ignores, /^layout-settings\.json$/m);
 
   const loadedCommand = await loadPluginCommand("example-plugin", "hello", root);
   assert.equal(typeof loadedCommand.handler, "function");
@@ -170,6 +171,26 @@ test("rejects invalid schema-v4 paths, slots, versions, and duplicate capabiliti
     { capability: "host.target", api_version: 1, optional: false },
     { capability: "host.target", api_version: 1, optional: true },
   ] }), /duplicated/);
+});
+
+test("schema-v4 UI contributions accept review.header/review.stage slots and an optional title", () => {
+  const base = {
+    schema_version: 4,
+    id: "layout-plugin",
+    version: "1.0.0",
+    display: { title: "Layout", summary: "Layout fixture", readme: "./README.md" },
+    configuration: [],
+  };
+  const header = parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "header", slot: "review.header", document: "./ui.json", order: 0, title: "ヘッダー" }] } });
+  assert.deepEqual(header.ui?.contributions[0], { id: "header", slot: "review.header", document: "./ui.json", order: 0, title: "ヘッダー" });
+  const stage = parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "stage", slot: "review.stage", document: "./ui.json", order: 0 }] } });
+  assert.equal(stage.ui?.contributions[0]?.slot, "review.stage");
+  assert.equal(stage.ui?.contributions[0]?.title, undefined);
+
+  assert.throws(() => parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "header", slot: "review.header", document: "./ui.json", order: 0, title: "" }] } }), /title/);
+  assert.throws(() => parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "header", slot: "review.header", document: "./ui.json", order: 0, title: "   " }] } }), /title/);
+  assert.throws(() => parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "header", slot: "review.header", document: "./ui.json", order: 0, title: "a".repeat(81) }] } }), /title/);
+  assert.throws(() => parsePluginManifest({ ...base, ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "header", slot: "review.header", document: "./ui.json", order: 0, title: String.fromCharCode(98,97,100,9,116,105,116,108,101) } ] } }), /title/);
 });
 
 test("validates static bridge contracts with bounded exact JSON schemas", () => {
@@ -352,7 +373,7 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   const reviewRoot = path.join(bundledRoot, "review");
   const manifestPath = path.join(reviewRoot, "visual-review.plugin.json");
   const packagePath = path.join(reviewRoot, "package.json");
-  const uiPath = path.join(reviewRoot, "ui/review.ui.json");
+  const uiPath = path.join(reviewRoot, "ui/stage.ui.json");
   const oldManifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { schema_version: number; version: string };
   const oldPackage = JSON.parse(readFileSync(packagePath, "utf8")) as { version: string };
   oldManifest.version = "1.0.0";
@@ -362,12 +383,12 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   writeFileSync(uiPath, `${JSON.stringify({ schema_version: 1, root: { type: "text", props: { text: { literal: "stale bundled UI" } } } }, null, 2)}\n`);
 
   assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", ...["github-issue", "custom-command", "annotation-workflow"].map((id) => `${id}@${bundledVersion}`)]);
-  assert.match(readFileSync(path.join(root, ".vreview/plugins/review/ui/review.ui.json"), "utf8"), /stale bundled UI/);
+  assert.match(readFileSync(path.join(root, ".vreview/plugins/review/ui/stage.ui.json"), "utf8"), /stale bundled UI/);
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 
   restoreBundledPlugin(bundledRoot, "review");
   assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), [`review@${bundledVersion}`]);
-  assert.equal(readFileSync(path.join(root, ".vreview/plugins/review/ui/review.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/review.ui.json"), "utf8"));
+  assert.equal(readFileSync(path.join(root, ".vreview/plugins/review/ui/stage.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/stage.ui.json"), "utf8"));
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, bundledVersion);
 });
 

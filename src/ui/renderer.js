@@ -57,7 +57,7 @@ function predicate(value, scope) {
   if (value.in) return Array.isArray(right) && right.includes(left);
   return value.ne || value.not_equals ? !Object.is(left, right) : Object.is(left, right);
 }
-function stateFor(contribution) {
+function contributionLocalState(contribution) {
   const key = `visual-review:renderer:1:${contribution.plugin_id}:${contribution.id}`;
   const state = {};
   for (const declaration of contribution.document.local_state || []) state[declaration.key] = structuredClone(declaration.default);
@@ -70,6 +70,51 @@ function stateFor(contribution) {
     for (const declaration of contribution.document.local_state || []) if (declaration.persist) allowed[declaration.key] = state[declaration.key];
     try { localStorage.setItem(key, JSON.stringify({ schema_version: 1, values: allowed })); } catch {}
   } };
+}
+// Local state is namespaced per plugin (not per contribution) for root instances: every
+// root contribution of a plugin declares into and reads from one shared state object, so a
+// header contribution's local state can be bound from that plugin's stage contribution.
+function pluginLocalStateDeclarations(pluginId) {
+  const declarations = new Map();
+  for (const contribution of surface?.contributions || []) {
+    if (contribution.plugin_id !== pluginId) continue;
+    for (const declaration of contribution.document.local_state || []) if (!declarations.has(declaration.key)) declarations.set(declaration.key, declaration);
+  }
+  return [...declarations.values()];
+}
+function pluginLocalState(pluginId) {
+  const declarations = pluginLocalStateDeclarations(pluginId);
+  const state = {};
+  for (const declaration of declarations) state[declaration.key] = structuredClone(declaration.default);
+  const key = `visual-review:renderer:2:${pluginId}`;
+  let restored = false;
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) || "null");
+    if (stored?.schema_version === 1 && stored.values && typeof stored.values === "object") { Object.assign(state, stored.values); restored = true; }
+  } catch {}
+  if (!restored) {
+    for (const contribution of surface?.contributions || []) {
+      if (contribution.plugin_id !== pluginId) continue;
+      try {
+        const legacy = JSON.parse(localStorage.getItem(`visual-review:renderer:1:${pluginId}:${contribution.id}`) || "null");
+        if (legacy?.schema_version === 1 && legacy.values && typeof legacy.values === "object") Object.assign(state, legacy.values);
+      } catch {}
+    }
+  }
+  return { state, persist() {
+    const allowed = {};
+    for (const declaration of declarations) if (declaration.persist) allowed[declaration.key] = state[declaration.key];
+    try { localStorage.setItem(key, JSON.stringify({ schema_version: 1, values: allowed })); } catch {}
+  } };
+}
+function runtimeFor(contribution, parentInstanceKey = "") {
+  const key = parentInstanceKey ? `${contribution.plugin_id}:${contribution.id}:${parentInstanceKey}` : `${contribution.plugin_id}:root`;
+  let runtime = documents.get(key);
+  if (!runtime) { runtime = parentInstanceKey ? contributionLocalState(contribution) : pluginLocalState(contribution.plugin_id); documents.set(key, runtime); }
+  return runtime;
+}
+function declarationsFor(scope) {
+  return scope.instanceKey ? (scope.contribution.document.local_state || []) : pluginLocalStateDeclarations(scope.plugin);
 }
 function cleanupPluginRuntimes() {
   for (const [rootElement, cleanup] of pluginRuntimeCleanups) {
@@ -159,7 +204,7 @@ function control(node, nodeProps, scope) {
   node.addEventListener("input", () => {
     const value = controlValue(node);
     formDrafts.set(draftKey, value);
-    const declaration = (scope.contribution.document.local_state || []).find(({ key }) => `/${key}` === scope.valuePath);
+    const declaration = declarationsFor(scope).find(({ key }) => `/${key}` === scope.valuePath);
     if (declaration) { scope.state[declaration.key] = value; scope.persist(); }
   });
 }
@@ -311,8 +356,14 @@ function formValues(node) {
 function findNodeDefinition(node, id) { if (node.id === id) return node; for (const child of node.children || []) { const found = findNodeDefinition(child, id); if (found) return found; } }
 async function refreshLocalDependencies(scope, path) {
   const key = path.split("/")[1];
-  const resources = (scope.contribution.document.resources || []).filter((resource) => Object.values(resource.input || {}).some((value) => value?.local === `/${key}`));
-  await Promise.all(resources.map((resource) => loadResource(scope.contribution, resource.id, scope, false)));
+  // Root state is shared across every root contribution of the plugin, so a change made
+  // in one contribution's document (e.g. the header) can drive a resource declared by another
+  // (e.g. the stage). Repeated (instance-scoped) state stays limited to its own contribution.
+  const owners = scope.instanceKey ? [scope.contribution] : (surface?.contributions || []).filter((contribution) => contribution.plugin_id === scope.plugin);
+  const loads = owners.flatMap((contribution) => (contribution.document.resources || [])
+    .filter((resource) => Object.values(resource.input || {}).some((value) => value?.local === `/${key}`))
+    .map((resource) => loadResource(contribution, resource.id, scope, false)));
+  await Promise.all(loads);
 }
 function targetUrlForPage(target, pagePath) {
   if (!pagePath) return target.url;
@@ -429,7 +480,7 @@ async function command(instruction, scope) {
     for (const effect of result.effects || []) if (effect.type === "resource.invalidate") for (const resource of effect.resources || []) await refreshResourceNamed(resource, scope);
     await execute(instruction.on_success || [], { ...scope, result: result.data });
     if (scope.plugin === "review" && instruction.command === "annotation.create") await autoRunNewAnnotation(scope);
-    for (const declaration of scope.contribution.document.local_state || []) if (declaration.reset_on_success) scope.state[declaration.key] = structuredClone(declaration.default);
+    for (const declaration of declarationsFor(scope)) if (declaration.reset_on_success) scope.state[declaration.key] = structuredClone(declaration.default);
     for (const draftKey of [...formDrafts.keys()]) if (draftKey.startsWith(`${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:`)) formDrafts.delete(draftKey);
   }
   catch (error) { await execute(instruction.on_error || [], { ...scope, error: error instanceof Error ? { message: error.message } : error }); }
@@ -533,7 +584,7 @@ function targetStage(definition, scope) {
   } else {
     const frame = element("iframe"); frame.title = "レビュー対象ページ"; frame.src = target.url;
     if (!target.allow_scripts) frame.setAttribute("sandbox", "allow-same-origin allow-forms");
-    container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
+    container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, container.__mode ?? mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
   applyTargetViewport(container, container.querySelector("iframe")); container.dataset.mode = mode;
   container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); container.dispatchEvent(new CustomEvent("selection-cancel", { detail: {} })); } });
@@ -548,10 +599,13 @@ function redrawMarks() {
   }
   if (stage.__preview && frame) { const drag = stage.__preview; const win = frame.contentWindow; const frameRect = frame.getBoundingClientRect(); add({ left: frameRect.left - stageRect.left + Math.min(drag.x, drag.endX) - win.scrollX, top: frameRect.top - stageRect.top + Math.min(drag.y, drag.endY) - win.scrollY, width: Math.abs(drag.endX - drag.x), height: Math.abs(drag.endY - drag.y) }, null, "is-preview"); }
 }
+function isActiveStageOrNonStage(contribution) {
+  return contribution.slot !== "review.stage" || `${contribution.plugin_id}/${contribution.id}` === surface?.layout?.active_stage;
+}
 async function refreshResourceNamed(id, fallbackScope) {
-  const owners = (surface?.contributions || []).filter((contribution) => (contribution.document.resources || []).some((resource) => resource.id === id));
+  const owners = (surface?.contributions || []).filter((contribution) => isActiveStageOrNonStage(contribution) && (contribution.document.resources || []).some((resource) => resource.id === id));
   if (!owners.length) return loadResource(fallbackScope.contribution, id, fallbackScope, false);
-  await Promise.all(owners.map((contribution) => { const runtime = documents.get(`${contribution.plugin_id}:${contribution.id}:root`) || stateFor(contribution); const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} }; return loadResource(contribution, id, scope, false); }));
+  await Promise.all(owners.map((contribution) => { const runtime = runtimeFor(contribution, ""); const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} }; return loadResource(contribution, id, scope, false); }));
 }
 async function loadResource(contribution, id, scope, shouldRender = true) {
   const declaration = (contribution.document.resources || []).find((item) => item.id === id); if (!declaration) return;
@@ -576,9 +630,7 @@ async function loadResource(contribution, id, scope, shouldRender = true) {
   if (shouldRender) rerender();
 }
 function renderContribution(contribution, slotContext = {}, parentInstanceKey = "") {
-  const runtimeKey = `${contribution.plugin_id}:${contribution.id}:${parentInstanceKey || "root"}`;
-  let runtime = documents.get(runtimeKey);
-  if (!runtime) { runtime = stateFor(contribution); documents.set(runtimeKey, runtime); }
+  const runtime = runtimeFor(contribution, parentInstanceKey);
   const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: parentInstanceKey, slotContext: { ...(slotContext && typeof slotContext === "object" ? slotContext : {}), review: { selection: reviewSelection } } };
   const rendered = renderNode(contribution.document.root, scope);
   if (rendered instanceof HTMLElement) {
@@ -593,19 +645,13 @@ function targetIdentity(stage) {
   const target = stage?.__target;
   return target ? JSON.stringify([target.kind, target.url, target.entry_path, Boolean(target.allow_scripts)]) : "";
 }
-function patchReviewTree(nextTree) {
-  const currentShell = root.firstElementChild;
-  const currentStage = currentShell?.querySelector?.(".vr-target-stage");
+// Patches only inside the active review.stage contribution root: keeps the live iframe/image
+// element (and its selection listeners) when the underlying target is unchanged, and swaps
+// everything else (mark layer, overlays slot, dialogs) for the freshly rendered versions.
+function patchStageHostRoot(currentRoot, nextTree) {
+  const currentStage = currentRoot?.querySelector?.(".vr-target-stage");
   const nextStage = nextTree?.querySelector?.(".vr-target-stage");
-  if (!currentShell || !currentStage || !nextStage || targetIdentity(currentStage) !== targetIdentity(nextStage)) return false;
-  const currentPrimary = currentStage.parentElement;
-  const nextPrimary = nextStage.parentElement;
-  const currentSplit = currentPrimary?.parentElement;
-  const nextSplit = nextPrimary?.parentElement;
-  if (!currentPrimary || !nextPrimary || !currentSplit || !nextSplit) return false;
-  const currentSidebar = currentSplit.querySelector(":scope > .vr-slot");
-  const sidebarScroll = currentSidebar ? { top: currentSidebar.scrollTop, left: currentSidebar.scrollLeft } : null;
-
+  if (!currentRoot || !currentStage || !nextStage || targetIdentity(currentStage) !== targetIdentity(nextStage)) return false;
   currentStage.dataset.viewport = nextStage.dataset.viewport;
   currentStage.dataset.mode = nextStage.dataset.mode;
   currentStage.__viewportWidth = nextStage.__viewportWidth;
@@ -615,26 +661,113 @@ function patchReviewTree(nextTree) {
   currentStage.__preview = null;
   const frame = currentStage.querySelector("iframe");
   if (frame) { applyTargetViewport(currentStage, frame); installHtmlSelection(currentStage, frame, currentStage.__mode); }
-
-  for (const child of [...currentPrimary.children]) if (child !== currentStage) child.remove();
-  for (const child of [...nextPrimary.children]) if (child !== nextStage) currentPrimary.append(child);
-  for (const child of [...currentSplit.children]) if (child !== currentPrimary) child.remove();
-  for (const child of [...nextSplit.children]) if (child !== nextPrimary) currentSplit.append(child);
-  const connectedSidebar = currentSplit.querySelector(":scope > .vr-slot");
-  if (connectedSidebar && sidebarScroll) { connectedSidebar.scrollTop = sidebarScroll.top; connectedSidebar.scrollLeft = sidebarScroll.left; }
-
-  for (const child of [...currentShell.children]) if (child !== currentSplit) child.remove();
-  let beforeSplit = true;
-  for (const child of [...nextTree.children]) {
-    if (child === nextSplit) { beforeSplit = false; continue; }
-    if (beforeSplit) currentShell.insertBefore(child, currentSplit);
-    else currentShell.append(child);
-  }
+  for (const child of [...currentRoot.children]) if (child !== currentStage) child.remove();
+  for (const child of [...nextTree.children]) if (child !== nextStage) currentRoot.append(child);
   return true;
+}
+let reviewShell = null;
+function ensureShell() {
+  if (reviewShell?.root?.isConnected) return reviewShell;
+  const appShell = element("div", "vr-app-shell");
+  appShell.dataset.baseShell = "review";
+  const header = element("header", "vr-header vr-base-header");
+  const brand = element("div", "vr-brand-copy");
+  const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW";
+  const title = element("h1", "vr-page-title");
+  brand.append(eyebrow, title);
+  const actions = element("div", "vr-header-actions");
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", "プラグイン操作");
+  const settingsLink = element("a", "vr-link vr-settings-link");
+  settingsLink.href = "/settings";
+  settingsLink.textContent = "設定";
+  header.append(brand, actions, settingsLink);
+  const splitPanel = element("div", "vr-split-panel");
+  const stageHost = element("section", "vr-section vr-stage-host");
+  stageHost.setAttribute("aria-label", "レビュー対象");
+  const sidebarHost = element("div", "vr-slot vr-sidebar-host");
+  sidebarHost.dataset.slot = "review.sidebar";
+  splitPanel.append(stageHost, sidebarHost);
+  const toastRegion = element("div", "toast-region");
+  appShell.append(header, splitPanel, toastRegion);
+  root.replaceChildren(appShell);
+  reviewShell = { root: appShell, title, actions, stageHost, sidebarHost };
+  return reviewShell;
+}
+function renderHeaderActions(container) {
+  const items = surface.contributions.filter((contribution) => contribution.slot === "review.header").map((contribution) => {
+    const item = element("div", "vr-header-item");
+    item.dataset.key = `${contribution.plugin_id}/${contribution.id}`;
+    item.append(renderContribution(contribution));
+    return item;
+  });
+  container.replaceChildren(...items);
+}
+function renderSidebarHost(container) {
+  const scrollState = { top: container.scrollTop, left: container.scrollLeft };
+  const items = surface.contributions.filter((contribution) => contribution.slot === "review.sidebar").map((contribution) => renderContribution(contribution));
+  container.replaceChildren(...items);
+  container.hidden = items.length === 0;
+  container.scrollTop = scrollState.top;
+  container.scrollLeft = scrollState.left;
+}
+async function switchActiveStage(key) {
+  try {
+    const response = await fetch("/api/settings/layout", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: surface.layout.revision, stage: { active: key } }) });
+    if (!response.ok) throw new Error("描画を切り替えられませんでした。");
+    surface = await (await fetch("/api/plugin-host/v1/surfaces/review")).json();
+    applyTheme(surface.theme);
+    rerender();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "描画を切り替えられませんでした。", "error");
+    rerender();
+  }
+}
+function renderStageSwitcher(container, activeKey) {
+  const stageViews = surface.layout.stage_views || [];
+  let switcher = container.querySelector(":scope > .vr-stage-switcher");
+  if (stageViews.length < 2) { switcher?.remove(); return; }
+  if (!switcher) {
+    switcher = element("div", "vr-stage-switcher");
+    const label = element("label", "vr-field-label"); label.textContent = "描画の切り替え";
+    const select = element("select", "vr-select");
+    select.setAttribute("aria-label", "描画の切り替え");
+    select.addEventListener("change", () => void switchActiveStage(select.value));
+    switcher.append(label, select);
+  }
+  switcher.dataset.position = surface.layout.stage_switcher_position;
+  const select = switcher.querySelector("select");
+  select.replaceChildren(...stageViews.map((view) => { const option = element("option"); option.value = view.key; option.textContent = view.title; return option; }));
+  select.value = activeKey || "";
+  container.append(switcher);
+}
+function renderStageHost(container) {
+  const activeKey = surface.layout.active_stage;
+  const activeStage = surface.contributions.find((contribution) => contribution.slot === "review.stage" && `${contribution.plugin_id}/${contribution.id}` === activeKey);
+  const currentContent = container.querySelector(":scope > *:not(.vr-stage-switcher)");
+  if (!activeStage) {
+    currentContent?.remove();
+    const empty = element("p", "vr-diagnostic"); empty.textContent = "レビュー対象を表示できません"; container.prepend(empty);
+  } else {
+    const nextTree = renderContribution(activeStage);
+    const canPatch = currentContent?.dataset?.slot === "review.stage" && patchStageHostRoot(currentContent, nextTree);
+    if (canPatch) {
+      if (activeStage.browser_module_url) queueMicrotask(() => { if (currentContent.isConnected) void mountPluginRuntime(activeStage, currentContent); });
+    } else {
+      currentContent?.remove();
+      container.prepend(nextTree);
+    }
+  }
+  cleanupPluginRuntimes();
+  renderStageSwitcher(container, activeKey);
 }
 function rerender() {
   if (location.pathname === "/settings/plugins") {
     settingsRenderPromise ??= renderSettings().finally(() => { settingsRenderPromise = null; });
+    return;
+  }
+  if (location.pathname === "/settings") {
+    settingsRenderPromise ??= renderGeneralSettings().finally(() => { settingsRenderPromise = null; });
     return;
   }
   const openDialog = document.querySelector("dialog[open]");
@@ -648,16 +781,11 @@ function rerender() {
   }
   deferredReviewRender = false;
   const activeId = document.activeElement?.id; dialogs.clear();
-  const main = surface.contributions.find(({ slot }) => slot === "review.main");
-  const nextTree = main ? renderContribution(main) : Object.assign(element("p", "vr-diagnostic"), { textContent: "review.main contribution is unavailable" });
-  if (patchReviewTree(nextTree)) {
-    cleanupPluginRuntimes();
-    const connectedMain = root.firstElementChild;
-    if (main?.browser_module_url && connectedMain instanceof HTMLElement) queueMicrotask(() => { if (connectedMain.isConnected) void mountPluginRuntime(main, connectedMain); });
-  } else {
-    root.replaceChildren(nextTree);
-    cleanupPluginRuntimes();
-  }
+  const shellElements = ensureShell();
+  shellElements.title.textContent = surface.page?.title || "Visual Redline Review";
+  renderHeaderActions(shellElements.actions);
+  renderStageHost(shellElements.stageHost);
+  renderSidebarHost(shellElements.sidebarHost);
   root.dataset.sidebar = surface.layout.sidebar; root.setAttribute("aria-busy", "false");
   queueMicrotask(paintToast); requestAnimationFrame(paintToast);
   if (activeId) document.getElementById(activeId)?.focus({ preventScroll: true });
@@ -671,7 +799,8 @@ async function renderSettings() {
   const shell = element("div", "vr-app-shell vr-settings-shell");
   const header = element("header", "vr-header vr-settings-header");
   const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW"; const heading = element("h1"); heading.textContent = "プラグイン設定"; brand.append(eyebrow, heading);
-  const back = element("a", "vr-link"); back.href = "/"; back.textContent = "レビューへ戻る"; header.append(brand, back); shell.append(header);
+  const generalSettings = element("a", "vr-link"); generalSettings.href = "/settings"; generalSettings.textContent = "設定へ戻る";
+  const back = element("a", "vr-link"); back.href = "/"; back.textContent = "レビューへ戻る"; header.append(brand, generalSettings, back); shell.append(header);
   const page = element("main", "vr-settings-page");
   const intro = element("section", "vr-settings-intro"); const introHeading = element("h2"); introHeading.textContent = "インストール済みプラグイン"; const introCopy = element("p"); introCopy.textContent = "機能の有効状態を切り替え、プラグインごとの説明と設定を確認できます。"; intro.append(introHeading, introCopy); page.append(intro);
   if (surface.diagnostics?.length) { const warning = element("p", "vr-settings-error"); warning.textContent = `${surface.diagnostics.length}件のプラグインUIを読み込めませんでした。詳細は各プラグインを確認してください。`; page.append(warning); }
@@ -709,7 +838,7 @@ async function openSettingsDetail(plugin, opener) {
   const contributions = surface.contributions.filter((item) => item.plugin_id === plugin.id && item.slot === "settings.detail");
   const content = element("div", "vr-plugin-detail-content");
   for (const contribution of contributions) {
-    const runtimeKey = `${contribution.plugin_id}:${contribution.id}:root`; let runtime = documents.get(runtimeKey); if (!runtime) { runtime = stateFor(contribution); documents.set(runtimeKey, runtime); }
+    const runtime = runtimeFor(contribution, "");
     const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: { plugin, readme } };
     await Promise.all((contribution.document.resources || []).map(({ id }) => loadResource(contribution, id, scope, false)));
     content.append(renderContribution(contribution, { plugin, readme }));
@@ -725,7 +854,7 @@ async function synchronizeResources(resources, announce = false) {
   const fallback = surface?.contributions?.[0];
   if (!fallback || !unique.length) return;
   const before = new Map([...resourceStores].map(([key, store]) => [key, store.revision ?? JSON.stringify(store.data)]));
-  const runtime = documents.get(`${fallback.plugin_id}:${fallback.id}`) || stateFor(fallback);
+  const runtime = runtimeFor(fallback, "");
   const scope = { plugin: fallback.plugin_id, contribution: fallback, state: runtime.state, persist: runtime.persist, slotContext: {} };
   await Promise.all(unique.map((resource) => refreshResourceNamed(resource, scope)));
   const changed = [...resourceStores].some(([key, store]) => before.get(key) !== (store.revision ?? JSON.stringify(store.data)));
@@ -735,22 +864,125 @@ async function synchronizeResources(resources, announce = false) {
     toast(`別の画面での変更を同期しました：${[...new Set(labels)].join("・")}`, "info");
   }
 }
+function layoutOrderSection(title, items, layoutPayload, kind) {
+  const section = element("section", "vr-settings-card");
+  const heading = element("h2", "vr-section-title"); heading.textContent = title; section.append(heading);
+  if (!items.length) {
+    const empty = element("p", "vr-empty-state"); empty.textContent = "並び替えできる項目はありません。"; section.append(empty);
+    return section;
+  }
+  const list = element("ol", "vr-layout-order-list");
+  items.forEach((item, index) => {
+    const row = element("li", "vr-layout-order-row");
+    const copy = element("div"); const name = element("span"); name.textContent = item.title; const pluginId = element("span", "vr-field-description"); pluginId.textContent = item.plugin_id; copy.append(name, pluginId);
+    const controls = element("div", "vr-row");
+    const up = element("button", "vr-button"); up.type = "button"; up.textContent = "上へ"; up.disabled = index === 0;
+    const down = element("button", "vr-button"); down.type = "button"; down.textContent = "下へ"; down.disabled = index === items.length - 1;
+    up.addEventListener("click", () => void moveLayoutItem(kind, items, index, -1, layoutPayload));
+    down.addEventListener("click", () => void moveLayoutItem(kind, items, index, 1, layoutPayload));
+    controls.append(up, down);
+    row.append(copy, controls); list.append(row);
+  });
+  section.append(list);
+  return section;
+}
+async function moveLayoutItem(kind, items, index, delta, layoutPayload) {
+  const keys = items.map((item) => item.key);
+  const target = index + delta;
+  if (target < 0 || target >= keys.length) return;
+  [keys[index], keys[target]] = [keys[target], keys[index]];
+  await saveLayoutSettings({ [kind]: { order: keys } }, layoutPayload);
+}
+function stageSettingsSection(layoutPayload) {
+  const section = element("section", "vr-settings-card");
+  const heading = element("h2", "vr-section-title"); heading.textContent = "描画エリア"; section.append(heading);
+  const stageViews = surface.layout.stage_views || [];
+  const activeField = element("label", "vr-field vr-field-select");
+  const activeLabel = element("span", "vr-field-label"); activeLabel.textContent = "表示する描画";
+  const activeSelect = element("select", "vr-select"); activeSelect.disabled = stageViews.length < 2;
+  for (const view of stageViews) { const option = element("option"); option.value = view.key; option.textContent = view.title; activeSelect.append(option); }
+  activeSelect.value = surface.layout.active_stage || "";
+  activeField.append(activeLabel, activeSelect);
+  if (stageViews.length < 2) { const note = element("span", "vr-field-description"); note.textContent = "切り替え可能な描画がありません。"; activeField.append(note); }
+  activeSelect.addEventListener("change", () => void saveLayoutSettings({ stage: { active: activeSelect.value } }, layoutPayload));
+  section.append(activeField);
+  const positionField = element("label", "vr-field vr-field-select");
+  const positionLabel = element("span", "vr-field-label"); positionLabel.textContent = "切り替えメニューの位置";
+  const positionSelect = element("select", "vr-select");
+  for (const [value, label] of [["top-left", "左上"], ["top-right", "右上"], ["bottom-left", "左下"], ["bottom-right", "右下"]]) { const option = element("option"); option.value = value; option.textContent = label; positionSelect.append(option); }
+  positionSelect.value = layoutPayload.settings.stage.switcher_position;
+  positionField.append(positionLabel, positionSelect);
+  positionSelect.addEventListener("change", () => void saveLayoutSettings({ stage: { switcher_position: positionSelect.value } }, layoutPayload));
+  section.append(positionField);
+  return section;
+}
+async function saveLayoutSettings(patch, layoutPayload) {
+  try {
+    const response = await fetch("/api/settings/layout", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: layoutPayload.revision, ...patch }) });
+    if (response.status === 409) {
+      toast("設定が別の画面で更新されました。再読み込みしました。", "error");
+      await renderGeneralSettings();
+      return;
+    }
+    if (!response.ok) throw new Error("設定を保存できませんでした。");
+    const nextPayload = await response.json();
+    surface = await (await fetch("/api/plugin-host/v1/surfaces/review")).json();
+    applyTheme(surface.theme);
+    paintGeneralSettings(nextPayload);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "設定を保存できませんでした。", "error");
+  }
+}
+function paintGeneralSettings(layoutPayload) {
+  const shell = element("div", "vr-app-shell vr-settings-shell");
+  const header = element("header", "vr-header vr-settings-header");
+  const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW"; const heading = element("h1"); heading.textContent = "設定"; brand.append(eyebrow, heading);
+  const back = element("a", "vr-link"); back.href = "/"; back.textContent = "レビューへ戻る"; header.append(brand, back); shell.append(header);
+  const page = element("main", "vr-settings-page");
+  const pluginSection = element("section", "vr-settings-card");
+  const pluginTitle = element("h2", "vr-section-title"); pluginTitle.textContent = "プラグイン"; pluginSection.append(pluginTitle);
+  const pluginCopy = element("p"); pluginCopy.textContent = "インストール済みプラグインの有効状態や個別設定を管理できます。"; pluginSection.append(pluginCopy);
+  if (layoutPayload.features?.plugin_management) {
+    const link = element("a", "vr-link vr-button"); link.href = "/settings/plugins"; link.textContent = "プラグイン設定を開く"; pluginSection.append(link);
+  } else {
+    const note = element("p", "vr-field-description"); note.textContent = "プラグイン管理はワークスペース設定で無効化されています。"; pluginSection.append(note);
+  }
+  page.append(pluginSection);
+  page.append(layoutOrderSection("ヘッダーの表示順", surface.layout.header_items, layoutPayload, "header"));
+  page.append(layoutOrderSection("サイドバーの表示順", surface.layout.sidebar_items, layoutPayload, "sidebar"));
+  page.append(stageSettingsSection(layoutPayload));
+  shell.append(page, element("div", "toast-region"));
+  root.replaceChildren(shell); root.setAttribute("aria-busy", "false");
+  queueMicrotask(paintToast); requestAnimationFrame(paintToast);
+}
+async function renderGeneralSettings() {
+  root.dataset.page = "settings";
+  const [layoutResponse, surfaceResponse] = await Promise.all([fetch("/api/settings/layout"), fetch("/api/plugin-host/v1/surfaces/review")]);
+  if (!layoutResponse.ok || !surfaceResponse.ok) throw new Error("設定を読み込めませんでした。");
+  const layoutPayload = await layoutResponse.json();
+  surface = await surfaceResponse.json(); applyTheme(surface.theme);
+  paintGeneralSettings(layoutPayload);
+}
 async function start() {
   if (location.pathname === "/settings/plugins") return renderSettings();
+  if (location.pathname === "/settings") return renderGeneralSettings();
   root.dataset.page = "review";
   const response = await fetch("/api/plugin-host/v1/surfaces/review"); surface = await response.json(); applyTheme(surface.theme);
   const resourceLoads = [];
-  const main = surface.contributions.find(({ slot }) => slot === "review.main");
+  const activeStageKey = surface.layout.active_stage;
+  const activeStage = surface.contributions.find((contribution) => `${contribution.plugin_id}/${contribution.id}` === activeStageKey);
+  const isInactiveStage = (contribution) => contribution.slot === "review.stage" && contribution !== activeStage;
   for (const contribution of surface.contributions) {
-    const runtime = stateFor(contribution); documents.set(`${contribution.plugin_id}:${contribution.id}`, runtime);
-    const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, slotContext: {} };
+    if (isInactiveStage(contribution)) continue;
+    const runtime = runtimeFor(contribution, "");
+    const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} };
     const loads = (contribution.document.resources || []).map((resource) => loadResource(contribution, resource.id, scope, false));
-    if (contribution === main) await Promise.all(loads);
+    if (contribution === activeStage) await Promise.all(loads);
     else resourceLoads.push(...loads);
   }
   rerender();
   if (resourceLoads.length) void Promise.all(resourceLoads).then(() => rerender());
-  const allResources = [...new Set(surface.contributions.flatMap((contribution) => (contribution.document.resources || []).map(({ id }) => id)))];
+  const allResources = [...new Set(surface.contributions.filter((contribution) => !isInactiveStage(contribution)).flatMap((contribution) => (contribution.document.resources || []).map(({ id }) => id)))];
   const eventPlugin = surface.contributions[0]?.plugin_id;
   if (eventPlugin) {
     const stream = new EventSource(`/api/plugin-host/v1/plugins/${encodeURIComponent(eventPlugin)}/events`);

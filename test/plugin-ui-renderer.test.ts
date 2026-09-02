@@ -27,15 +27,32 @@ test("normalizes enabled JSON contributions without evaluating plugin server mod
     schema_version: 4, id: "fixture", version: "1.0.0",
     display: { title: "Fixture", summary: "Static UI fixture", readme: "./README.md" }, configuration: [],
     server: { api_version: 1, bridge_api_version: 1, module: "./server/index.js", contract: "./server/contract.json" },
-    ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "main", slot: "review.main", document: "./ui/main.json", browser_module: "./ui/runtime.js", order: 0 }] },
+    ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "main", slot: "review.sidebar", document: "./ui/main.json", browser_module: "./ui/runtime.js", order: 0 }] },
   }));
   const installed = await installPlugin(source, root);
   const surface = loadPluginUiSurface(root);
   assert.equal(surface.contributions.length, 1);
   assert.equal(surface.contributions[0]?.plugin_id, "fixture");
-  assert.equal(surface.layout.stage, "expanded");
+  assert.equal(surface.layout.stage, "split");
   assert.equal(surface.contributions[0]?.browser_module_url, "/api/plugin-host/v1/plugins/fixture/ui-modules/main");
   assert.equal(existsSync(path.join(installed.directory, "server/evaluated")), false);
+});
+
+test("review.main is deprecated and dropped with an UNAVAILABLE diagnostic even as the only contribution", async () => {
+  const root = workspace();
+  const source = path.join(root, "fixture");
+  mkdirSync(path.join(source, "ui"), { recursive: true });
+  writeFileSync(path.join(source, "README.md"), "# Fixture\n");
+  writeFileSync(path.join(source, "ui/main.json"), JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } }));
+  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+    schema_version: 4, id: "fixture", version: "1.0.0",
+    display: { title: "Fixture", summary: "Static UI fixture", readme: "./README.md" }, configuration: [],
+    ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "main", slot: "review.main", document: "./ui/main.json", order: 0 }] },
+  }));
+  await installPlugin(source, root);
+  const surface = loadPluginUiSurface(root);
+  assert.equal(surface.contributions.length, 0);
+  assert.equal(surface.diagnostics.some((diagnostic) => diagnostic.code === "UNAVAILABLE" && /review\.stage/.test(diagnostic.message)), true);
 });
 
 test("disabled workflow contribution is absent and expands the target stage", async () => {
@@ -49,7 +66,14 @@ test("disabled workflow contribution is absent and expands the target stage", as
   }, root);
   const disabled = loadPluginUiSurface(root);
   assert.equal(disabled.contributions.some(({ slot }) => slot === "review.sidebar"), false);
-  assert.deepEqual(disabled.layout, { sidebar: "absent", stage: "expanded" });
+  assert.equal(disabled.layout.sidebar, "absent");
+  assert.equal(disabled.layout.stage, "expanded");
+  assert.equal(typeof disabled.layout.revision, "string");
+  assert.equal(disabled.layout.stage_switcher_position, "bottom-right");
+  assert.deepEqual(disabled.layout.sidebar_items, []);
+  assert.equal(disabled.layout.header_items.some((item) => item.key === "review/review-header"), true);
+  assert.equal(disabled.layout.active_stage, "review/review-stage");
+  assert.deepEqual(disabled.layout.stage_views.map((item) => item.key), ["review/review-stage"]);
 });
 
 test("renderer documents reject executable and unknown component properties", () => {
@@ -107,20 +131,20 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /resources\.invalidated|synchronizeResources/);
   assert.match(source, /setInterval\(\(\) => \{ void fallbackSync\(\); \}, 2000\)/);
   assert.match(source, /別の画面での変更を同期しました/);
-  assert.match(source, /function patchReviewTree\(nextTree\)/);
-  assert.match(source, /sidebarScroll = currentSidebar \? \{ top: currentSidebar\.scrollTop, left: currentSidebar\.scrollLeft \}/);
-  assert.match(source, /connectedSidebar\.scrollTop = sidebarScroll\.top/);
+  assert.match(source, /function patchStageHostRoot\(currentRoot, nextTree\)/);
+  assert.match(source, /scrollState = \{ top: container\.scrollTop, left: container\.scrollLeft \}/);
+  assert.match(source, /container\.scrollTop = scrollState\.top/);
   assert.match(source, /const openDialog = document\.querySelector\("dialog\[open\]"\)/);
   assert.match(source, /deferredReviewRender.*addEventListener\("close".*rerender\(\)/s);
   assert.match(source, /if \(changed\) rerender\(\)/);
   assert.match(source, /targetIdentity\(currentStage\) !== targetIdentity\(nextStage\)/);
-  assert.match(source, /if \(patchReviewTree\(nextTree\)\)/);
+  assert.match(source, /canPatch = currentContent\?\.dataset\?\.slot === "review\.stage" && patchStageHostRoot\(currentContent, nextTree\)/);
   assert.match(source, /node\.type = String\(values\.type\)/);
   assert.match(source, /container\.dataset\.viewport === "custom"/);
   assert.match(source, /frame\.style\.width = `\$\{container\.__viewportWidth\}px`/);
   assert.match(source, /currentStage\.__viewportWidth = nextStage\.__viewportWidth/);
   assert.doesNotMatch(source, /prepareExpandableText|expandedTextKeys|workflowExpandable|reviewViewportScale|installCustomViewportFit/);
-  assert.match(source, /main\?\.browser_module_url.*mountPluginRuntime\(main, connectedMain\)/s);
+  assert.match(source, /activeStage\.browser_module_url.*mountPluginRuntime\(activeStage, currentContent\)/s);
   assert.match(source, /if \(rendered\.isConnected\) void mountPluginRuntime/);
 });
 
@@ -156,23 +180,28 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
 });
 
 test("bundled review documents bind localized annotation content, filters, overlays, and scoped Issue dialogs", () => {
-  const review = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/review.ui.json"), "utf8")) as unknown;
+  const header = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/header.ui.json"), "utf8")) as unknown;
+  const stage = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/stage.ui.json"), "utf8")) as unknown;
   const rendererSource = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   const reviewRuntime = readFileSync(path.join(process.cwd(), "plugins/review/ui/review.js"), "utf8");
   const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
   const workflowRuntime = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.js"), "utf8");
   const workflowManifest = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { ui: { contributions: Array<{ id: string; browser_module?: string }> } };
   const issueText = readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/issue.ui.json"), "utf8");
-  assert.doesNotThrow(() => parsePluginUiDocument(review));
-  const reviewDocument = review as { local_state: Array<{ key: string; default: unknown; persist?: boolean }>; root: unknown };
-  assert.equal(reviewDocument.local_state.find(({ key }) => key === "viewport_width")?.default, 1280);
-  assert.equal(reviewDocument.local_state.find(({ key }) => key === "viewport_height")?.default, 720);
-  assert.equal(reviewDocument.local_state.find(({ key }) => key === "viewport_width")?.persist, true);
-  assert.match(JSON.stringify(reviewDocument.root), /"value":"custom","label":"カスタム"/);
-  assert.match(JSON.stringify(reviewDocument.root), /"viewport_width"/);
-  assert.match(JSON.stringify(reviewDocument.root), /"viewport_height"/);
-  assert.match(JSON.stringify(reviewDocument.root), /"label":\{"literal":"再読み込み"\}[^]*"click":\[\{"type":"target.reload"\}\]/);
-  assert.doesNotMatch(JSON.stringify(reviewDocument.root), /"label":\{"literal":"再読み込み"\}[^]*"click":\[\{"type":"resource.refresh"/);
+  assert.doesNotThrow(() => parsePluginUiDocument(header));
+  assert.doesNotThrow(() => parsePluginUiDocument(stage));
+  const headerDocument = header as { local_state: Array<{ key: string; default: unknown; persist?: boolean }>; root: unknown };
+  const stageDocument = stage as { root: unknown };
+  assert.equal(headerDocument.local_state.find(({ key }) => key === "viewport_width")?.default, 1280);
+  assert.equal(headerDocument.local_state.find(({ key }) => key === "viewport_height")?.default, 720);
+  assert.equal(headerDocument.local_state.find(({ key }) => key === "viewport_width")?.persist, true);
+  assert.match(JSON.stringify(headerDocument.root), /"value":"custom","label":"カスタム"/);
+  assert.match(JSON.stringify(headerDocument.root), /"label":\{"literal":"再読み込み"\}[^]*"click":\[\{"type":"target.reload"\}\]/);
+  assert.doesNotMatch(JSON.stringify(headerDocument.root), /"label":\{"literal":"再読み込み"\}[^]*"click":\[\{"type":"resource.refresh"/);
+  assert.match(JSON.stringify(stageDocument.root), /"type":"target-stage"/);
+  assert.match(JSON.stringify(stageDocument.root), /"local":"\/viewport"/);
+  assert.match(JSON.stringify(stageDocument.root), /"viewport_width"/);
+  assert.match(JSON.stringify(stageDocument.root), /"viewport_height"/);
   assert.match(sidebarText, /"aria_label": \{ "item": "\/comment" \}/);
   assert.match(sidebarText, /"label": \{ "item": "\/comment" \}/);
   assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
@@ -219,6 +248,35 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(reviewRuntime, /node\.setAttribute\("inert", ""\)/);
   assert.match(reviewRuntime, /if \(!doc\.documentElement\)/);
   assert.match(reviewRuntime, /window\.setTimeout\(install, 16\)/);
+});
+
+test("base shell owns the review header/stage/sidebar layout and plugin-scoped local state", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  // C2: root local state is namespaced per plugin (shared across that plugin's root
+  // contributions) under a new storage key, migrating values out of the old per-contribution key.
+  assert.match(source, /visual-review:renderer:2:\$\{pluginId\}/);
+  assert.match(source, /visual-review:renderer:1:\$\{pluginId\}:\$\{contribution\.id\}/);
+  assert.match(source, /function pluginLocalStateDeclarations\(pluginId\)/);
+  assert.match(source, /function runtimeFor\(contribution, parentInstanceKey = ""\)/);
+  assert.match(source, /function declarationsFor\(scope\)/);
+  // C3: the base shell owns header/stage/sidebar composition; a stage switcher appears when
+  // more than one review.stage view is declared, and moving it PUTs the shared layout settings.
+  assert.match(source, /dataset\.baseShell = "review"/);
+  assert.match(source, /slot === "review\.header"/);
+  assert.match(source, /slot === "review\.stage"/);
+  assert.match(source, /slot === "review\.sidebar"/);
+  assert.match(source, /function renderStageSwitcher\(container, activeKey\)/);
+  assert.match(source, /fetch\("\/api\/settings\/layout", \{ method: "PUT"/);
+  assert.match(source, /stage: \{ active: key \}/);
+  assert.match(source, /switcher\.dataset\.position = surface\.layout\.stage_switcher_position/);
+  // C1/C4: /settings hosts the base layout page distinct from /settings/plugins.
+  assert.match(source, /location\.pathname === "\/settings"\) return renderGeneralSettings\(\)/);
+  assert.match(source, /プラグイン設定を開く/);
+  assert.match(source, /設定へ戻る/);
+  assert.match(css, /\.vr-stage-switcher \{/);
+  assert.match(css, /\[data-position="top-left"\]/);
+  assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|DOMParser|document\.write|\beval\s*\(|new Function/);
 });
 
 test("bundled plugin UI documents stay JSON while declared browser modules are explicit local assets", async () => {

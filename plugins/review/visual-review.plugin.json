@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "review",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "display": {
     "title": "レビュー",
     "summary": "レビュー注釈、履歴、永続化を提供します。",
@@ -19,11 +19,19 @@
     "bridge_api_version": 1,
     "contributions": [
       {
-        "id": "review-main",
-        "slot": "review.main",
-        "document": "./ui/review.ui.json",
+        "id": "review-header",
+        "slot": "review.header",
+        "document": "./ui/header.ui.json",
+        "order": 0,
+        "title": "レビュー操作"
+      },
+      {
+        "id": "review-stage",
+        "slot": "review.stage",
+        "document": "./ui/stage.ui.json",
         "browser_module": "./ui/review.js",
-        "order": 0
+        "order": 0,
+        "title": "レビュー対象"
       }
     ]
   },

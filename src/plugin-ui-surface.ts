@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { DEFAULT_LAYOUT_SETTINGS, layoutSettingsRevision, readLayoutSettings, type LayoutCornerV1, type LayoutSettingsFile } from "./layout-settings.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { effectivePluginSettings } from "./plugin-settings.js";
 import { parsePluginUiDocument, type PluginUiDocumentV1 } from "./plugin-ui-document.js";
@@ -12,6 +13,7 @@ export interface PluginUiSurfaceContributionV1 {
   id: string;
   slot: PluginUiSlotV1;
   order: number;
+  title: string;
   document: PluginUiDocumentV1;
   browser_module_url?: string;
 }
@@ -23,13 +25,60 @@ export interface PluginUiSurfaceDiagnosticV1 {
   message: string;
 }
 
+export interface PluginUiSurfaceLayoutItemV1 {
+  key: string;
+  plugin_id: string;
+  contribution_id: string;
+  title: string;
+}
+
+export interface PluginUiSurfaceLayoutV1 {
+  revision: string;
+  sidebar: "present" | "absent";
+  stage: "split" | "expanded";
+  header_items: PluginUiSurfaceLayoutItemV1[];
+  sidebar_items: PluginUiSurfaceLayoutItemV1[];
+  stage_views: PluginUiSurfaceLayoutItemV1[];
+  active_stage: string | null;
+  stage_switcher_position: LayoutCornerV1;
+}
+
 export interface PluginUiSurfaceV1 {
   schema_version: 1;
   renderer_api_version: 1;
   bridge_api_version: 1;
   contributions: PluginUiSurfaceContributionV1[];
   diagnostics: PluginUiSurfaceDiagnosticV1[];
-  layout: { sidebar: "present" | "absent"; stage: "split" | "expanded" };
+  layout: PluginUiSurfaceLayoutV1;
+  page?: { title: string };
+}
+
+function contributionKey(contribution: Pick<PluginUiSurfaceContributionV1, "plugin_id" | "id">): string {
+  return `${contribution.plugin_id}/${contribution.id}`;
+}
+
+function toLayoutItem(contribution: PluginUiSurfaceContributionV1): PluginUiSurfaceLayoutItemV1 {
+  return {
+    key: contributionKey(contribution),
+    plugin_id: contribution.plugin_id,
+    contribution_id: contribution.id,
+    title: contribution.title,
+  };
+}
+
+function compareByManifestOrder(left: PluginUiSurfaceContributionV1, right: PluginUiSurfaceContributionV1): number {
+  return left.order - right.order || left.plugin_id.localeCompare(right.plugin_id) || left.id.localeCompare(right.id);
+}
+
+function compareByLayoutOrder(order: string[]): (left: PluginUiSurfaceContributionV1, right: PluginUiSurfaceContributionV1) => number {
+  return (left, right) => {
+    const leftIndex = order.indexOf(contributionKey(left));
+    const rightIndex = order.indexOf(contributionKey(right));
+    if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
+    if (leftIndex >= 0) return -1;
+    if (rightIndex >= 0) return 1;
+    return compareByManifestOrder(left, right);
+  };
 }
 
 /** Loads static UI documents only. This function never imports a plugin module. */
@@ -53,6 +102,7 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
           id: contribution.id,
           slot: contribution.slot,
           order: contribution.order,
+          title: contribution.title ?? plugin.manifest.display?.title ?? plugin.id,
           document: parsePluginUiDocument(value, bytes.byteLength),
           ...(contribution.browser_module ? { browser_module_url: `/api/plugin-host/v1/plugins/${encodeURIComponent(plugin.id)}/ui-modules/${encodeURIComponent(contribution.id)}` } : {}),
         });
@@ -66,22 +116,58 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
       }
     }
   }
-  contributions.sort((left, right) => left.order - right.order || left.plugin_id.localeCompare(right.plugin_id) || left.id.localeCompare(right.id));
-  const mains = contributions.filter(({ slot }) => slot === "review.main");
-  if (mains.length > 1) {
-    for (const conflict of mains.slice(1)) {
-      diagnostics.push({ plugin_id: conflict.plugin_id, contribution_id: conflict.id, code: "UNAVAILABLE", message: "review.main is already provided" });
-      contributions.splice(contributions.indexOf(conflict), 1);
-    }
+
+  for (const deprecated of contributions.filter(({ slot }) => slot === "review.main")) {
+    diagnostics.push({
+      plugin_id: deprecated.plugin_id,
+      contribution_id: deprecated.id,
+      code: "UNAVAILABLE",
+      message: "review.main is no longer rendered; migrate to review.stage",
+    });
+    contributions.splice(contributions.indexOf(deprecated), 1);
   }
-  const sidebar = contributions.some(({ slot }) => slot === "review.sidebar");
+
+  let settings: LayoutSettingsFile;
+  try { settings = readLayoutSettings(workspace); }
+  catch { settings = structuredClone(DEFAULT_LAYOUT_SETTINGS); }
+  const revision = layoutSettingsRevision(settings);
+
+  const baseline = [...contributions].sort(compareByManifestOrder);
+  const headerItems = baseline.filter(({ slot }) => slot === "review.header").sort(compareByLayoutOrder(settings.header.order));
+  const sidebarItems = baseline.filter(({ slot }) => slot === "review.sidebar").sort(compareByLayoutOrder(settings.sidebar.order));
+  const stageItems = baseline.filter(({ slot }) => slot === "review.stage");
+
+  const headerQueue = [...headerItems];
+  const sidebarQueue = [...sidebarItems];
+  const finalContributions = baseline.map((contribution) => {
+    if (contribution.slot === "review.header") return headerQueue.shift()!;
+    if (contribution.slot === "review.sidebar") return sidebarQueue.shift()!;
+    return contribution;
+  });
+
+  const stageKeys = stageItems.map(contributionKey);
+  const activeStage = settings.stage.active !== null && stageKeys.includes(settings.stage.active)
+    ? settings.stage.active
+    : (stageKeys[0] ?? null);
+
+  const sidebarPresent = finalContributions.some(({ slot }) => slot === "review.sidebar");
+
   return {
     schema_version: 1,
     renderer_api_version: 1,
     bridge_api_version: 1,
-    contributions,
+    contributions: finalContributions,
     diagnostics,
-    layout: { sidebar: sidebar ? "present" : "absent", stage: sidebar ? "split" : "expanded" },
+    layout: {
+      revision,
+      sidebar: sidebarPresent ? "present" : "absent",
+      stage: sidebarPresent ? "split" : "expanded",
+      header_items: headerItems.map(toLayoutItem),
+      sidebar_items: sidebarItems.map(toLayoutItem),
+      stage_views: stageItems.map(toLayoutItem),
+      active_stage: activeStage,
+      stage_switcher_position: settings.stage.switcher_position,
+    },
   };
 }
 

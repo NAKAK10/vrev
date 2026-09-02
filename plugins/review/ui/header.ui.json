@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "local_state": [
+    { "key": "viewport", "type": "enum", "values": ["desktop", "tablet", "mobile", "custom"], "default": "desktop", "persist": true, "schema_version": 2 },
+    { "key": "viewport_width", "type": "integer", "default": 1280, "min": 320, "max": 3840, "persist": true, "schema_version": 1 },
+    { "key": "viewport_height", "type": "integer", "default": 720, "min": 240, "max": 2160, "persist": true, "schema_version": 1 },
+    { "key": "selection_mode", "type": "enum", "values": ["browse", "node", "region"], "default": "browse", "persist": false }
+  ],
+  "root": {
+    "type": "toolbar",
+    "props": { "label": { "literal": "レビュー操作" }, "overflow": { "literal": "menu" } },
+    "children": [
+      { "id": "viewport", "type": "viewport-selector", "props": { "value": { "local": "/viewport" }, "options": { "literal": [{ "value": "desktop", "label": "PC" }, { "value": "tablet", "label": "タブレット" }, { "value": "mobile", "label": "スマホ" }, { "value": "custom", "label": "カスタム" }] }, "label": { "literal": "表示サイズ" } }, "on": { "change": [{ "type": "local.set", "path": "/viewport", "value": { "event": "/value" } }] } },
+      { "type": "row", "when": { "eq": [{ "local": "/viewport" }, { "literal": "custom" }] }, "props": { "variant": { "literal": "custom-viewport-size" } }, "children": [
+        { "id": "viewport-width", "type": "input", "props": { "label": { "literal": "幅 (px)" }, "value": { "local": "/viewport_width" }, "type": { "literal": "number" }, "min": { "literal": 320 }, "max": { "literal": 3840 }, "required": { "literal": true } }, "on": { "change": [{ "type": "local.set", "path": "/viewport_width", "value": { "event": "/value" } }] } },
+        { "id": "viewport-height", "type": "input", "props": { "label": { "literal": "高さ (px)" }, "value": { "local": "/viewport_height" }, "type": { "literal": "number" }, "min": { "literal": 240 }, "max": { "literal": 2160 }, "required": { "literal": true } }, "on": { "change": [{ "type": "local.set", "path": "/viewport_height", "value": { "event": "/value" } }] } }
+      ] },
+      { "id": "selection-mode", "type": "selection-mode-selector", "props": { "value": { "local": "/selection_mode" }, "options": { "literal": [{ "value": "browse", "label": "閲覧" }, { "value": "node", "label": "ノード" }, { "value": "region", "label": "範囲" }] }, "label": { "literal": "選択モード" } }, "on": { "change": [{ "type": "local.set", "path": "/selection_mode", "value": { "event": "/value" } }] } },
+      { "type": "button", "props": { "label": { "literal": "再読み込み" }, "variant": { "literal": "secondary" } }, "on": { "click": [{ "type": "target.reload" }] } }
+    ]
+  }
+}
