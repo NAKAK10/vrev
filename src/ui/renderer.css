@@ -262,6 +262,11 @@ a { color: inherit; }
 .vr-form[data-variant="inline-reply"] > .vr-button { min-height: 36px; padding: 7px 10px; font-size: 11px; }
 .vr-row[data-variant="annotation-actions"] { margin-top: 7px !important; }
 .vr-row[data-variant="annotation-actions"] > .vr-button { min-height: 30px; margin: 0; padding: 5px 8px; font-size: 10px; }
+/* A contributed action is nested inside its slot and contribution root, so it is not a direct
+   child of the row; flatten those wrappers and size the buttons inside them the same way. */
+.vr-row[data-variant="annotation-actions"] > .vr-slot { display: contents; min-width: 0; overflow: visible; border-left: 0; background: transparent; }
+.vr-row[data-variant="annotation-actions"] > .vr-slot > [data-slot] { display: contents; }
+.vr-row[data-variant="annotation-actions"] > .vr-slot > [data-slot] > .vr-button { min-height: 30px; margin: 0; padding: 5px 8px; font-size: 10px; }
 .vr-disclosure[data-variant="sidebar-history"] { border-top: 1px solid var(--vr-color-border); background: var(--vr-color-surface-subtle); }
 .vr-disclosure[data-variant="sidebar-history"] > summary { display: flex; min-height: 48px; align-items: center; padding: 0 16px; font-size: 13px; font-weight: 800; cursor: pointer; }
 .vr-disclosure[data-variant="sidebar-history"] > summary::after { margin-left: auto; content: "⌄"; }
