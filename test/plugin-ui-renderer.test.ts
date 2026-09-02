@@ -118,6 +118,9 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /container\.dataset\.viewport === "custom"/);
   assert.match(source, /frame\.style\.width = `\$\{container\.__viewportWidth\}px`/);
   assert.match(source, /currentStage\.__viewportWidth = nextStage\.__viewportWidth/);
+  assert.match(source, /function prepareExpandableText\(node, values, definition, scope\)/);
+  assert.match(source, /expandedTextKeys\.has\(key\)/);
+  assert.match(source, /event\.stopImmediatePropagation\(\)/);
   assert.match(source, /main\?\.browser_module_url.*mountPluginRuntime\(main, connectedMain\)/s);
   assert.match(source, /if \(rendered\.isConnected\) void mountPluginRuntime/);
 });
@@ -141,6 +144,8 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.match(css, /\.vr-target-diagnostic-close[^}]*pointer-events: auto/s);
   assert.match(css, /\.vr-target-stage\[data-viewport="custom"\] iframe[^}]*max-width: none/s);
   assert.match(css, /custom-viewport-size/);
+  assert.match(css, /\[data-line-clamp\]:not\(\.is-expanded\)[^}]*-webkit-line-clamp: var\(--vr-line-clamp\)/s);
+  assert.match(css, /\[data-expandable="true"\][^}]*cursor: pointer/s);
   assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
   assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
   assert.match(source, /dialog\[open\] \.vr-dialog-body/);
@@ -173,6 +178,8 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(sidebarText, /"source": \{ "item": "\/thread" \}/);
   assert.match(sidebarText, /"kind_label"|\/kind_label/);
   assert.match(sidebarText, /"type": "checkbox-group"/);
+  assert.match(sidebarText, /"id": "annotation-comment"[^]*"line_clamp": \{ "literal": 3 \}[^]*"expandable": \{ "literal": true \}/);
+  assert.match(sidebarText, /"id": "thread-body"[^]*"line_clamp": \{ "literal": 3 \}[^]*"expandable": \{ "literal": true \}/);
   assert.match(sidebarText, /"id": "batch-run".*"resource": "workflow-settings", "path": "\/auto_run".*"literal": false/);
   assert.match(sidebarText, /"id": "annotation-ai-run".*"item": "\/status".*"literal": "open".*"path": "\/auto_run".*"literal": true.*"label": \{ "literal": "AI修正" \}.*"command": "jobs\.enqueue".*"annotation_id": \{ "item": "\/id" \}/);
   assert.match(sidebarText, /"limit": \{ "literal": 24 \}/);

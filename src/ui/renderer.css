@@ -231,6 +231,16 @@ a { color: inherit; }
 .vr-panel[data-variant="thread-message"] > .vr-text:first-child { margin: 0; color: var(--vr-color-text-muted); font-size: 9px; font-weight: 800; }
 .vr-panel[data-variant="thread-message"] > .vr-time { color: var(--vr-color-text-muted); font-size: 9px; }
 .vr-panel[data-variant="thread-message"] > .vr-text:last-child { margin: 0; grid-column: 1 / -1; font-size: 11px; line-height: 1.5; }
+.vr-button[data-line-clamp]:not(.is-expanded),
+.vr-text[data-line-clamp]:not(.is-expanded),
+.vr-panel[data-variant="annotation-card"] > .vr-button[data-variant="annotation-target"][data-line-clamp]:not(.is-expanded) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--vr-line-clamp);
+}
+[data-expandable="true"] { cursor: pointer; }
+.vr-text[data-expandable="true"]:focus-visible { border-radius: 3px; outline: 2px solid var(--vr-color-focus); outline-offset: 2px; }
 .vr-panel[data-variant="annotation-card"] > .vr-button { min-height: 30px; margin-top: 9px; padding: 5px 8px; color: var(--vr-color-text-muted); font-size: 10px; }
 .vr-form[data-variant="inline-reply"] { display: grid; margin-top: 9px; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
 .vr-form[data-variant="inline-reply"] .vr-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

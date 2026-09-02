@@ -37,7 +37,7 @@
       { "type": "list", "props": { "label": { "literal": "レビュー注釈" }, "empty_message": { "literal": "注釈はまだありません。" }, "variant": { "literal": "annotation-list" } }, "children": [
         { "type": "panel", "props": { "variant": { "literal": "annotation-card" }, "aria_label": { "item": "/comment" } }, "repeat": { "source": { "resource": "annotations", "path": "/items" }, "key": { "item": "/id" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] }, "children": [
           { "type": "status", "props": { "value": { "item": "/status" }, "label": { "item": "/status_label" } } },
-          { "type": "button", "props": { "label": { "item": "/comment" }, "variant": { "literal": "annotation-target" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
+          { "id": "annotation-comment", "type": "button", "props": { "label": { "item": "/comment" }, "variant": { "literal": "annotation-target" }, "line_clamp": { "literal": 3 }, "expandable": { "literal": true } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
           { "type": "row", "props": { "variant": { "literal": "annotation-meta" } }, "children": [
             { "type": "badge", "props": { "text": { "item": "/kind_label" } } },
             { "type": "text", "props": { "text": { "item": "/page_path" }, "truncate": { "literal": true } } },
@@ -47,7 +47,7 @@
             { "type": "panel", "props": { "variant": { "literal": "thread-message" } }, "repeat": { "source": { "item": "/thread" }, "key": { "item": "/id" } }, "children": [
               { "type": "text", "props": { "text": { "item": "/actor_label" } } },
               { "type": "time", "props": { "value": { "item": "/at" }, "format": { "literal": "localized" } } },
-              { "type": "text", "props": { "text": { "item": "/body" }, "preserve_whitespace": { "literal": true } } }
+              { "id": "thread-body", "type": "text", "props": { "text": { "item": "/body" }, "preserve_whitespace": { "literal": true }, "line_clamp": { "literal": 3 }, "expandable": { "literal": true } } }
             ] }
           ] },
           { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
