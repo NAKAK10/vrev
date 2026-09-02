@@ -10,6 +10,7 @@ const pluginRuntimeCleanups = new Map();
 let surface;
 let settingsRenderPromise = null;
 let activeToast = null;
+let deferredReviewRender = false;
 const reviewSelection = { annotation_id: null, page_path: null, anchor: null };
 const THEME_TOKENS = new Map([
   ["canvas", "--vr-color-canvas"], ["surface", "--vr-color-surface"], ["surface_subtle", "--vr-color-surface-subtle"],
@@ -134,6 +135,11 @@ function props(node, definition, scope) {
   if (result.pressed !== undefined) node.setAttribute("aria-pressed", String(Boolean(result.pressed)));
   return result;
 }
+function controlValue(node) {
+  if (node.type === "checkbox") return node.checked;
+  if (node instanceof HTMLInputElement && node.type === "number") return Number.isFinite(node.valueAsNumber) ? node.valueAsNumber : node.value;
+  return node.value;
+}
 function control(node, nodeProps, scope) {
   if (nodeProps.name) node.name = String(nodeProps.name);
   const draftKey = `${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:${nodeProps.name || node.id}`;
@@ -151,9 +157,10 @@ function control(node, nodeProps, scope) {
   if (nodeProps.description) node.setAttribute("aria-description", String(nodeProps.description));
   if (nodeProps.error) { node.setAttribute("aria-invalid", "true"); node.setAttribute("aria-errormessage", String(nodeProps.error)); }
   node.addEventListener("input", () => {
-    formDrafts.set(draftKey, node.type === "checkbox" ? node.checked : node.value);
+    const value = controlValue(node);
+    formDrafts.set(draftKey, value);
     const declaration = (scope.contribution.document.local_state || []).find(({ key }) => `/${key}` === scope.valuePath);
-    if (declaration) { scope.state[declaration.key] = node.type === "checkbox" ? node.checked : node.value; scope.persist(); }
+    if (declaration) { scope.state[declaration.key] = value; scope.persist(); }
   });
 }
 function renderCheckboxGroup(node, values, definition, scope) {
@@ -235,7 +242,7 @@ function renderSingle(definition, scope) {
   if (type === "panel" && values.aria_label) node.setAttribute("aria-label", String(values.aria_label));
   if (type === "button" || type === "load-more") { node.textContent = String(values.label || ""); if (values.type) node.type = String(values.type); }
   if (type === "link") { node.textContent = String(values.label || ""); if (typeof values.href === "string") node.href = values.href; if (values.external) { node.target = "_blank"; node.rel = "noopener noreferrer"; } }
-  if (["input", "textarea"].includes(type)) { control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
+  if (["input", "textarea"].includes(type)) { if (type === "input" && values.type) node.type = String(values.type); control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
   if (["select", "viewport-selector"].includes(type)) {
     control(node, values, { ...scope, valuePath: definition.props?.value?.local });
     node.__optionValues = new Map();
@@ -285,7 +292,7 @@ function bindEvents(node, definition, scope) {
       if (definition.type === "panel" && eventName === "click" && event.target !== node && event.target.closest("button,a,input,textarea,select,form,[role='button']")) return;
       if (eventName === "submit") event.preventDefault();
       if (name === "selection-commit" && event.detail?.selection) { reviewSelection.anchor = event.detail.selection; reviewSelection.page_path = event.detail.selection.page_path ?? null; scope.slotContext.review = { selection: reviewSelection }; }
-      const eventData = event.detail ?? (name === "toggle" ? { expanded: node.open } : { value: node.type === "checkbox" ? node.checked : node.__optionValues?.get(node.value) ?? node.value });
+      const eventData = event.detail ?? (name === "toggle" ? { expanded: node.open } : { value: node.__optionValues?.get(node.value) ?? controlValue(node) });
       void execute(instructions, { ...scope, event: eventData, form: formValues(node) });
     });
   }
@@ -313,12 +320,19 @@ function targetUrlForPage(target, pagePath) {
   return `/target/${String(pagePath).replace(/^\/+/, "").split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
 }
 function waitForFrame(frame) { return new Promise((resolve, reject) => { const timer = setTimeout(() => { cleanup(); reject(new Error("対象ページの読み込みがタイムアウトしました")); }, 8000); const cleanup = () => { clearTimeout(timer); frame.removeEventListener("load", loaded); frame.removeEventListener("error", failed); }; const loaded = () => { cleanup(); resolve(); }; const failed = () => { cleanup(); reject(new Error("対象ページを読み込めませんでした")); }; frame.addEventListener("load", loaded, { once: true }); frame.addEventListener("error", failed, { once: true }); }); }
-function showTargetDiagnostic(container, message, detail = "") {
+function showTargetDiagnostic(container, message, detail = "", options = {}) {
+  if (options.dismissKey && container.__dismissedTargetDiagnostics?.has(options.dismissKey)) return;
   let diagnostic = container.querySelector(":scope > .vr-target-diagnostic");
-  if (!diagnostic) { diagnostic = element("div", "vr-target-diagnostic"); diagnostic.setAttribute("role", "alert"); container.append(diagnostic); }
+  if (!diagnostic) { diagnostic = element("div", "vr-target-diagnostic"); diagnostic.setAttribute("role", options.variant === "warning" ? "status" : "alert"); container.append(diagnostic); }
+  diagnostic.classList.toggle("is-warning", options.variant === "warning");
   const title = element("strong"); title.textContent = message;
   diagnostic.replaceChildren(title);
   if (detail) { const copy = element("span"); copy.textContent = detail; diagnostic.append(copy); }
+  if (options.dismissKey) {
+    const close = element("button", "vr-target-diagnostic-close"); close.type = "button"; close.textContent = "×"; close.setAttribute("aria-label", "対象ページのエラー通知を閉じる");
+    close.addEventListener("click", () => { container.__dismissedTargetDiagnostics ??= new Set(); container.__dismissedTargetDiagnostics.add(options.dismissKey); diagnostic.remove(); });
+    diagnostic.append(close);
+  }
 }
 function clearTargetDiagnostic(container) { container.querySelector(":scope > .vr-target-diagnostic")?.remove(); }
 function installTargetDiagnostics(container, frame) {
@@ -329,12 +343,13 @@ function installTargetDiagnostics(container, frame) {
   try { status = Number(win.performance.getEntriesByType("navigation").at(-1)?.responseStatus || 0); } catch {}
   if (status >= 400) showTargetDiagnostic(container, `対象ページが HTTP ${status} を返しました`, "通常のブラウザ表示でもエラーになる状態です。対象アプリのエラーを確認してください。");
   else clearTargetDiagnostic(container);
-  const runtimeError = (message) => showTargetDiagnostic(container, "対象ページで JavaScript エラーが発生しました", String(message || "詳細は対象アプリのコンソールを確認してください。").slice(0, 300));
-  const onError = (event) => runtimeError(event.message);
-  const onRejection = (event) => runtimeError(event.reason?.message || event.reason);
-  win.addEventListener("error", onError);
-  win.addEventListener("unhandledrejection", onRejection);
-  container.__targetDiagnosticCleanup = () => { win.removeEventListener("error", onError); win.removeEventListener("unhandledrejection", onRejection); delete container.__targetDiagnosticCleanup; };
+  const reportRuntimeError = () => {
+    if (status >= 400) return;
+    showTargetDiagnostic(container, "対象ページでJavaScriptエラーを検出しました", "ページの表示は継続しています。確認済みの場合はこの通知を閉じられます。", { dismissKey: "javascript", variant: "warning" });
+  };
+  win.addEventListener("error", reportRuntimeError);
+  win.addEventListener("unhandledrejection", reportRuntimeError);
+  container.__targetDiagnosticCleanup = () => { win.removeEventListener("error", reportRuntimeError); win.removeEventListener("unhandledrejection", reportRuntimeError); delete container.__targetDiagnosticCleanup; };
 }
 async function focusTarget(pagePath, anchor, restoreContext) {
   const stage = document.querySelector(".vr-target-stage"); const frame = stage?.querySelector("iframe"); let focused = false;
@@ -489,8 +504,25 @@ function installHtmlSelection(container, frame, mode) {
   };
   doc.__vrSelectionCleanup = cleanup;
 }
+function viewportDimension(value, minimum, maximum, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, Math.round(number))) : fallback;
+}
+function applyTargetViewport(container, frame) {
+  if (!frame) return;
+  if (container.dataset.viewport === "custom") {
+    frame.style.width = `${container.__viewportWidth}px`;
+    frame.style.height = `${container.__viewportHeight}px`;
+  } else {
+    frame.style.removeProperty("width");
+    frame.style.removeProperty("height");
+  }
+}
 function targetStage(definition, scope) {
   const container = element("div", "vr-target-stage stage"); container.tabIndex = 0;
+  container.dataset.viewport = String(binding(definition.props?.viewport_mode, scope) || "desktop");
+  container.__viewportWidth = viewportDimension(binding(definition.props?.viewport_width, scope), 320, 3840, 1280);
+  container.__viewportHeight = viewportDimension(binding(definition.props?.viewport_height, scope), 240, 2160, 720);
   const target = binding(definition.props?.target, scope); const mode = String(binding(definition.props?.selection_mode, scope) || "browse"); container.__target = target; container.__mode = mode;
   if (!target) { container.textContent = "対象を読み込んでいます…"; return container; }
   const commit = (anchor) => container.dispatchEvent(new CustomEvent("selection-commit", { detail: { selection: anchor } }));
@@ -503,7 +535,7 @@ function targetStage(definition, scope) {
     if (!target.allow_scripts) frame.setAttribute("sandbox", "allow-same-origin allow-forms");
     container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
-  container.dataset.viewport = String(binding(definition.props?.viewport_mode, scope) || "desktop"); container.dataset.mode = mode;
+  applyTargetViewport(container, container.querySelector("iframe")); container.dataset.mode = mode;
   container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); container.dispatchEvent(new CustomEvent("selection-cancel", { detail: {} })); } });
   return container;
 }
@@ -571,19 +603,25 @@ function patchReviewTree(nextTree) {
   const currentSplit = currentPrimary?.parentElement;
   const nextSplit = nextPrimary?.parentElement;
   if (!currentPrimary || !nextPrimary || !currentSplit || !nextSplit) return false;
+  const currentSidebar = currentSplit.querySelector(":scope > .vr-slot");
+  const sidebarScroll = currentSidebar ? { top: currentSidebar.scrollTop, left: currentSidebar.scrollLeft } : null;
 
   currentStage.dataset.viewport = nextStage.dataset.viewport;
   currentStage.dataset.mode = nextStage.dataset.mode;
+  currentStage.__viewportWidth = nextStage.__viewportWidth;
+  currentStage.__viewportHeight = nextStage.__viewportHeight;
   currentStage.__mode = nextStage.__mode;
   currentStage.__target = nextStage.__target;
   currentStage.__preview = null;
   const frame = currentStage.querySelector("iframe");
-  if (frame) installHtmlSelection(currentStage, frame, currentStage.__mode);
+  if (frame) { applyTargetViewport(currentStage, frame); installHtmlSelection(currentStage, frame, currentStage.__mode); }
 
   for (const child of [...currentPrimary.children]) if (child !== currentStage) child.remove();
   for (const child of [...nextPrimary.children]) if (child !== nextStage) currentPrimary.append(child);
   for (const child of [...currentSplit.children]) if (child !== currentPrimary) child.remove();
   for (const child of [...nextSplit.children]) if (child !== nextPrimary) currentSplit.append(child);
+  const connectedSidebar = currentSplit.querySelector(":scope > .vr-slot");
+  if (connectedSidebar && sidebarScroll) { connectedSidebar.scrollTop = sidebarScroll.top; connectedSidebar.scrollLeft = sidebarScroll.left; }
 
   for (const child of [...currentShell.children]) if (child !== currentSplit) child.remove();
   let beforeSplit = true;
@@ -599,6 +637,16 @@ function rerender() {
     settingsRenderPromise ??= renderSettings().finally(() => { settingsRenderPromise = null; });
     return;
   }
+  const openDialog = document.querySelector("dialog[open]");
+  if (openDialog) {
+    deferredReviewRender = true;
+    if (!openDialog.__deferredRenderListener) {
+      openDialog.__deferredRenderListener = true;
+      openDialog.addEventListener("close", () => { delete openDialog.__deferredRenderListener; if (deferredReviewRender) { deferredReviewRender = false; rerender(); } }, { once: true });
+    }
+    return;
+  }
+  deferredReviewRender = false;
   const activeId = document.activeElement?.id; dialogs.clear();
   const main = surface.contributions.find(({ slot }) => slot === "review.main");
   const nextTree = main ? renderContribution(main) : Object.assign(element("p", "vr-diagnostic"), { textContent: "review.main contribution is unavailable" });
@@ -680,8 +728,8 @@ async function synchronizeResources(resources, announce = false) {
   const runtime = documents.get(`${fallback.plugin_id}:${fallback.id}`) || stateFor(fallback);
   const scope = { plugin: fallback.plugin_id, contribution: fallback, state: runtime.state, persist: runtime.persist, slotContext: {} };
   await Promise.all(unique.map((resource) => refreshResourceNamed(resource, scope)));
-  rerender();
   const changed = [...resourceStores].some(([key, store]) => before.get(key) !== (store.revision ?? JSON.stringify(store.data)));
+  if (changed) rerender();
   if (announce && changed) {
     const labels = unique.map((resource) => ({ session: "レビュー", annotations: "注釈", history: "変更履歴", jobs: "AI修正状況", "workflow-settings": "設定" })[resource] || resource);
     toast(`別の画面での変更を同期しました：${[...new Set(labels)].join("・")}`, "info");

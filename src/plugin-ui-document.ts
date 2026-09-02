@@ -55,7 +55,7 @@ const COMPONENT_PROPS: Readonly<Record<string, readonly string[]>> = {
   "toast-region": ["label"],
   disclosure: ["label", "expanded", "disabled"],
   "live-status": ["message", "value", "variant", "politeness"],
-  "target-stage": ["target", "target_kind", "trust_mode", "viewport_mode", "selection_mode", "enabled"],
+  "target-stage": ["target", "target_kind", "trust_mode", "viewport_mode", "viewport_width", "viewport_height", "selection_mode", "enabled"],
   "annotation-mark-layer": ["marks", "selected_id", "resolved_policy", "stale_policy", "enabled"],
   "viewport-selector": ["value", "options", "disabled", "label"],
   "selection-mode-selector": ["value", "options", "disabled", "label"],

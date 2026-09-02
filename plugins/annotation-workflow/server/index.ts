@@ -74,15 +74,14 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
       }
       if (name === "jobs.list") {
         const data = manager.list();
-        const runningJobs = data.jobs.filter(({ state }) => state === "running");
-        const queued = data.jobs.filter(({ state }) => state === "queued").length;
-        const active = runningJobs[0] ? {
-          job_id: runningJobs[0].id,
-          started_at: runningJobs.map(({ started, created }) => started ?? created).sort()[0]!,
-          latest_info: `${runningJobs.length}件のAI修正を実行中です`,
+        const activeJobs = data.jobs.filter(({ state }) => state === "queued" || state === "running");
+        const primaryJob = activeJobs.find(({ state }) => state === "running") ?? activeJobs[0];
+        const active = primaryJob ? {
+          job_id: primaryJob.id,
+          started_at: activeJobs.map(({ started, created }) => started ?? created).sort()[0]!,
+          latest_info: `${activeJobs.length}件のAI修正を実行中です`,
         } : null;
-        const running = runningJobs.length + queued;
-        return { ok: true, data: { revision: data.revision, batches: data.batches.map(({ custom_command: _legacy, ...batch }) => batch), jobs: data.jobs.map(({ custom_name: _legacy, ...job }) => job), ...(active ? { active } : {}), announcement: running ? `${running}件のAI修正を処理中です` : "AI修正は待機中です" } };
+        return { ok: true, data: { revision: data.revision, batches: data.batches.map(({ custom_command: _legacy, ...batch }) => batch), jobs: data.jobs.map(({ custom_name: _legacy, ...job }) => job), ...(active ? { active } : {}), announcement: activeJobs.length ? `${activeJobs.length}件のAI修正を処理中です` : "AI修正は待機中です" } };
       }
       if (name === "workflow.settings") return { ok: true, data: workflowSettingsProjection(review.store.target.projectRoot, await externalRunners()) };
       return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
