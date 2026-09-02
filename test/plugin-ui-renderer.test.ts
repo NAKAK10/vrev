@@ -73,7 +73,7 @@ test("disabled workflow contribution is absent and expands the target stage", as
   assert.deepEqual(disabled.layout.sidebar_items, []);
   assert.equal(disabled.layout.header_items.some((item) => item.key === "review/review-header"), true);
   assert.equal(disabled.layout.active_stage, "review/review-stage");
-  assert.deepEqual(disabled.layout.stage_views.map((item) => item.key), ["review/review-stage"]);
+  assert.deepEqual(disabled.layout.stage_views.map((item) => item.key), ["review/review-stage", "page-map/page-map-stage"]);
 });
 
 test("renderer documents reject executable and unknown component properties", () => {

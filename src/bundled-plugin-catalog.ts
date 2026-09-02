@@ -3,6 +3,7 @@ import type { JobManager } from "../plugins/annotation-workflow/server/job-manag
 import type { ReviewCapabilityV1 as WorkflowReviewCapabilityV1, RunnerRegistryV1 } from "../plugins/annotation-workflow/server/workflow-types.js";
 import { createCustomCommandBridgeAdapter, parseCommandTemplate, type CustomCommandProviderV1 } from "../plugins/custom-command/index.js";
 import { createIssueBridgeAdapter, type IssueReviewCapabilityV1, type IssueTaskCapabilityV1 } from "../plugins/github-issue/server/index.js";
+import { createPageMapBridgeAdapter } from "../plugins/page-map/server/index.js";
 import { createReviewBridgeAdapter, type ReviewCapabilityV1 } from "../plugins/review/server/review-capability.js";
 
 export interface BundledBridgeRequest {
@@ -54,5 +55,6 @@ export function createBundledBridgeCatalog(options: BundledBridgeCatalogOptions)
     ["annotation-workflow", createAnnotationWorkflowBridgeAdapter(review as unknown as WorkflowReviewCapabilityV1, options.workflowManager, runnerRegistry)],
     ["custom-command", createCustomCommandBridgeAdapter(review.store.target.projectRoot, options.customCommands) as BundledBridgeAdapter],
     ["github-issue", createIssueBridgeAdapter(review as unknown as IssueReviewCapabilityV1, options.issueTask) as BundledBridgeAdapter],
+    ["page-map", createPageMapBridgeAdapter(review.store.target) as BundledBridgeAdapter],
   ]);
 }

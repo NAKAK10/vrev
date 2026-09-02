@@ -1,0 +1,44 @@
+{
+  "schema_version": 4,
+  "id": "page-map",
+  "version": "1.3.0",
+  "display": {
+    "title": "画面遷移マップ",
+    "summary": "同じ公開directory配下のHTMLを静的解析し、ページ間の遷移をグラフで俯瞰します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/index.js",
+    "contract": "./server.contract.json"
+  },
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "page-map-stage",
+        "slot": "review.stage",
+        "document": "./ui/stage.ui.json",
+        "browser_module": "./ui/page-map.js",
+        "order": 100,
+        "title": "画面遷移マップ"
+      }
+    ]
+  },
+  "requires": [
+    {
+      "capability": "review",
+      "api_version": 1,
+      "optional": false
+    }
+  ],
+  "provides": [
+    {
+      "capability": "page-map",
+      "api_version": 1
+    }
+  ]
+}

@@ -153,10 +153,26 @@ visual-review plugin run <plugin-id> <command> [args...]
 - [`plugins/custom-command/`](plugins/custom-command/README.md): shellを介さないカスタムagent command管理・実行
 - [`plugins/firebase-storage/`](plugins/firebase-storage/README.md): Firestore RESTを使うレビューJSONのpush/pull
 - [`plugins/github-issue/`](plugins/github-issue/README.md): `gh`を使うGitHub Issue provider
+- [`plugins/page-map/`](plugins/page-map/README.md): 静的HTMLの画面遷移マップ
 
 GitHub Issue作成は自動導入された`github-issue`プラグインを使います。`gh`認証は自動化せず、対象repositoryに合う利用者で事前に認証してください。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。
 
 beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`/settings/plugins`（install済みplugin）の既定です。one-beta rollback用に`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`と既存HTTP/CLI・manifest schema v1–v3互換を保持しています。新規integrationはschema v4を使用してください。desktop/tablet/mobileのbrowser acceptanceとlegacy route切替をrelease gateで確認済みです。
+
+### 画面遷移マップ
+
+同梱`page-map`プラグインは、同じ公開directory配下のHTMLを静的解析し、ページ間の遷移をグラフで俯瞰します。レビュー画面のstage切り替えmenuから「画面遷移マップ」を選ぶと表示されます。ページを一切開かず、ネットワークへもアクセスしない、副作用のない静的解析です。
+
+| 対象 | 対応状況 |
+|---|---|
+| 静的HTML | 必須（対応） |
+| Vue | ベストエフォート（テンプレート内の静的な`href`/`to`属性のみ） |
+| React | ベストエフォート（JSX内の静的な文字列リテラルのみ） |
+| Next.js | 未対応（Phase 2予定） |
+| Nuxt | 未対応（Phase 2予定） |
+| 動的遷移（変数・API応答・条件分岐で決まる遷移先） | 非対応 |
+
+詳細は[`plugins/page-map/README.md`](plugins/page-map/README.md)を参照してください。
 
 ## データ保存
 

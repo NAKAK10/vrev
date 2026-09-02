@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "name": "page-map.get",
+      "permission": "review.read",
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "generated_at": { "type": "string", "maxLength": 64 },
+          "scan_root": { "type": "string", "maxLength": 1024 },
+          "entry_path": { "type": "string", "maxLength": 1024 },
+          "truncated": { "type": "boolean" },
+          "warnings": { "type": "array", "items": { "type": "string", "maxLength": 300 }, "maxItems": 64 },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "files": { "type": "integer", "minimum": 0 },
+              "pages": { "type": "integer", "minimum": 0 },
+              "edges": { "type": "integer", "minimum": 0 },
+              "unknown": { "type": "integer", "minimum": 0 },
+              "duration_ms": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["files", "pages", "edges", "unknown", "duration_ms"],
+            "additionalProperties": false
+          },
+          "pages": {
+            "type": "array",
+            "maxItems": 2000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "maxLength": 1024 },
+                "title": { "type": "string", "maxLength": 300 },
+                "exists": { "type": "boolean" },
+                "reachable": { "type": "boolean" },
+                "in_count": { "type": "integer", "minimum": 0 },
+                "out_count": { "type": "integer", "minimum": 0 }
+              },
+              "required": ["path", "title", "exists", "reachable", "in_count", "out_count"],
+              "additionalProperties": false
+            }
+          },
+          "edges": {
+            "type": "array",
+            "maxItems": 8000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "string", "maxLength": 1024 },
+                "to": { "type": "string", "maxLength": 2048 },
+                "kind": { "type": "string", "maxLength": 32 },
+                "label": { "type": "string", "maxLength": 200 },
+                "line": { "type": "integer", "minimum": 0 }
+              },
+              "required": ["from", "to", "kind", "label", "line"],
+              "additionalProperties": false
+            }
+          },
+          "unknown": {
+            "type": "array",
+            "maxItems": 2000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "string", "maxLength": 1024 },
+                "kind": { "type": "string", "maxLength": 32 },
+                "line": { "type": "integer", "minimum": 0 },
+                "snippet": { "type": "string", "maxLength": 120 }
+              },
+              "required": ["from", "kind", "line", "snippet"],
+              "additionalProperties": false
+            }
+          },
+          "externals": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "maxLength": 2048 },
+                "from_count": { "type": "integer", "minimum": 0 }
+              },
+              "required": ["url", "from_count"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["generated_at", "scan_root", "entry_path", "truncated", "warnings", "stats", "pages", "edges", "unknown", "externals"],
+        "additionalProperties": false
+      },
+      "resources": ["page-map"]
+    }
+  ],
+  "commands": [
+    {
+      "name": "page-map.refresh",
+      "permission": "review.read",
+      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "output_schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "invalidates": ["page-map"]
+    }
+  ]
+}

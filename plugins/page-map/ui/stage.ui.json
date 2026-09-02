@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "resources": [
+    { "id": "page-map", "query": "page-map.get", "input": {}, "refresh": "manual" }
+  ],
+  "root": {
+    "id": "page-map-root",
+    "type": "panel",
+    "props": { "variant": { "literal": "page-map-stage" }, "aria_label": { "literal": "画面遷移マップ" } },
+    "children": [
+      { "type": "row", "props": { "variant": { "literal": "page-map-header" } }, "children": [
+        { "type": "heading", "props": { "text": { "literal": "画面遷移マップ" }, "level": { "literal": 2 } } },
+        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/pages" }, "label": { "literal": "ページ" } } },
+        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/edges" }, "label": { "literal": "遷移" } } },
+        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/unknown" }, "label": { "literal": "解析できなかった遷移" } } },
+        { "type": "button", "props": { "label": { "literal": "再解析" } }, "on": { "click": [
+          { "type": "command.execute", "command": "page-map.refresh", "input": {}, "pending": { "disable": "page-map-refresh", "deduplicate": true },
+            "on_success": [
+              { "type": "resource.refresh", "resource": "page-map" },
+              { "type": "toast.show", "variant": "success", "message": { "literal": "解析結果を更新しました" } }
+            ],
+            "on_error": [
+              { "type": "toast.show", "variant": "error", "message": { "error": "/message" } }
+            ] }
+        ] }, "id": "page-map-refresh" }
+      ] },
+      { "type": "text", "props": { "text": { "item": "" }, "tone": { "literal": "warning" } }, "repeat": { "source": { "resource": "page-map", "path": "/warnings" }, "key": { "item": "" } } },
+      { "type": "empty-state", "when": { "eq": [{ "resource": "page-map", "path": "/stats/pages" }, { "literal": 0 }] }, "props": { "title": { "literal": "解析できるページがありません" }, "message": { "literal": "対象の公開directory配下にHTMLファイルが見つかりませんでした。" } } },
+      { "id": "page-map-canvas", "type": "panel", "props": { "variant": { "literal": "page-map-canvas" }, "aria_label": { "literal": "遷移グラフ" } }, "children": [] }
+    ]
+  }
+}

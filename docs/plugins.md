@@ -80,7 +80,7 @@ visual-review plugin run my-plugin hello world
 
 ## Installation and registry
 
-`visual-review serve`は、公式`review` 1.1.9、`github-issue` 1.1.9、`custom-command` 1.1.9、`annotation-workflow` 1.1.9がworkspaceに存在しない場合、CLI package内へ同梱したコピーから自動installする。networkやnpm認証には依存せず、`.vreview/plugins/`がGit管理外の新環境でも初回起動時に復元できる。同じbundled sourceから導入され、registry manifestとinstall先manifestが一致してprovenanceを確認できるtrusted copyだけは、同梱版のschemaまたはSemVerが新しい場合にserver/UIをまとめてatomic upgradeする。local sourceや第三者によるsame-ID plugin、manifestが改変されたcopyは上書きしない。その他の更新は引き続き明示操作とする。
+`visual-review serve`は、公式`review` 1.1.9、`github-issue` 1.1.9、`custom-command` 1.1.9、`annotation-workflow` 1.1.9、`page-map` 1.1.9がworkspaceに存在しない場合、CLI package内へ同梱したコピーから自動installする。networkやnpm認証には依存せず、`.vreview/plugins/`がGit管理外の新環境でも初回起動時に復元できる。同じbundled sourceから導入され、registry manifestとinstall先manifestが一致してprovenanceを確認できるtrusted copyだけは、同梱版のschemaまたはSemVerが新しい場合にserver/UIをまとめてatomic upgradeする。local sourceや第三者によるsame-ID plugin、manifestが改変されたcopyは上書きしない。その他の更新は引き続き明示操作とする。
 
 ```sh
 visual-review plugin install ./plugins/example
