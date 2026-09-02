@@ -54,6 +54,9 @@ export interface PluginUiSurfaceLayoutV1 {
   stage_views: PluginUiSurfaceLayoutItemV1[];
   active_stage: string | null;
   stage_switcher_position: LayoutCornerV1;
+  /** The key of the `review.stage` contribution whose document contains a `target-stage` node, or
+   * `null` when no enabled stage hosts one. Used by the renderer to apply a `?page=` deep link. */
+  target_stage_key: string | null;
 }
 
 export interface PluginUiSurfaceV1 {
@@ -93,6 +96,12 @@ function compareByLayoutOrder(order: string[]): (left: PluginUiSurfaceContributi
     if (rightIndex >= 0) return 1;
     return compareByManifestOrder(left, right);
   };
+}
+
+/** Whether a document's node tree contains a `target-stage` node anywhere. */
+function containsTargetStage(node: PluginUiNodeV1): boolean {
+  if (node.type === "target-stage") return true;
+  return (node.children ?? []).some(containsTargetStage);
 }
 
 /** Asserts that every `slot` node in a plugin document targets an extension point the plugin itself declares. */
@@ -235,6 +244,7 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
     : (stageKeys[0] ?? null);
 
   const sidebarPresent = finalContributions.some(({ slot }) => slot === "review.sidebar");
+  const targetStageContribution = [...stageItems].sort(compareByManifestOrder).find((contribution) => containsTargetStage(contribution.document.root));
 
   return {
     schema_version: 1,
@@ -252,6 +262,7 @@ export function loadPluginUiSurface(workspace = process.cwd()): PluginUiSurfaceV
       stage_views: stageItems.map(toLayoutItem),
       active_stage: activeStage,
       stage_switcher_position: settings.stage.switcher_position,
+      target_stage_key: targetStageContribution ? contributionKey(targetStageContribution) : null,
     },
   };
 }

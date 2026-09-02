@@ -85,8 +85,9 @@ test("bundled default plugins populate the header, sidebar, and stage slots", as
 
   assert.ok(surface.layout.header_items.some(({ key }) => key === "review/review-header"));
   assert.ok(surface.layout.sidebar_items.some(({ key }) => key === "annotation-workflow/review-sidebar"));
-  assert.deepEqual(surface.layout.stage_views.map(({ key }) => key), ["review/review-stage"]);
+  assert.deepEqual(surface.layout.stage_views.map(({ key }) => key), ["review/review-stage", "page-map/page-map-stage"]);
   assert.equal(surface.layout.active_stage, "review/review-stage");
+  assert.equal(surface.layout.target_stage_key, "review/review-stage");
   assert.equal(surface.layout.stage_switcher_position, "bottom-right");
   assert.equal(typeof surface.layout.revision, "string");
   assert.ok(surface.layout.revision.length > 0);

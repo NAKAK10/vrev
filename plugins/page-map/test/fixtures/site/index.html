@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><title>トップページ</title></head>
+<body>
+<a href="about.html">概要へ</a>
+<a href="redirect.html">リダイレクトへ</a>
+<a href="https://example.com/">外部サイト</a>
+<button data-href="contact.html">問い合わせへ</button>
+<script>
+  var base = "./unresolved-";
+  var id = 1;
+  location.href = base + id;
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ plugins/
 ├── custom-command/
 ├── firebase-storage/
 ├── github-issue/
+├── page-map/
 └── review/
 ```
 

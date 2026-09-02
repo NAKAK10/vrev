@@ -159,7 +159,7 @@ async function readStdinBody(): Promise<string> {
   return body;
 }
 
-const DEFAULT_PLUGIN_IDS = ["review", "github-issue", "custom-command", "annotation-workflow"] as const;
+const DEFAULT_PLUGIN_IDS = ["review", "github-issue", "custom-command", "annotation-workflow", "page-map"] as const;
 
 export async function ensureDefaultPlugins(
   workspaceRoot: string,

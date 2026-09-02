@@ -10,7 +10,8 @@
     "dist/plugins/review",
     "dist/plugins/annotation-workflow",
     "dist/plugins/github-issue",
-    "dist/plugins/custom-command"
+    "dist/plugins/custom-command",
+    "dist/plugins/page-map"
   ],
   "bin": {
     "visual-review": "dist/src/cli.js"
@@ -31,6 +32,7 @@
     "./review": "./dist/plugins/review/server/review-capability.js",
     "./annotation-workflow": "./dist/plugins/annotation-workflow/server/index.js",
     "./github-issue": "./dist/plugins/github-issue/server/index.js",
+    "./page-map": "./dist/plugins/page-map/server/index.js",
     "./process-supervisor": "./dist/src/process-supervisor.js"
   },
   "types": "./dist/src/index.d.ts",
@@ -40,7 +42,7 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "pretest": "npm run check:secrets",
     "test": "npm run build && node --test dist/test/*.test.js && npm run test:plugins",
-    "test:plugins": "npm --prefix plugins/firebase-storage test && npm --prefix plugins/custom-command test",
+    "test:plugins": "npm --prefix plugins/firebase-storage test && npm --prefix plugins/custom-command test && npm --prefix plugins/page-map test",
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
   },
   "devDependencies": {

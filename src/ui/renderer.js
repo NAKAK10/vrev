@@ -8,6 +8,8 @@ const formDrafts = new Map();
 const dialogOpeners = new WeakMap();
 const pluginRuntimeCleanups = new Map();
 let surface;
+// A `?page=<repo-relative path>` deep link, consumed by the target-stage's first load only.
+let initialPagePath = null;
 let settingsRenderPromise = null;
 let activeToast = null;
 let deferredReviewRender = false;
@@ -641,7 +643,10 @@ function targetStage(definition, scope) {
     image.addEventListener("load", redrawMarks); image.addEventListener("pointerdown", (event) => { if (mode !== "region") return; event.preventDefault(); const rect = image.getBoundingClientRect(); start = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; image.setPointerCapture?.(event.pointerId); });
     image.addEventListener("pointerup", (event) => { if (!start) return; const rect = image.getBoundingClientRect(); const end = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; const bounds = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }; start = null; if (bounds.width * rect.width < 5 || bounds.height * rect.height < 5) return announceFocusFailure("範囲が小さすぎます。もう一度ドラッグしてください。"); commit({ kind: "region", space: "image", bounds, natural: { width: image.naturalWidth, height: image.naturalHeight }, page_path: target.entry_path }); });
   } else {
-    const frame = element("iframe"); frame.title = "レビュー対象ページ"; frame.src = target.url;
+    const frame = element("iframe"); frame.title = "レビュー対象ページ";
+    const requestedInitialPage = initialPagePath;
+    frame.src = requestedInitialPage ? targetUrlForPage(target, requestedInitialPage) : target.url;
+    if (requestedInitialPage) { initialPagePath = null; history.replaceState(null, "", location.pathname); }
     if (!target.allow_scripts) frame.setAttribute("sandbox", "allow-same-origin allow-forms");
     container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, container.__mode ?? mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
@@ -1225,6 +1230,10 @@ async function start() {
   if (location.pathname === "/settings/plugins") return renderSettings();
   if (location.pathname === "/settings") return renderGeneralSettings();
   root.dataset.page = "review";
+  const requestedPage = new URLSearchParams(location.search).get("page");
+  if (requestedPage && !requestedPage.includes("..") && !/^[a-z][a-z0-9+.-]*:/i.test(requestedPage) && !requestedPage.startsWith("//")) {
+    initialPagePath = requestedPage;
+  }
   const response = await fetch("/api/plugin-host/v1/surfaces/review"); surface = await response.json(); applyTheme(surface.theme);
   const resourceLoads = [];
   const activeStageKey = surface.layout.active_stage;
