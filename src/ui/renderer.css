@@ -487,37 +487,77 @@ a { color: inherit; }
 .vr-panel[data-variant="page-map-stage"] > .vr-row[data-variant="page-map-header"] { flex: 0 0 auto; }
 .vr-panel[data-variant="page-map-canvas"] { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 0; border: 0; }
 .vr-page-map-shell { display: flex; flex: 1 1 auto; min-height: 0; gap: var(--vr-space-3); padding: var(--vr-space-3) var(--vr-space-4); }
+
+/* Left column: page list on top, selected-page detail below. */
 .vr-page-map-side { display: flex; flex: 0 0 280px; flex-direction: column; min-width: 0; min-height: 0; gap: var(--vr-space-2); }
 .vr-page-map-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--vr-space-2); min-height: 0; overflow: auto; }
-.vr-page-map-search { flex: 0 0 auto; padding: var(--vr-space-2); border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); font: inherit; }
+.vr-page-map-search { flex: 0 0 auto; padding: var(--vr-space-2); border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); color: var(--vr-color-text); font: inherit; }
 .vr-page-map-page-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--vr-space-1); min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
 .vr-page-map-page-button { display: flex; flex-wrap: wrap; align-items: center; gap: var(--vr-space-1); width: 100%; padding: var(--vr-space-2); border: 1px solid transparent; border-radius: var(--vr-radius-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .vr-page-map-page-button:hover { background: var(--vr-color-surface-subtle); }
 .vr-page-map-page-item.is-selected .vr-page-map-page-button { border-color: var(--vr-color-accent); background: var(--vr-color-accent-soft); }
 .vr-page-map-page-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vr-page-map-counts { flex: 0 0 auto; color: var(--vr-color-text-muted); font-size: 0.8em; }
-.vr-page-map-badge { flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; font-size: 0.75em; }
+.vr-page-map-badge { flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; font-size: 0.75em; line-height: 1.5; }
 .vr-page-map-badge.is-entry { background: var(--vr-color-focus); color: #fff; }
 .vr-page-map-badge.is-unreachable { background: var(--vr-color-warning); color: #fff; }
 .vr-page-map-badge.is-missing { background: var(--vr-color-danger); color: #fff; }
-.vr-page-map-graph { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); }
-.vr-page-map-svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-.vr-page-map-fit-button { position: absolute; top: var(--vr-space-2); right: var(--vr-space-2); z-index: 2; padding: var(--vr-space-1) var(--vr-space-2); border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); box-shadow: var(--vr-shadow-sm); font-size: 0.8em; cursor: pointer; }
-.vr-page-map-node { cursor: pointer; }
-.vr-page-map-node-rect { fill: var(--vr-color-surface); stroke: var(--vr-color-border-strong); stroke-width: 1.5; }
-.vr-page-map-node.is-selected .vr-page-map-node-rect { stroke: var(--vr-color-accent); stroke-width: 2.5; }
-.vr-page-map-node.is-unreachable .vr-page-map-node-rect { stroke-dasharray: 4 3; }
-.vr-page-map-node.is-missing .vr-page-map-node-rect { fill: var(--vr-color-danger-soft); }
-.vr-page-map-node-text { font-size: 12px; fill: var(--vr-color-text); dominant-baseline: middle; }
+
+/* Canvas viewport. The camera lives on .vr-page-map-world as a single CSS transform, so nothing
+   below needs to be re-laid-out while panning or zooming. */
+.vr-page-map-graph { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); cursor: grab; touch-action: none; }
+.vr-page-map-graph.is-panning { cursor: grabbing; }
+.vr-page-map-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+.vr-page-map-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 .vr-page-map-edge { fill: none; stroke: var(--vr-color-border-strong); stroke-width: 1.25; }
-.vr-page-map-edge.is-highlighted { stroke: var(--vr-color-accent); stroke-width: 2; }
-.vr-page-map-edge-label { font-size: 11px; fill: var(--vr-color-text-muted); }
+.vr-page-map-edges.is-filtered .vr-page-map-edge { opacity: .18; }
+.vr-page-map-edges.is-filtered .vr-page-map-edge.is-highlighted { opacity: 1; stroke: var(--vr-color-accent); stroke-width: 2; }
+/* Counter-scaled so edge labels stay readable at every zoom level. */
+.vr-page-map-edge-label { font-size: calc(11px * var(--vr-page-map-inv-scale, 1)); fill: var(--vr-color-text-muted); paint-order: stroke; stroke: var(--vr-color-surface-subtle); stroke-width: calc(3px * var(--vr-page-map-inv-scale, 1)); }
+
+/* A frame is one page card. The card body (.vr-page-map-frame-preview) clips its preview, while
+   the frame element itself must NOT clip: the Figma-style name sits above the card. */
+.vr-page-map-frame { position: absolute; }
+.vr-page-map-frame:focus { outline: none; }
+.vr-page-map-frame-preview { position: relative; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); }
+.vr-page-map-frame.is-selected .vr-page-map-frame-preview { border-color: var(--vr-color-accent); box-shadow: 0 0 0 calc(2px * var(--vr-page-map-inv-scale, 1)) var(--vr-color-accent); }
+.vr-page-map-frame:focus-visible .vr-page-map-frame-preview { border-color: var(--vr-color-focus); box-shadow: 0 0 0 calc(2px * var(--vr-page-map-inv-scale, 1)) var(--vr-color-focus); }
+.vr-page-map-frame.is-unreachable .vr-page-map-frame-preview { border-style: dashed; }
+.vr-page-map-frame.is-missing .vr-page-map-frame-preview { background: var(--vr-color-danger-soft); }
+/* Rendered at 1280x800 then scaled to the 320x200 card, so the page keeps its desktop layout.
+   `pointer-events: none` keeps drag/click on the canvas: the iframe never swallows them. */
+.vr-page-map-preview-frame { width: 1280px; height: 800px; border: 0; transform: scale(.25); transform-origin: 0 0; pointer-events: none; background: #fff; }
+.vr-page-map-frame-placeholder { display: flex; flex-direction: column; justify-content: center; gap: 4px; width: 100%; height: 100%; padding: var(--vr-space-3); }
+.vr-page-map-frame-placeholder-title { overflow: hidden; color: var(--vr-color-text); font-size: 20px; font-weight: 600; line-height: 1.3; }
+.vr-page-map-frame-placeholder-counts { color: var(--vr-color-text-muted); font-size: 14px; }
+.vr-page-map-frame-placeholder-reason { color: var(--vr-color-text-muted); font-size: 13px; }
+
+/* The frame name is counter-scaled against the camera, so it keeps a constant on-screen size at
+   every zoom level - this is what keeps a zoomed-out overview readable. */
+.vr-page-map-frame-name { position: absolute; bottom: 100%; left: 0; display: flex; align-items: center; gap: var(--vr-space-1); max-width: var(--vr-page-map-name-max-width, 384px); padding-bottom: 4px; transform: scale(var(--vr-page-map-name-scale, 1)); transform-origin: 0 100%; white-space: nowrap; pointer-events: none; }
+.vr-page-map-frame-title { overflow: hidden; color: var(--vr-color-text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
+.vr-page-map-frame.is-selected .vr-page-map-frame-title { color: var(--vr-color-accent); }
+.vr-page-map-frame-open-button { padding: 0 6px; border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); color: inherit; font: inherit; font-size: 11px; line-height: 1.6; pointer-events: auto; cursor: pointer; opacity: 0; }
+.vr-page-map-frame:hover .vr-page-map-frame-open-button,
+.vr-page-map-frame:focus-within .vr-page-map-frame-open-button,
+.vr-page-map-frame.is-selected .vr-page-map-frame-open-button { opacity: 1; }
+
+/* Toolbar sits outside the world so it never scales with the camera. */
+.vr-page-map-toolbar { position: absolute; top: var(--vr-space-2); right: var(--vr-space-2); z-index: 2; display: flex; align-items: center; gap: var(--vr-space-1); padding: 4px; border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); box-shadow: var(--vr-shadow-sm); font-size: 0.8em; }
+.vr-page-map-fit-button,
+.vr-page-map-zoom-button { padding: 2px var(--vr-space-2); border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); color: inherit; font: inherit; cursor: pointer; }
+.vr-page-map-fit-button:hover,
+.vr-page-map-zoom-button:hover { background: var(--vr-color-surface-subtle); }
+.vr-page-map-zoom-readout { min-width: 3.5em; color: var(--vr-color-text-muted); text-align: center; font-variant-numeric: tabular-nums; }
+.vr-page-map-preview-toggle { display: flex; align-items: center; gap: 4px; padding-right: 4px; cursor: pointer; }
+
+/* Detail panel below the page list. */
 .vr-page-map-detail { display: flex; flex: 0 1 45%; flex-direction: column; gap: var(--vr-space-2); max-height: 45%; overflow: auto; border-top: 1px solid var(--vr-color-border); padding-top: var(--vr-space-2); }
 .vr-page-map-detail-title { margin: 0; }
 .vr-page-map-detail-path { margin: 0; color: var(--vr-color-text-muted); font-size: 0.85em; word-break: break-all; }
 .vr-page-map-detail-empty { color: var(--vr-color-text-muted); }
 .vr-page-map-detail-unknown { color: var(--vr-color-warning); }
-.vr-page-map-open-button { align-self: flex-start; padding: var(--vr-space-1) var(--vr-space-3); border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); cursor: pointer; }
+.vr-page-map-open-button { align-self: flex-start; padding: var(--vr-space-1) var(--vr-space-3); border: 1px solid var(--vr-color-border-strong); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface); color: inherit; font: inherit; cursor: pointer; }
 .vr-page-map-edge-group h4 { margin: var(--vr-space-2) 0 var(--vr-space-1); font-size: 0.9em; }
 .vr-page-map-edge-list { margin: 0; padding-left: 1.2em; font-size: 0.85em; }
 
