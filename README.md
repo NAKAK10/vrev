@@ -163,18 +163,25 @@ beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`
 
 ### 画面遷移マップ
 
-同梱`page-map`プラグインは、同じ公開directory配下のHTMLを静的解析し、ページ間の遷移をグラフで俯瞰します。レビュー画面のstage切り替えmenuから「画面遷移マップ」を選ぶと表示されます。ページを一切開かず、ネットワークへもアクセスしない、副作用のない静的解析です。
+同梱`page-map`プラグインは、対象と同じ公開directory配下のHTMLを静的解析し、ページ間の遷移をグラフで俯瞰します。レビュー画面のstage切り替えmenuから「画面遷移マップ」を選ぶと表示されます。解析中は対象ページを一切開かず、ネットワークへもアクセスしません。
+
+解析するのは公開directory配下の`.html` / `.htm`だけです。`.vue`・`.jsx`・`.tsx`・`.php`などのソースfileは読みません。
 
 | 対象 | 対応状況 |
 |---|---|
-| 静的HTML | 必須（対応） |
-| Vue | ベストエフォート（テンプレート内の静的な`href`/`to`属性のみ） |
-| React | ベストエフォート（JSX内の静的な文字列リテラルのみ） |
-| Next.js | 未対応（Phase 2予定） |
-| Nuxt | 未対応（Phase 2予定） |
-| 動的遷移（変数・API応答・条件分岐で決まる遷移先） | 非対応 |
+| 静的HTML（`.html` / `.htm`） | 対応 |
+| ビルド後の静的HTML（framework製・複数file出力） | 対応（通常の静的HTMLとして解析） |
+| SPA（1つの`index.html`＋クライアントside routing） | 非対応（HTML上に遷移先が現れないため） |
+| localhostアプリを対象にした場合（`--target http://...`） | 非対応（空の結果と警告を返す） |
+| Vue / React / Svelte / Angular のソースfile | 非対応（`.vue`・`.jsx`・`.tsx`を読まない） |
+| vue-router / React Routerのroute定義、`<router-link to>` / `<Link to>` | 非対応 |
+| Next.js / Nuxtのfile-based routing | 非対応 |
+| WordPress（PHPテーマ） | 非対応（`.php`を読まない） |
+| 動的に組み立てられる遷移先（変数・API応答・条件分岐） | 非対応（「解析できなかった遷移」として件数のみ表示） |
 
-詳細は[`plugins/page-map/README.md`](plugins/page-map/README.md)を参照してください。
+つまり現状は**出力済みの静的HTMLを対象にした機能**です。frameworkを使っていても、ビルド結果のHTMLがpage単位で公開directoryへ出力されていれば俯瞰できます。route定義やソースfileからの解析はPhase 2の予定です。
+
+抽出する遷移の種類、上限、cacheなどの詳細は[`plugins/page-map/README.md`](plugins/page-map/README.md)を参照してください。
 
 ## データ保存
 

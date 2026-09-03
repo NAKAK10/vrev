@@ -4,16 +4,24 @@
 
 ## サポート状況
 
+解析対象は、対象fileと同じ公開directory配下の`.html` / `.htm`だけです。`.vue`・`.jsx`・`.tsx`・`.php`・`.js`などのソースfileは開きません（`.html`内の`<script>`は解析しますが、それはHTMLの一部としてです）。
+
 | 対象 | 対応状況 |
 |---|---|
-| 静的HTML | 必須（対応） |
-| Vue | ベストエフォート（テンプレート内の静的な`href`/`to`属性のみ） |
-| React | ベストエフォート（JSX内の静的な文字列リテラルのみ） |
-| Next.js | 未対応（Phase 2予定） |
-| Nuxt | 未対応（Phase 2予定） |
-| 動的遷移（変数・API応答・条件分岐で決まる遷移先） | 非対応 |
+| 静的HTML（`.html` / `.htm`） | 対応 |
+| ビルド後の静的HTML（framework製・page単位で複数file出力） | 対応（通常の静的HTMLとして解析） |
+| SPA（1つの`index.html`＋クライアントside routing） | 非対応（遷移先がHTML上に現れないため、ページは1件しか出ません） |
+| localhostアプリを対象にした起動（`--target http://...`） | 非対応（空の結果と「静的HTML以外の対象は未対応です」の警告を返す） |
+| 画像レビュー対象 | 非対応（同上の警告を返す） |
+| Vue / React / Svelte / Angular のソースfile | 非対応（`.vue`・`.jsx`・`.tsx`を読まない） |
+| vue-router / React Routerのroute定義、`<router-link to>` / `<Link to>` | 非対応 |
+| Next.js / Nuxtのfile-based routing | 非対応 |
+| WordPress（PHPテーマ・テンプレート） | 非対応（`.php`を読まない） |
+| 動的に組み立てられる遷移先（変数・API応答・条件分岐） | 非対応（「解析できなかった遷移」として件数のみ表示） |
 
-Phase 1（本リリース）は静的HTMLのみを対象とします。フレームワーク製の出力に対しても、ビルド後の静的HTMLとして解析できる範囲でベストエフォートに動作しますが、保証はしません。
+Phase 1（本リリース）は**出力済みの静的HTML**を対象にした機能です。frameworkを使っていても、ビルド結果がpage単位のHTMLとして公開directoryへ出力されていれば、通常の静的HTMLとして俯瞰できます。逆にビルド結果が1つの`index.html`だけのSPAでは、HTML上に遷移先が存在しないため遷移を抽出できません。
+
+route定義やfile-based routingの解析はPhase 2の予定です。現時点で「未対応」と書いてあるものは推測で補完せず、解析できなかった遷移は件数として明示します。
 
 ## 操作
 
