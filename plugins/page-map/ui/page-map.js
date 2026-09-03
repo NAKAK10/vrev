@@ -26,6 +26,9 @@ const MAX_LOADED_PREVIEWS = 16;
 const PREVIEW_DISABLE_PAGE_COUNT = 120;
 const PREVIEW_STORAGE_KEY = "visual-review.page-map.preview";
 
+// Pointer travel (px) past which a press-and-drag counts as a pan rather than a click.
+const PAN_CLICK_THRESHOLD = 4;
+
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 4;
 
@@ -230,6 +233,9 @@ export async function mount({ root, pluginId, toast }) {
   let edgePaths = [];
   let pendingFrame = false;
   let panState = null;
+  // Set once a pan passes PAN_CLICK_THRESHOLD, so the click that ends the drag does not also
+  // select whichever frame the drag happened to start on.
+  let panDragged = false;
 
   const shell = el("div", "vr-page-map-shell");
   const sideColumn = el("div", "vr-page-map-side");
@@ -653,6 +659,9 @@ export async function mount({ root, pluginId, toast }) {
   }
   function onPointerDown(event) {
     if (event.button !== 0) return;
+    // Cleared on every press, including one on a control, so a drag that ended without a click
+    // (pointer released outside the window) can never swallow the next genuine click.
+    panDragged = false;
     // Controls layered over the canvas (the toolbar, a frame's 開く button) must keep their own
     // click: starting a pan here would capture the pointer on the viewport and the browser would
     // then deliver the click to the capture target instead of the control.
@@ -663,7 +672,10 @@ export async function mount({ root, pluginId, toast }) {
   }
   function onPointerMove(event) {
     if (!panState) return;
-    camera = { ...camera, tx: panState.originTx + (event.clientX - panState.startX), ty: panState.originTy + (event.clientY - panState.startY) };
+    const dx = event.clientX - panState.startX;
+    const dy = event.clientY - panState.startY;
+    if (!panDragged && Math.hypot(dx, dy) > PAN_CLICK_THRESHOLD) panDragged = true;
+    camera = { ...camera, tx: panState.originTx + dx, ty: panState.originTy + dy };
     userMovedCamera = true;
     scheduleFrame();
   }
@@ -672,6 +684,16 @@ export async function mount({ root, pluginId, toast }) {
     graphColumn.classList.remove("is-panning");
   }
 
+  /** Swallows the click that terminates a pan, so dragging across the board never changes the
+   *  selection. A plain click (no movement past the threshold) is left alone. */
+  function onClickCapture(event) {
+    if (!panDragged) return;
+    panDragged = false;
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  graphColumn.addEventListener("click", onClickCapture, true);
   graphColumn.addEventListener("wheel", onWheel, { passive: false });
   graphColumn.addEventListener("pointerdown", onPointerDown);
   graphColumn.addEventListener("pointermove", onPointerMove);
@@ -696,6 +718,7 @@ export async function mount({ root, pluginId, toast }) {
 
   return () => {
     resizeObserver.disconnect();
+    graphColumn.removeEventListener("click", onClickCapture, true);
     graphColumn.removeEventListener("wheel", onWheel);
     graphColumn.removeEventListener("pointerdown", onPointerDown);
     graphColumn.removeEventListener("pointermove", onPointerMove);

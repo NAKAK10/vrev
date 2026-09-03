@@ -505,7 +505,8 @@ a { color: inherit; }
 
 /* Canvas viewport. The camera lives on .vr-page-map-world as a single CSS transform, so nothing
    below needs to be re-laid-out while panning or zooming. */
-.vr-page-map-graph { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); cursor: grab; touch-action: none; }
+/* `user-select: none` keeps a pan from painting a text selection across every card it crosses. */
+.vr-page-map-graph { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vr-color-border); border-radius: var(--vr-radius-sm); background: var(--vr-color-surface-subtle); cursor: grab; touch-action: none; user-select: none; }
 .vr-page-map-graph.is-panning { cursor: grabbing; }
 .vr-page-map-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
 .vr-page-map-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
