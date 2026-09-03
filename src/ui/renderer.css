@@ -484,7 +484,15 @@ a { color: inherit; }
    which gives it a definite pixel height equal to the stage host - percentages/flex on its
    descendants resolve against that, so the chain below never needs to grow past the stage. */
 .vr-panel[data-variant="page-map-stage"] { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.vr-panel[data-variant="page-map-stage"] > .vr-row[data-variant="page-map-header"] { flex: 0 0 auto; }
+/* Compact stage header: the default h2/p rhythm makes this row ~76px tall and flush to the left
+   edge. Flatten the type scale, drop the block margins, and give it the shell's own gutter plus a
+   hairline so the canvas below reads as the primary surface. */
+.vr-panel[data-variant="page-map-stage"] > .vr-row[data-variant="page-map-header"] { flex: 0 0 auto; align-items: baseline; gap: var(--vr-space-3); min-height: 0; padding: 6px var(--vr-space-4); border-bottom: 1px solid var(--vr-color-border); }
+.vr-row[data-variant="page-map-header"] > .vr-heading { margin: 0; font-size: 0.95rem; font-weight: 650; letter-spacing: .01em; }
+.vr-row[data-variant="page-map-header"] > .vr-count { margin: 0; color: var(--vr-color-text-muted); font-size: 0.8rem; white-space: nowrap; }
+/* Push the action to the far end so the counts stay grouped with the title. */
+/* Matches the compact review-toolbar controls (34px) rather than the 40px default action size. */
+.vr-row[data-variant="page-map-header"] > .vr-button { margin-left: auto; align-self: center; min-height: 34px; padding: 0 var(--vr-space-3); font-size: 0.8rem; }
 .vr-panel[data-variant="page-map-canvas"] { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 0; border: 0; }
 .vr-page-map-shell { display: flex; flex: 1 1 auto; min-height: 0; gap: var(--vr-space-3); padding: var(--vr-space-3) var(--vr-space-4); }
 
