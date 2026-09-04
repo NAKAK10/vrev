@@ -2,7 +2,7 @@
   "name": "@vrev/plugin-sdk",
   "version": "1.3.1",
   "description": "Stable plugin contracts and TypeScript types for Vrev",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "files": [
     "README.md",

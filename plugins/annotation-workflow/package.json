@@ -2,7 +2,7 @@
   "name": "@vrev/annotation-workflow",
   "version": "1.3.2",
   "description": "Default annotation post-save workflow policy for Vrev",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "files": [
     "README.md",

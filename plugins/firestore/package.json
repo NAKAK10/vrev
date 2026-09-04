@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Firestore WorkspaceStorageProviderV1 backend for Vrev, one document per storage key",
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=20"
   },

@@ -2,7 +2,7 @@
   "name": "@vrev/ai",
   "version": "1.0.1",
   "description": "Reusable AI capability and integration-method facade for Vrev",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "files": [
     "README.md",

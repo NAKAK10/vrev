@@ -22,11 +22,14 @@ test("the agreed package set targets public npm and feature packages expose pack
   for (const [directory, expectedName] of packages) {
     const packageJson = JSON.parse(readFileSync(path.join(root, directory, "package.json"), "utf8")) as {
       name: string;
+      license: string;
       publishConfig?: { access?: string; registry?: string };
       vrev?: { apiVersion?: number; manifest?: string };
       dependencies?: Record<string, string>;
     };
     assert.equal(packageJson.name, expectedName);
+    assert.equal(packageJson.license, "MIT");
+    assert.equal(readFileSync(path.join(root, directory, "LICENSE"), "utf8"), readFileSync(path.join(root, "LICENSE"), "utf8"));
     assert.deepEqual(packageJson.publishConfig, { access: "public", registry: "https://registry.npmjs.org" });
     if (directory.startsWith("plugins/")) {
       assert.deepEqual(packageJson.vrev, { apiVersion: 1, manifest: "./vrev.plugin.json" });

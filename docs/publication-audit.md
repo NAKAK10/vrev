@@ -16,9 +16,9 @@ These are automated checks and targeted review, not proof that no sensitive info
 ## Decisions required before public exposure
 
 - The GitHub repository is currently private. npm publication and GitHub visibility are separate actions; this audit does not change either.
-- Commit metadata includes two distinct non-noreply email identities. Confirm those identities may be public. Changing future Git author configuration will not remove existing metadata. Do not rewrite or force-push history without explicit approval.
+- Historical commit metadata includes two old non-noreply email identities. The repository-local Git configuration now uses `nakashima@fuku60.com` for new commits. This does not remove existing metadata. Rewriting and force-pushing historical branches/tags still requires explicit approval.
 - Package metadata and documentation intentionally identify the GitHub owner and repository. npm tarballs expose this identity even if GitHub remains private.
-- The current license is `UNLICENSED`. Public distribution does not automatically grant an open-source license; choose a license separately if open-source reuse is intended.
+- Following the owner's request, the current source and all eight packages use the MIT license. Each package includes the same LICENSE notice. Previously created release tags retain their original license metadata until a new release is created.
 - Private-network URLs in examples/tests are functional fixtures, not credentials. Review them if they were copied from a real environment.
 - First publication still requires npm ownership/publish access for the package names and scope; see [releasing.md](releasing.md).
 
