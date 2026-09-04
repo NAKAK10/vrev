@@ -7,6 +7,7 @@ import { createWorkflowRuntimeSnapshot, type WorkflowRuntimeSnapshot } from "./r
 import type { AiCapabilityV1, EnqueueJobsInput, ReviewCapabilityV1, ReviewJob, ReviewJobState, WorkflowAnnotation } from "./workflow-types.js";
 
 const ANNOTATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const MAX_ERROR_DETAIL_BYTES = 8 * 1024;
 
 function now(): string { return new Date().toISOString(); }
 
@@ -182,11 +183,20 @@ export class JobManager {
     await Promise.allSettled(batches.map(({ snapshot }) => snapshot.cleanup()));
   }
 
-  private errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private errorMessage(error: unknown): string {
+    const text = (error instanceof Error ? error.message : String(error))
+      .replace(/\b(Bearer)\s+[^\s]+/gi, "$1 [REDACTED]")
+      .replace(/([?&](?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)=)[^&\s]+/gi, "$1[REDACTED]")
+      .replace(/\b((?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+      .replace(/:\/\/[^\s/@:]+:[^\s/@]+@/g, "://[REDACTED]@");
+    const bytes = Buffer.from(text, "utf8");
+    return (bytes.length <= MAX_ERROR_DETAIL_BYTES ? text : bytes.subarray(bytes.length - MAX_ERROR_DETAIL_BYTES).toString("utf8")).trim();
+  }
   private failureDescription(summary: string): string {
     if (summary.includes("postcondition not met")) return "AIコマンドは終了しましたが、修正完了メッセージまたは状態更新を確認できませんでした。";
     if (summary.includes("timed out")) return "AI処理がタイムアウトしました。";
     if (summary.includes("output exceeded")) return "AIコマンドの出力上限を超えました。";
+    if (summary.includes("reported failure")) return "AIコマンドが失敗を報告しました。";
     if (summary.includes("could not start") || summary.includes("spawn")) return "AIコマンドを起動できませんでした。";
     if (summary.includes("source changed")) return "AI開始前に対象ページが更新されたため、安全のため処理を停止しました。";
     if (summary.includes("page unavailable")) return "対象ページを確認できなかったため、AI修正を完了できませんでした。";
@@ -201,7 +211,7 @@ export class JobManager {
       const active = await this.reviewStore.loadActive();
       const annotation = active.annotations.find(({ id }) => id === annotationId);
       if (!annotation || !["open", "in_progress"].includes(annotation.status)) return;
-      await this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}` });
+      await this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}\n\nエラー詳細:\n${summary}` });
       await this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
     } catch { /* annotation already changed or review unavailable */ }
   }
@@ -338,8 +348,8 @@ export class JobManager {
     let runtimeSnapshot: WorkflowRuntimeSnapshot;
     try {
       runtimeSnapshot = await createWorkflowRuntimeSnapshot(this.reviewStore, claimed.map(({ annotation_id }) => annotation_id), review);
-    } catch {
-      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
+    } catch (error) {
+      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error", errorMessage: this.errorMessage(error) }, claimed.map(({ id }) => id), checkpoints);
       return;
     }
     if (this.stopped || generation !== this.lifecycleGeneration) {
@@ -366,8 +376,9 @@ export class JobManager {
           cancel: () => invocation.cancel(),
           result: invocation.result.then((result) => ({
             exitCode: result.exit_code,
-            reason: result.status === "completed" ? "exit" : result.status === "failed" ? "spawn-error" : result.status,
+            reason: result.status === "completed" ? "exit" : result.status === "failed" ? result.exit_code !== null && result.exit_code !== 0 ? "exit" : "spawn-error" : result.status,
             output: result.output,
+            ...("message" in result && typeof result.message === "string" ? { errorMessage: result.message } : {}),
           })),
         };
       } else {
@@ -382,11 +393,11 @@ export class JobManager {
       }
     } catch (error) {
       await runtimeSnapshot.cleanup();
-      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
+      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error", errorMessage: this.errorMessage(error) }, claimed.map(({ id }) => id), checkpoints);
       return;
     }
     this.running.set(batch.id, { command, jobIds: claimed.map(({ id }) => id), checkpoints, snapshot: runtimeSnapshot });
-    void command.result.then((result) => this.finishBatch(batch.id, result, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot), () => this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot));
+    void command.result.then((result) => this.finishBatch(batch.id, result, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot), (error) => this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error", errorMessage: this.errorMessage(error) }, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot));
   }
 
   private async finishBeforeLaunch(id: string, stateValue: "failed" | "skipped", summary: string, timestamp: string): Promise<void> {
@@ -442,7 +453,8 @@ export class JobManager {
         if (result.reason === "cancelled") { job.state = "cancelled"; job.summary = "cancelled: batch coordinator stopped"; continue; }
         if (result.reason !== "exit" || result.exitCode !== 0) {
           job.state = "failed";
-          job.summary = result.reason === "timeout" ? "failed: coordinator timed out" : result.reason === "output-limit" ? "failed: coordinator output exceeded limit" : result.reason === "spawn-error" ? "failed: coordinator could not start" : `failed: coordinator exit ${result.exitCode ?? "unknown"}`;
+          job.summary = result.reason === "timeout" ? "failed: coordinator timed out" : result.reason === "output-limit" ? "failed: coordinator output exceeded limit" : result.reason === "spawn-error" ? result.exitCode === null ? "failed: coordinator could not start" : "failed: coordinator reported failure" : `failed: coordinator exit ${result.exitCode ?? "unknown"}`;
+          if (typeof result.errorMessage === "string" && result.errorMessage.trim()) job.summary += `\n${this.errorMessage(result.errorMessage)}`;
           continue;
         }
         try {

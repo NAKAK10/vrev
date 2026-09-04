@@ -30,7 +30,7 @@ import { acquireServerLease, type ServerLease } from "./server-lease.js";
 import { transferWorkspaceStorage, type StorageTransferResult } from "./storage-transfer.js";
 import type { WorkspaceStorageProviderV1 } from "./storage-provider.js";
 import type { AddMessageInput, CreateAnnotationInput, SetStatusInput } from "./types.js";
-import { loadWorkspaceSettings } from "./workspace-settings.js";
+import { loadWorkspaceSettings, updateWorkspaceUiSettings, workspaceSettingsRevision } from "./workspace-settings.js";
 
 export const MAX_REQUEST_BODY = 1024 * 1024;
 export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
@@ -118,7 +118,6 @@ export interface VrevServerOptions {
   projectRoot: string;
   projectDirectory?: string;
   target: string;
-  allowScripts?: boolean;
   allowAiJobsWithScripts?: boolean;
   jobManager?: JobManagerOptions;
   issueCreator?: (draft: GitHubIssueDraft) => Promise<PluginIssueResult>;
@@ -732,7 +731,8 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
   const storagePreflightTimeoutMs = options.storagePreflightTimeoutMs ?? DEFAULT_STORAGE_PREFLIGHT_TIMEOUT_MS;
   const uiRoot = defaultUiRoot();
   const settingsUiRoot = pluginSettingsUiRoot();
-  const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management !== false;
+  const initialWorkspaceSettings = loadWorkspaceSettings(store.target.projectRoot);
+  const pluginManagementVisible = initialWorkspaceSettings.ui?.plugin_management !== false;
   for (const name of ["index.html", "renderer.html", "renderer.css", "renderer.js", "reviewer.css", "reviewer.js", "jobs.js"]) {
     if (!existsSync(path.join(uiRoot, name))) {
       throw new Error(`built UI asset missing: ${path.join(uiRoot, name)}; run npm run build first`);
@@ -743,9 +743,10 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
   }
   const lease = acquireServerLease(store.path);
   const publicTarget = store.target.urlMode === "public";
-  const allowScripts = !publicTarget && (options.allowScripts === true || store.target.liveUrl !== undefined);
-  const aiJobsEnabled = !allowScripts || options.allowAiJobsWithScripts === true;
-  const bundledBridgeCatalog = createBundledBridgeCatalog({
+  let allowScripts = !publicTarget && initialWorkspaceSettings.ui?.allow_scripts !== false;
+  const allowAiJobsWithScripts = options.allowAiJobsWithScripts !== false;
+  let aiJobsEnabled = !allowScripts || allowAiJobsWithScripts;
+  const createBundledBridges = () => createBundledBridgeCatalog({
     review: reviewCapability,
     workflowManager: jobManager,
     ai,
@@ -754,6 +755,7 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
     aiJobsEnabled,
     pluginManagementVisible,
   });
+  let bundledBridgeCatalog = createBundledBridges();
   const createPackagePluginHost = () => createPluginHostRuntime({
     workspaceRoot: store.target.projectRoot,
     workspaceId: store.target.projectRoot,
@@ -875,6 +877,30 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
         if (request.method === "GET" && pathname === "/api/settings/layout") {
           const settings = readLayoutSettings(store.target.projectRoot);
           return sendJson(response, 200, { revision: layoutSettingsRevision(settings), settings, features: { plugin_management: pluginManagementVisible } });
+        }
+        if (request.method === "GET" && pathname === "/api/settings/target") {
+          const settings = loadWorkspaceSettings(store.target.projectRoot);
+          return sendJson(response, 200, {
+            revision: workspaceSettingsRevision(settings),
+            settings: { allow_scripts: !publicTarget && settings.ui?.allow_scripts !== false },
+            restricted: publicTarget,
+          });
+        }
+        if (request.method === "PUT" && pathname === "/api/settings/target") {
+          if (publicTarget) throw new HttpError(403, "target scripts are not available for public targets");
+          const payload = await readJson(request);
+          if (typeof payload.revision !== "string" || typeof payload.allow_scripts !== "boolean") throw new HttpError(400, "workspace UI settings update is invalid");
+          try {
+            const updated = updateWorkspaceUiSettings({ revision: payload.revision, allow_scripts: payload.allow_scripts }, store.target.projectRoot);
+            allowScripts = updated.settings.ui?.allow_scripts !== false;
+            aiJobsEnabled = !allowScripts || allowAiJobsWithScripts;
+            bundledBridgeCatalog = createBundledBridges();
+            if (aiJobsEnabled && pluginEnabled("annotation-workflow", store.target.projectRoot)) void jobManager.start().catch(() => undefined);
+            return sendJson(response, 200, { revision: updated.revision, settings: { allow_scripts: allowScripts }, restricted: false });
+          } catch (error) {
+            if (error instanceof Error && error.message === "workspace settings revision conflict") throw new HttpError(409, error.message);
+            throw error;
+          }
         }
         if (request.method === "PUT" && pathname === "/api/settings/layout") {
           const payload = await readJson(request);

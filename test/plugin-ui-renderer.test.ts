@@ -162,6 +162,28 @@ test("safe-markdown renders fenced code with a bounded language label and access
   assert.equal(child(pre, 0).textContent, "printf '<safe>'");
   assert.equal(child(rendered, 2).textContent, "after");
 
+  const rich = render("Use `code`, ``a ` b``, **bold**, *italic*, ~~old~~ and [docs](https://example.com). ");
+  assert.deepEqual(child(rich, 0).children.filter((node) => node.tagName !== "span").map((node) => node.tagName), ["code", "code", "strong", "em", "del", "a"]);
+  const table = child(child(render("| Name | Value |\n| :--- | ---: |\n| **one** | `two` |"), 0), 0);
+  assert.equal(table.tagName, "table");
+  assert.equal(child(child(child(table, 0), 0), 1).attributes.get("data-align"), "right");
+  assert.equal(child(child(child(child(table, 1), 0), 0), 0).tagName, "strong");
+  const list = child(render("3. first\n   - nested\n4. second"), 0);
+  assert.equal(list.tagName, "ol");
+  assert.equal(list.attributes.get("start"), "3");
+  assert.equal(list.children.length, 2);
+  assert.equal(child(child(list, 0), 1).tagName, "ul");
+  const tasks = child(render("- [x] done\n- [ ] pending"), 0);
+  assert.equal(child(child(tasks, 0), 0).attributes.get("checked"), "");
+  assert.equal(child(child(tasks, 1), 0).attributes.has("checked"), false);
+  const quote = child(render("> **quoted**\n>\n> - item"), 0);
+  assert.equal(quote.tagName, "blockquote");
+  assert.equal(child(quote, 1).tagName, "ul");
+  assert.equal(child(render("---"), 0).tagName, "hr");
+  assert.equal(child(render("<script>alert(1)</script>"), 0).textContent, "<script>alert(1)</script>");
+  assert.equal(child(render("[bad](javascript:alert)"), 0).children.some((node) => node.tagName === "a"), false);
+  assert.equal(child(render("one\ntwo\n\nthree"), 0).textContent, "one\ntwo");
+
   const unlabelled = child(render(`\`\`\`${"x".repeat(33)}\ncode\n\`\`\``), 0);
   assert.equal(unlabelled.children.length, 1, "unbounded fence info must not become a visible label");
   assert.equal(child(unlabelled, 0).attributes.get("role"), "region");
@@ -303,8 +325,13 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.doesNotMatch(css, /workflow-expandable|workflow-expanded|vr-line-clamp/);
   assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
   assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
-  assert.match(source, /dialog\[open\] \.vr-dialog-body/);
-  assert.match(source, /dialogBody\.prepend\(region\)/);
+  assert.match(source, /const host = dialog \|\| document\.body/);
+  assert.match(source, /region\.setAttribute\("popover", "manual"\)/);
+  assert.match(source, /region\.showPopover\(\)/);
+  assert.match(source, /dialog\.addEventListener\("close", \(\) => queueMicrotask\(paintToast\)/);
+  assert.doesNotMatch(source, /dialogBody\.prepend\(region\)/);
+  assert.match(css, /#vr-toast-layer\s*\{[^}]*inset: 18px 18px auto auto;[^}]*margin: 0;/s);
+  assert.doesNotMatch(css, /\.vr-dialog-body > \.toast-region/);
   assert.match(source, /requestAnimationFrame\(paintToast\)/);
   assert.match(source, /variant === "info" \? 7000 : 12000/);
   assert.match(source, /let activeToast = null/);
@@ -641,6 +668,9 @@ test("general settings describes and controls header and sidebar order in their 
   assert.match(source, /settingsPage\?\.setAttribute\("aria-busy", "true"\)/);
   assert.match(source, /for \(const control of controls\) control\.disabled = true/);
   assert.match(source, /renderGeneralSettings\(reorderResult \? \{ \.\.\.reorderResult, message: "" \} : null\)/);
+  assert.match(source, /fetch\("\/api\/settings\/target"/);
+  assert.match(source, /JavaScriptを有効にする/);
+  assert.match(source, /targetSettingsPayload\?\.restricted === true/);
   assert.match(css, /\.vr-settings-card > \.vr-link\.vr-button \{ text-decoration: none; \}/);
 });
 

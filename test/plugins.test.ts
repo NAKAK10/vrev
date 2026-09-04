@@ -412,9 +412,9 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 
   restoreBundledPlugin(bundledRoot, "review");
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), [`review@${bundledVersion}`]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), [`review@${bundledPluginVersion("review")}`]);
   assert.equal(readFileSync(path.join(root, ".vrev/plugins/review/ui/stage.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/stage.ui.json"), "utf8"));
-  assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, bundledVersion);
+  assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, bundledPluginVersion("review"));
 });
 
 test("preserves a local same-ID install instead of treating it as a bundled default", async () => {

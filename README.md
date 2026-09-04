@@ -92,13 +92,7 @@ vrev serve --target https://staging.example.com/products
 
 ## JavaScriptを含むHTML
 
-static HTMLでは対象JavaScriptを既定で無効化します。信頼できる対象でのみ有効化してください。
-
-```bash
-vrev serve \
-  --target .code/htmls/example/index.html \
-  --allow-scripts
-```
+ローカル対象のJavaScriptは既定で有効です。無効化する場合は左上の「設定」から「対象のJavaScript」をオフにしてください。この設定はworkspaceの`.vrev/settings.json`へ保存されます。公開HTTPS URLでは設定にかかわらず常にJavaScriptを無効化します。
 
 ## 操作
 

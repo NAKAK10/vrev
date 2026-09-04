@@ -88,9 +88,9 @@ server restart時もactive jobのない孤立した`in_progress`を`open`へ回�
 review保存先、schema v2、schema 1 migration、status/event規則は既存review dataと互換に保つ。
 同じreview directoryを複数serverが同時所有しないよう`.server-lease.json`で起動を排他する。
 
-`--allow-scripts`は信頼済みlocal prototype専用である。AI一括修正は通常運用を優先してCLI既定で有効とする。
+local targetのscriptは既定で有効とし、workspaceの設定画面から無効化する。設定値は`.vrev/settings.json`の`ui.allow_scripts`へ保存する。AI一括修正は通常運用を優先して既定で有効とする。
 対象scriptを許可した状態でもAI修正を止めたい場合は、`--no-ai-jobs-with-scripts`で明示的に無効化できる。loopback/private-network proxyは`/live/` baseを注入し、JavaScript全体の文字列置換ではなくmodule import・network URL・location bridgeだけを変換する。これによりSPA route文字列や正規表現を壊さず、root-relative assetは未知route fallbackでupstreamへ転送する。loopback targetは信頼済みappとして外部style・font・API・WebSocketを許可するが、public targetの厳格なCSPは緩和しない。
-public targetでは`--allow-scripts`を受理せず、対象scriptからlocal APIやAI processへ到達する経路を作らない。
+public targetでは設定値にかかわらずscriptを常に無効化し、対象scriptからlocal APIやAI processへ到達する経路を作らない。
 
 ## Coordinator sessions are CLI-owned
 

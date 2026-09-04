@@ -48,7 +48,7 @@ export interface CreateAiCapabilityOptions {
     list(context: { workspaceRoot: string }): Promise<readonly unknown[]> | readonly unknown[];
     resolve(methodId: string, context: { workspaceRoot: string; prompt: string; options?: Readonly<Record<string, string | number | boolean | null>> }): Promise<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }> | { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv };
   };
-  processSupervisor: { run(spec: { command: string; args: readonly string[]; cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number; stdoutLimit?: number }): { result: Promise<{ exitCode: number | null; reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error"; stdout: string }>; cancel(): void } };
+  processSupervisor: { run(spec: { command: string; args: readonly string[]; cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number; stdoutLimit?: number }): { result: Promise<{ exitCode: number | null; reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error"; stdout: string; errorMessage?: string }>; cancel(): void } };
   integrationRegistry?: AiIntegrationRegistryV1;
 }
 export declare function createAiCapability(options: CreateAiCapabilityOptions): AiRuntimeV1;

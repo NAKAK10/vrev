@@ -45,6 +45,20 @@ test("AI resolves and supervises an opaque method with bounded output", async ()
   assert.deepEqual(resolutions[0], { methodId: "claude", context: { workspaceRoot: "/workspace", prompt: "draft", options: { operation: "test", profile: "text-only" } } });
 });
 
+test("AI preserves bounded process diagnostics and classifies a nonzero exit as an exit failure", async () => {
+  const secret = "must-not-leak";
+  const detail = `${"x".repeat(9000)}\nAPI_KEY=${secret}\nmodel crashed`;
+  const { capability } = fixture({ exitCode: 7, reason: "exit", stdout: "protocol output", errorMessage: detail });
+  const result = await capability.invoke({ method_id: "claude", mode: "workspace-write", prompt: "fix" }).result;
+  assert.equal(result.status, "failed");
+  assert.equal(result.exit_code, 7);
+  assert.equal(result.output, "protocol output");
+  assert.match(result.message, /AI invocation failed: exit|model crashed/);
+  assert.match(result.message, /model crashed/);
+  assert.doesNotMatch(result.message, new RegExp(secret));
+  assert.ok(Buffer.byteLength(result.message, "utf8") <= 8192);
+});
+
 test("AI supports namespaced API, SDK, and remote integration providers", async () => {
   const integrationRegistry = createAiIntegrationRegistry();
   let received;
@@ -66,6 +80,49 @@ test("AI supports namespaced API, SDK, and remote integration providers", async 
   assert.equal(received.methodId, "draft");
   assert.equal(received.request.workspaceRoot, "/workspace");
   assert.equal(received.request.signal instanceof AbortSignal, true);
+});
+
+test("AI preserves delegated failure messages and nonzero exit classification", async () => {
+  const integrationRegistry = createAiIntegrationRegistry();
+  integrationRegistry.register("cloud", {
+    list: () => [{ method_id: "draft", name: "Cloud Draft", method_kind: "api", modes: ["text-only"] }],
+    invoke: () => ({ cancel() {}, result: Promise.resolve({ status: "failed", output: "partial", exit_code: 23, message: "remote model rejected the request", retryable: false }) }),
+  });
+  const capability = createAiCapability({
+    workspaceRoot: "/workspace",
+    runnerRegistry: { list: () => [], resolve: () => { throw new Error("unused"); } },
+    processSupervisor: { run: () => { throw new Error("unused"); } },
+    integrationRegistry,
+  });
+  const result = await capability.invoke({ method_id: "cloud:draft", mode: "text-only", prompt: "draft" }).result;
+  assert.equal(result.status, "failed");
+  assert.equal(result.exit_code, 23);
+  assert.equal(result.output, "partial");
+  assert.match(result.message, /AI invocation failed: exit/);
+  assert.match(result.message, /remote model rejected the request/);
+});
+
+test("AI turns integration invoke throws and result rejections into diagnostic failures", async () => {
+  for (const [providerId, invoke, expected] of [
+    ["throwing", () => { throw new Error("provider invoke exploded"); }, /provider invoke exploded/],
+    ["rejecting", () => ({ cancel() {}, result: Promise.reject(new Error("provider result disconnected")) }), /provider result disconnected/],
+  ]) {
+    const integrationRegistry = createAiIntegrationRegistry();
+    integrationRegistry.register(providerId, {
+      list: () => [{ method_id: "method", name: providerId, method_kind: "api", modes: ["text-only"] }],
+      invoke,
+    });
+    const capability = createAiCapability({
+      workspaceRoot: "/workspace",
+      runnerRegistry: { list: () => [], resolve: () => { throw new Error("unused"); } },
+      processSupervisor: { run: () => { throw new Error("unused"); } },
+      integrationRegistry,
+    });
+    const result = await capability.invoke({ method_id: `${providerId}:method`, mode: "text-only", prompt: "draft" }).result;
+    assert.equal(result.status, "failed");
+    assert.equal(result.exit_code, null);
+    assert.match(result.message, expected);
+  }
 });
 
 test("AI falls back to another capable method when the configured default cannot serve the requested mode", async () => {

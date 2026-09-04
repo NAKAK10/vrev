@@ -108,6 +108,71 @@ test("annotation workflow delegates AI selection to the AI package", async () =>
   await manager.close();
 });
 
+test("failed AI results keep their message, nonzero exit classification, and error detail on every annotation", async () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+  await annotate(store, ".code/htmls/pages/a.html", "first");
+  await annotate(store, ".code/htmls/pages/b.html", "second");
+  const ai = {
+    apiVersion: 1 as const,
+    list: async () => [],
+    invoke: () => ({ cancel() {}, result: Promise.resolve({ status: "failed" as const, output: "", exit_code: 9, message: "model process reported a configuration failure" }) }),
+  };
+  const manager = new JobManager(store, { ai });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 2 });
+  await waitFor(async () => (await manager.list()).jobs.every(({ state }) => state === "failed"));
+  const jobs = (await manager.list()).jobs;
+  assert.ok(jobs.every(({ summary }) => summary.includes("coordinator exit 9")));
+  assert.ok(jobs.every(({ summary }) => summary.includes("model process reported a configuration failure")));
+  const annotations = (await store.load()).annotations;
+  assert.ok(annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード9")));
+  assert.ok(annotations.every(({ thread }) => thread.at(-1)?.body.includes("model process reported a configuration failure")));
+  await manager.close();
+});
+
+test("AI invoke throws and result rejections are retained in failed job comments", async () => {
+  for (const [kind, expected] of [["throw", "invoke setup exploded"], ["reject", "invocation stream rejected"]] as const) {
+    const root = repository();
+    const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+    await annotate(store, store.entryPath, kind);
+    const ai = {
+      apiVersion: 1 as const,
+      list: async () => [],
+      invoke: () => {
+        if (kind === "throw") throw new Error(expected);
+        return { cancel() {}, result: Promise.reject(new Error(expected)) };
+      },
+    };
+    const manager = new JobManager(store, { ai });
+    await manager.start();
+    await manager.enqueue({ max_parallel: 1 });
+    await waitFor(async () => (await manager.list()).jobs[0]?.state === "failed");
+    assert.match((await manager.list()).jobs[0]?.summary ?? "", new RegExp(expected));
+    assert.match((await store.load()).annotations[0]?.thread.at(-1)?.body ?? "", new RegExp(expected));
+    await manager.close();
+  }
+});
+
+test("spawn failures and stderr diagnostics reach job summaries and annotation comments", async () => {
+  for (const [kind, expected] of [["stderr", /coordinator stderr detail/], ["spawn", /ENOENT|does not exist/i]] as const) {
+    const root = repository();
+    const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
+    await annotate(store, store.entryPath, kind);
+    const supervised = createSpawnExecutor({ killGraceMs: 10 });
+    const executor: CommandExecutor = () => kind === "stderr"
+      ? supervised({ command: process.execPath as ReviewCli, args: ["-e", "process.stderr.write('coordinator stderr detail'); process.exitCode = 5"], cwd: root, env: { ...process.env } })
+      : supervised({ command: "vrev-command-that-does-not-exist" as ReviewCli, args: [], cwd: root, env: {} });
+    const manager = new JobManager(store, { executor });
+    await manager.start();
+    await manager.enqueue({ max_parallel: 1 });
+    await waitFor(async () => (await manager.list()).jobs[0]?.state === "failed");
+    assert.match((await manager.list()).jobs[0]?.summary ?? "", expected);
+    assert.match((await store.load()).annotations[0]?.thread.at(-1)?.body ?? "", expected);
+    await manager.close();
+  }
+});
+
 test("runs one coordinator process per batch with IDs-only prompt and max subagent limit", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
@@ -427,6 +492,19 @@ test("spawn executor bounds stdout and supports timeout and cancellation", async
   assert.equal(outputResult.output, "abcdefghij");
   const diagnostics = await run("process.stderr.write('x'.repeat(100)); process.stdout.write('日本語')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
   assert.deepEqual(await diagnostics.result, { exitCode: 0, reason: "exit", output: "日本語" });
+  const secret = "stderr-secret-value";
+  const failed = await run(`process.stdout.write('protocol'); process.stderr.write('x'.repeat(9000) + '\\nAPI_KEY=${secret}\\nactual crash detail'); process.exitCode = 6`);
+  const failedResult = await failed.result;
+  assert.equal(failedResult.reason, "exit");
+  assert.equal(failedResult.exitCode, 6);
+  assert.equal(failedResult.output, "protocol");
+  assert.match(failedResult.errorMessage ?? "", /actual crash detail/);
+  assert.doesNotMatch(failedResult.errorMessage ?? "", new RegExp(secret));
+  assert.ok(Buffer.byteLength(failedResult.errorMessage ?? "", "utf8") <= 8192);
+  const missing = createSpawnExecutor()({ command: "vrev-command-that-does-not-exist" as ReviewCli, args: [], cwd: process.cwd(), env: {} });
+  const missingResult = await missing.result;
+  assert.equal(missingResult.reason, "spawn-error");
+  assert.match(missingResult.errorMessage ?? "", /ENOENT|does not exist/i);
   const cancelled = await run("setInterval(() => {}, 1000)");
   cancelled.cancel();
   assert.equal((await cancelled.result).reason, "cancelled");

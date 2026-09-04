@@ -72,8 +72,13 @@ test("AI exports the local CLI and custom-command providers", () => {
 
 test("release workflow publishes built feature artifacts to npm with OIDC provenance", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/release-package.yml"), "utf8");
-  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
   assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /node-version: 22/);
+  assert.match(workflow, /npm install --global npm@11\.19\.1/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.bootstrap/);
+  assert.match(workflow, /secrets\.NPM_TOKEN/);
+  assert.match(workflow, /npm whoami --registry https:\/\/registry\.npmjs\.org/);
+  assert.doesNotMatch(workflow, /^\s+registry-url:/m, "avoid dummy credentials masking an OIDC exchange failure");
   assert.match(workflow, /--provenance/);
   assert.match(workflow, /dist\/plugins\/ai/);
   assert.match(workflow, /dist\/plugins\/firestore/);

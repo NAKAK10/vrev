@@ -14,6 +14,7 @@ let settingsRenderPromise = null;
 let activeToast = null;
 let deferredReviewRender = false;
 let layoutReorderSaving = false;
+let targetSettingsPayload = null;
 const reviewSelection = { annotation_id: null, page_path: null, anchor: null };
 let activeSelection = null;
 const DISCLOSURE_SEEN_KEY = "vrev.disclosure-seen/v1";
@@ -799,15 +800,20 @@ function dismissToast(token) {
 }
 function paintToast() {
   if (!activeToast) return;
-  const dialogBody = document.querySelector("dialog[open] .vr-dialog-body");
-  let region = dialogBody?.querySelector(":scope > .toast-region") || document.querySelector("#vr-toast-layer");
-  if (dialogBody && !dialogBody.contains(region)) {
-    document.querySelector("#vr-toast-layer")?.remove();
-    region = element("div", "toast-region"); region.setAttribute("role", "status"); region.setAttribute("aria-live", "polite"); dialogBody.prepend(region);
-  } else if (!dialogBody && !region) {
-    region = element("div", "toast-region"); region.id = "vr-toast-layer"; region.setAttribute("role", "status"); region.setAttribute("aria-live", "polite"); document.body.append(region);
+  // Keep the toast interactive inside a modal's inert boundary, but render it
+  // in the top layer so its position and clipping are viewport-based.
+  const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
+  const host = dialog || document.body;
+  let region = document.querySelector("#vr-toast-layer");
+  if (region?.parentElement !== host) {
+    region?.remove();
+    region = element("div", "toast-region"); region.id = "vr-toast-layer";
+    region.setAttribute("popover", "manual");
+    region.setAttribute("role", "status"); region.setAttribute("aria-live", "polite");
+    host.append(region);
+    if (dialog) dialog.addEventListener("close", () => queueMicrotask(paintToast), { once: true });
   }
-  if (!region) return;
+  if (region.showPopover && !region.matches(":popover-open")) region.showPopover();
   const { duration, message, token, variant } = activeToast;
   const item = element("div", `toast toast-${variant}`);
   const copy = element("p", "toast-message"); copy.textContent = message;
@@ -825,7 +831,37 @@ function toast(message, variant = "info") {
 }
 function safeMarkdown(markdown) {
   const container = element("div", "vr-safe-markdown");
-  const lines = markdown.split(/\r?\n/);
+  // Construct DOM only: raw HTML and unsafe URL schemes are never interpreted.
+  function inline(parent, text, depth = 0) {
+    const pattern = /\\([\\`*_[\]{}()#+.!|>~-])|(`+)([\s\S]*?[^`])\2(?!`)|\[([^\]\n]+)\]\(([^\s()]+)\)|(\*\*|__|~~)(?=\S)(.+?)\6|([*_])(?=\S)(.+?)\8/g;
+    if (depth > 20 || !pattern.test(text)) { parent.textContent = text; return; }
+    pattern.lastIndex = 0;
+    let cursor = 0;
+    const plain = (value) => { if (value) { const span = element("span"); span.textContent = value; parent.append(span); } };
+    for (const match of text.matchAll(pattern)) {
+      plain(text.slice(cursor, match.index));
+      cursor = match.index + match[0].length;
+      if (match[1]) { plain(match[1]); continue; }
+      if (match[2]) { const code = element("code"); code.textContent = match[3].replace(/\n/g, " "); parent.append(code); continue; }
+      if (match[4]) {
+        if (!/^(?:https?:\/\/|mailto:|#|\/(?!\/))/i.test(match[5]) || /[\u0000-\u0020\u007f\\]/.test(match[5])) { plain(match[0]); continue; }
+        const link = element("a"); link.setAttribute("href", match[5]);
+        inline(link, match[4], depth + 1); parent.append(link); continue;
+      }
+      const node = element(match[6] === "~~" ? "del" : match[6] ? "strong" : "em");
+      inline(node, match[7] ?? match[9], depth + 1); parent.append(node);
+    }
+    plain(text.slice(cursor));
+  }
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const listMatch = (line) => /^( *)([-+*]|\d+[.)])\s+(.*)$/.exec(line);
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/).map((cell) => cell.trim());
+  const tableAlignment = (index) => {
+    if (!lines[index]?.includes("|") || !lines[index + 1]) return null;
+    const header = cells(lines[index]); const separators = cells(lines[index + 1]);
+    return header.length === separators.length && separators.every((cell) => /^:?-{3,}:?$/.test(cell)) ? separators : null;
+  };
+  const blockStart = (index) => !lines[index]?.trim() || /^ {0,3}(?:#{1,6}\s|`{3,}|~{3,}|>|(?:-\s*){3,}$|(?:\*\s*){3,}$|(?:_\s*){3,}$)/.test(lines[index]) || listMatch(lines[index]) || tableAlignment(index);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const fence = /^( {0,3})(?:(`{3,})([^`]*)|(~{3,})(.*))$/.exec(line);
@@ -850,10 +886,67 @@ function safeMarkdown(markdown) {
       pre.append(code); figure.append(pre); container.append(figure);
       continue;
     }
-    const match = /^(#{1,6})\s+(.*)$/.exec(line);
-    const node = match ? element(`h${match[1].length}`) : element(line ? "p" : "br");
-    if (line) node.textContent = match?.[2] ?? line;
-    container.append(node);
+    if (!line.trim()) continue;
+    if (/^ {0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(line)) { container.append(element("hr")); continue; }
+    const alignment = tableAlignment(index);
+    if (alignment) {
+      const wrapper = element("div", "vr-markdown-table");
+      wrapper.tabIndex = 0; wrapper.setAttribute("role", "region"); wrapper.setAttribute("aria-label", "表（横スクロール可能）");
+      const table = element("table"); const head = element("thead"); const body = element("tbody");
+      const row = (values, heading) => {
+        const tr = element("tr");
+        alignment.forEach((format, column) => {
+          const cell = element(heading ? "th" : "td");
+          if (heading) cell.setAttribute("scope", "col");
+          cell.setAttribute("data-align", format.endsWith(":") ? format.startsWith(":") ? "center" : "right" : "left");
+          inline(cell, values[column] || ""); tr.append(cell);
+        });
+        return tr;
+      };
+      head.append(row(cells(line), true)); index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes("|")) { body.append(row(cells(lines[index]), false)); index += 1; }
+      index -= 1; table.append(head, body); wrapper.append(table); container.append(wrapper); continue;
+    }
+    if (/^ {0,3}>/.test(line)) {
+      const quoted = [];
+      while (index < lines.length && /^ {0,3}>/.test(lines[index])) quoted.push(lines[index++].replace(/^ {0,3}> ?/, ""));
+      index -= 1; const quote = element("blockquote"); quote.append(...safeMarkdown(quoted.join("\n")).children); container.append(quote); continue;
+    }
+    const firstItem = listMatch(line);
+    if (firstItem) {
+      const ordered = /^\d/.test(firstItem[2]); const indent = firstItem[1].length;
+      const list = element(ordered ? "ol" : "ul");
+      if (ordered) list.setAttribute("start", String(parseInt(firstItem[2], 10)));
+      while (index < lines.length) {
+        const item = listMatch(lines[index]);
+        if (!item || item[1].length !== indent || /^\d/.test(item[2]) !== ordered) break;
+        const content = [item[3]]; const contentIndent = item[0].length - item[3].length;
+        index += 1;
+        while (index < lines.length) {
+          if (!lines[index].trim()) {
+            if ((/^ */.exec(lines[index + 1] || "")[0].length) >= contentIndent && lines[index + 1]?.trim()) { content.push(""); index += 1; continue; }
+            break;
+          }
+          if (/^ */.exec(lines[index])[0].length < contentIndent) break;
+          content.push(lines[index++].slice(contentIndent));
+        }
+        const li = element("li"); const task = /^\[([ xX])\]\s+/.exec(content[0]);
+        if (task) {
+          li.className = "vr-markdown-task";
+          const checkbox = element("input"); checkbox.setAttribute("type", "checkbox"); checkbox.setAttribute("disabled", "");
+          checkbox.setAttribute("aria-label", task[1] === " " ? "未完了" : "完了");
+          if (task[1] !== " ") checkbox.setAttribute("checked", "");
+          li.append(checkbox); content[0] = content[0].slice(task[0].length);
+        }
+        li.append(...safeMarkdown(content.join("\n")).children); list.append(li);
+      }
+      index -= 1; container.append(list); continue;
+    }
+    const match = /^ {0,3}(#{1,6})\s+(.*)$/.exec(line);
+    const node = element(match ? `h${match[1].length}` : "p");
+    const parts = [match ? match[2].replace(/\s+#+\s*$/, "") : line];
+    if (!match) while (index + 1 < lines.length && !blockStart(index + 1)) parts.push(lines[++index]);
+    inline(node, parts.join("\n")); container.append(node);
   }
   return container;
 }
@@ -1638,6 +1731,46 @@ async function saveLayoutSettings(patch, layoutPayload, reorderResult = null) {
     }
   }
 }
+async function saveTargetSettings(allowScripts, layoutPayload, control) {
+  if (!targetSettingsPayload || control.disabled) return;
+  control.disabled = true;
+  try {
+    const response = await fetch("/api/settings/target", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: targetSettingsPayload.revision, allow_scripts: allowScripts }),
+    });
+    if (response.status === 409) {
+      toast("設定が別の画面で更新されました。再読み込みしました。", "error");
+      return renderGeneralSettings();
+    }
+    if (!response.ok) throw new Error("JavaScript設定を保存できませんでした。");
+    targetSettingsPayload = await response.json();
+    paintGeneralSettings(layoutPayload);
+    toast(allowScripts ? "対象のJavaScriptを有効にしました。" : "対象のJavaScriptを無効にしました。", "success");
+  } catch (error) {
+    control.checked = !allowScripts;
+    control.disabled = false;
+    toast(error instanceof Error ? error.message : "JavaScript設定を保存できませんでした。", "error");
+  }
+}
+function targetSettingsSection(layoutPayload) {
+  const section = element("section", "vr-settings-card");
+  const heading = element("h2", "vr-section-title"); heading.textContent = "対象のJavaScript"; section.append(heading);
+  const field = element("label", "vr-field vr-field-checkbox");
+  const toggle = element("input", "vr-checkbox"); toggle.type = "checkbox"; toggle.role = "switch";
+  toggle.checked = targetSettingsPayload?.settings?.allow_scripts === true;
+  toggle.disabled = targetSettingsPayload?.restricted === true;
+  const label = element("span", "vr-field-label"); label.textContent = "JavaScriptを有効にする";
+  field.append(toggle, label); section.append(field);
+  const note = element("p", "vr-field-description");
+  note.textContent = targetSettingsPayload?.restricted
+    ? "公開URLでは安全のためJavaScriptを有効にできません。"
+    : "信頼できるローカル対象だけで有効にしてください。変更はこのワークスペースに保存されます。";
+  section.append(note);
+  toggle.addEventListener("change", () => void saveTargetSettings(toggle.checked, layoutPayload, toggle));
+  return section;
+}
 function paintGeneralSettings(layoutPayload, reorderResult = null) {
   const shell = element("div", "vr-app-shell vr-settings-shell");
   const header = element("header", "vr-header vr-settings-header");
@@ -1652,6 +1785,7 @@ function paintGeneralSettings(layoutPayload, reorderResult = null) {
   } else {
     const note = element("p", "vr-field-description"); note.textContent = "プラグイン管理はワークスペース設定で無効化されています。"; pluginSection.append(note);
   }
+  page.append(targetSettingsSection(layoutPayload));
   page.append(pluginSection);
   page.append(layoutOrderSection("ヘッダーの表示順", surface.layout.header_items, layoutPayload, "header"));
   page.append(layoutOrderSection("サイドバーの表示順", surface.layout.sidebar_items, layoutPayload, "sidebar"));
@@ -1672,9 +1806,10 @@ function paintGeneralSettings(layoutPayload, reorderResult = null) {
 }
 async function renderGeneralSettings(reorderResult = null) {
   root.dataset.page = "settings";
-  const [layoutResponse, surfaceResponse] = await Promise.all([fetch("/api/settings/layout"), fetch("/api/plugin-host/v1/surfaces/review")]);
-  if (!layoutResponse.ok || !surfaceResponse.ok) throw new Error("設定を読み込めませんでした。");
+  const [layoutResponse, targetResponse, surfaceResponse] = await Promise.all([fetch("/api/settings/layout"), fetch("/api/settings/target"), fetch("/api/plugin-host/v1/surfaces/review")]);
+  if (!layoutResponse.ok || !targetResponse.ok || !surfaceResponse.ok) throw new Error("設定を読み込めませんでした。");
   const layoutPayload = await layoutResponse.json();
+  targetSettingsPayload = await targetResponse.json();
   surface = await surfaceResponse.json(); applyTheme(surface.theme);
   paintGeneralSettings(layoutPayload, reorderResult);
 }

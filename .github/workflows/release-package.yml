@@ -9,6 +9,11 @@ on:
         description: Release tag to recover or republish missing packages
         required: true
         type: string
+      bootstrap:
+        description: Use NPM_TOKEN for first-time package publishing
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   publish:
@@ -25,12 +30,13 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
 
+      # No registry-url: avoid placeholder credentials masking OIDC failures.
+      # npm exchanges GitHub OIDC before checking configured registry credentials.
       - name: Use an npm version with trusted publishing support
-        run: npm install --global npm@11
+        run: npm install --global npm@11.19.1
 
       - name: Apply release tag version to every package
         env:
@@ -129,6 +135,19 @@ jobs:
             npm pack --dry-run "./${directory}"
           done
 
+      - name: Configure first-publish authentication
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "$NPM_TOKEN" ]]; then
+            echo "::error::Bootstrap requires the repository secret NPM_TOKEN with publish access to every package."
+            exit 1
+          fi
+          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          npm whoami --registry https://registry.npmjs.org
+          echo "Using bootstrap credentials. Configure trusted publishing and remove NPM_TOKEN afterward."
+
       - name: Publish missing package versions to npm
         env:
           DIST_TAG: ${{ steps.dist-tag.outputs.value }}
@@ -140,7 +159,11 @@ jobs:
             if npm view "${name}@${version}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
               echo "Skipping existing ${name}@${version}"
             else
-              npm publish "./${directory}" --tag "$DIST_TAG" --access public --provenance
+              echo "Publishing ${name}@${version} with provenance"
+              if ! npm publish "./${directory}" --tag "$DIST_TAG" --access public --provenance; then
+                echo "::error title=npm publish authorization failed::If npm returned E404, verify that this package exists, the publisher owns it, and npm trusted publishing names NAKAK10/vrev and release-package.yml exactly. New package names require a one-time token-authenticated bootstrap publish; see docs/releasing.md."
+                return 1
+              fi
             fi
           }
 

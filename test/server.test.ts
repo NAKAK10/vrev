@@ -68,6 +68,7 @@ before(async () => {
   vrev = createVrevServer({
     projectRoot: root,
     target: ".code/htmls/pages/index.html",
+    allowAiJobsWithScripts: true,
     jobManager: {
       executor: () => ({ result: Promise.resolve({ exitCode: 0, reason: "exit" }), cancel: () => undefined }),
     },
@@ -97,7 +98,7 @@ test("serves built UI and compatible session/security headers", async () => {
   };
   assert.equal(sessionResponse.status, 200);
   assert.equal(session.target.entry_path, ".code/htmls/pages/index.html");
-  assert.equal(session.target.allow_scripts, false);
+  assert.equal(session.target.allow_scripts, true);
   assert.equal(session.target.ai_jobs_enabled, true);
   assert.equal(session.review.schema_version, 2);
   assert.equal(sessionResponse.headers.get("cache-control"), "no-store");
@@ -366,29 +367,38 @@ test("one-time reload redirects preserve logical URLs and reject unsafe targets"
   assert.equal((await fetch(`${baseUrl}/_vrev/reload/00000000-0000-4000-8000-000000000098?url=%2Flive%2F`, { method: "POST", redirect: "manual" })).status, 405);
 });
 
-test("safe mode preserves source bytes and relies on the compatible iframe sandbox", async () => {
+test("local scripts default on and can be disabled persistently from settings", async () => {
   const response = await fetch(`${baseUrl}/target/.code/htmls/pages/index.html`);
-  const target = await response.text();
-  assert.match(target, /targetScriptRan=true/);
-  const ui = readFileSync(new URL("../src/ui/index.html", import.meta.url), "utf8");
-  assert.match(ui, /sandbox="allow-same-origin allow-forms"/);
+  assert.match(await response.text(), /targetScriptRan=true/);
 
-  const trusted = createVrevServer({
-    projectRoot: root,
-    target: ".code/htmls/pages/other.html",
-    allowScripts: true,
+  const initial = await (await fetch(`${baseUrl}/api/settings/target`)).json() as {
+    revision: string; settings: { allow_scripts: boolean }; restricted: boolean;
+  };
+  assert.equal(initial.settings.allow_scripts, true);
+  assert.equal(initial.restricted, false);
+  const disabledResponse = await fetch(`${baseUrl}/api/settings/target`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ revision: initial.revision, allow_scripts: false }),
   });
-  await new Promise<void>((resolve) => trusted.server.listen(0, "127.0.0.1", resolve));
-  try {
-    const address = trusted.server.address();
-    assert.ok(address && typeof address !== "string");
-    const trustedSession = await (await fetch(`http://127.0.0.1:${address.port}/api/session`)).json() as {
-      target: { allow_scripts: boolean };
-    };
-    assert.equal(trustedSession.target.allow_scripts, true);
-  } finally {
-    await trusted.close();
-  }
+  assert.equal(disabledResponse.status, 200);
+  const disabled = await disabledResponse.json() as { revision: string; settings: { allow_scripts: boolean } };
+  assert.equal(disabled.settings.allow_scripts, false);
+  assert.equal((await (await fetch(`${baseUrl}/api/session`)).json() as { target: { allow_scripts: boolean } }).target.allow_scripts, false);
+  const bridgeSession = await (await fetch(`${baseUrl}/api/plugin-host/v1/plugins/review/queries/session.get`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: "scripts-disabled", input: {} }),
+  })).json() as { data: { target: { allow_scripts: boolean } } };
+  assert.equal(bridgeSession.data.target.allow_scripts, false);
+  const persisted = JSON.parse(readFileSync(path.join(root, ".vrev/settings.json"), "utf8")) as { ui: { allow_scripts: boolean } };
+  assert.equal(persisted.ui.allow_scripts, false);
+  assert.equal((await fetch(`${baseUrl}/api/settings/target`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ revision: initial.revision, allow_scripts: true }),
+  })).status, 409);
+  assert.equal((await fetch(`${baseUrl}/api/settings/target`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ revision: disabled.revision, allow_scripts: true }),
+  })).status, 200);
 });
 
 test("owner lease rejects a live owner, recovers stale PID, and only owner token releases", () => {
@@ -507,7 +517,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
 });
 
 test("public targets stay script-free and reject private network resolution", async () => {
-  const live = createVrevServer({ projectRoot: root, target: "https://10.0.0.1/", allowScripts: true });
+  const live = createVrevServer({ projectRoot: root, target: "https://10.0.0.1/" });
   await new Promise<void>((resolve) => live.server.listen(0, "127.0.0.1", resolve));
   const address = live.server.address();
   assert.ok(address && typeof address !== "string");
@@ -516,6 +526,12 @@ test("public targets stay script-free and reject private network resolution", as
     const session = await (await fetch(`${url}/api/session`)).json() as { target: { allow_scripts: boolean; url_mode: string } };
     assert.equal(session.target.allow_scripts, false);
     assert.equal(session.target.url_mode, "public");
+    const targetSettings = await (await fetch(`${url}/api/settings/target`)).json() as { settings: { allow_scripts: boolean }; restricted: boolean };
+    assert.equal(targetSettings.settings.allow_scripts, false);
+    assert.equal(targetSettings.restricted, true);
+    assert.equal((await fetch(`${url}/api/settings/target`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: "ignored", allow_scripts: true }),
+    })).status, 403);
     const fallbackReload = await fetch(`${url}/_vrev/reload/00000000-0000-4000-8000-000000000401?url=%2Ffoo`, { redirect: "manual" });
     assert.equal(fallbackReload.status, 400, "public live targets cannot reload arbitrary fallback paths");
     const blocked = await fetch(`${url}/live/`);
@@ -526,8 +542,8 @@ test("public targets stay script-free and reject private network resolution", as
   }
 });
 
-test("trusted script mode disables every jobs API without explicit AI consent", async () => {
-  const trusted = createVrevServer({ projectRoot: root, target: ".code/htmls/pages/other.html", allowScripts: true });
+test("trusted script mode disables every jobs API when AI execution is explicitly opted out", async () => {
+  const trusted = createVrevServer({ projectRoot: root, target: ".code/htmls/pages/other.html", allowAiJobsWithScripts: false });
   await new Promise<void>((resolve) => trusted.server.listen(0, "127.0.0.1", resolve));
   try {
     const address = trusted.server.address();
@@ -542,11 +558,10 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
   }
 });
 
-test("trusted script mode enables jobs only with explicit AI consent", async () => {
+test("trusted script mode supports explicitly enabled AI execution", async () => {
   const trusted = createVrevServer({
     projectRoot: root,
     target: ".code/htmls/pages/other.html",
-    allowScripts: true,
     allowAiJobsWithScripts: true,
   });
   await new Promise<void>((resolve) => trusted.server.listen(0, "127.0.0.1", resolve));
@@ -866,14 +881,13 @@ test("CLI normalizes project root and accepts loopback or private-network target
   const cliRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-cli-"));
   mkdirSync(path.join(cliRoot, "project"));
   const parsed = parseCliArguments([
-    "serve", "--project-root", "project", "--target", ".code/htmls/page.html", "--host", "::1", "--port", "65535", "--allow-scripts", "--allow-ai-jobs-with-scripts", "--no-open",
+    "serve", "--project-root", "project", "--target", ".code/htmls/page.html", "--host", "::1", "--port", "65535", "--allow-ai-jobs-with-scripts", "--no-open",
   ], cliRoot);
   assert.equal(parsed.projectRoot, realpathSync(path.join(cliRoot, "project")));
   assert.equal(parsed.projectDirectory, realpathSync(path.join(cliRoot, "project")));
   assert.equal(parsed.target, ".code/htmls/page.html");
   assert.equal(parsed.host, "::1");
   assert.equal(parsed.port, 65535);
-  assert.equal(parsed.allowScripts, true);
   assert.equal(parsed.allowAiJobsWithScripts, true);
   assert.equal(parsed.open, false);
   const defaults = parseCliArguments(["serve", "--target", "assets/x.png"], cliRoot);
@@ -904,7 +918,7 @@ test("CLI normalizes project root and accepts loopback or private-network target
   assert.equal(hosted.target, "https://example.com/products");
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--start", "npm run dev"]), /requires a loopback or private-network URL/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--start", "npm run dev"]), /requires a loopback or private-network URL/);
-  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "https://example.com", "--allow-scripts"]), /not available for public/);
+  assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "assets/x.png", "--allow-scripts"]), /usage/);
   assert.throws(() => parseCliArguments(["serve", "--project-root", ".", "--target", "http://localhost:5173", "--stop", "npm run down"]), /requires --start/);
 });
 

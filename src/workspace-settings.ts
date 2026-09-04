@@ -18,8 +18,13 @@ export interface WorkspaceReviewReference {
 export interface WorkspaceSettings {
   schema_version: 1;
   workspace: { root: "."; monorepo: boolean };
-  ui?: { plugin_management: boolean };
+  ui?: { plugin_management?: boolean; allow_scripts?: boolean };
   projects: Array<{ id: string; path: string; reviews: WorkspaceReviewReference[] }>;
+}
+
+export interface WorkspaceUiSettingsUpdateInput {
+  revision: string;
+  allow_scripts: boolean;
 }
 
 function posixRelative(root: string, value: string): string {
@@ -47,7 +52,15 @@ function loadSettings(settingsPath: string, monorepo: boolean): WorkspaceSetting
   if (!existsSync(settingsPath)) return { schema_version: 1, workspace: { root: ".", monorepo }, projects: [] };
   const value = readJson(settingsPath) as Partial<WorkspaceSettings>;
   if (value.schema_version !== 1 || !value.workspace || !Array.isArray(value.projects)) throw new Error("unsupported .vrev/settings.json schema");
-  if (value.ui !== undefined && (typeof value.ui !== "object" || value.ui === null || typeof value.ui.plugin_management !== "boolean")) throw new Error("unsupported .vrev/settings.json ui schema");
+  if (value.ui !== undefined) {
+    if (typeof value.ui !== "object" || value.ui === null) throw new Error("unsupported .vrev/settings.json ui schema");
+    const ui = value.ui as Record<string, unknown>;
+    if (Object.keys(ui).some((key) => key !== "plugin_management" && key !== "allow_scripts")
+      || (ui.plugin_management !== undefined && typeof ui.plugin_management !== "boolean")
+      || (ui.allow_scripts !== undefined && typeof ui.allow_scripts !== "boolean")) {
+      throw new Error("unsupported .vrev/settings.json ui schema");
+    }
+  }
   return value as WorkspaceSettings;
 }
 
@@ -55,6 +68,26 @@ export function loadWorkspaceSettings(workspaceRoot: string): WorkspaceSettings 
   const settingsPath = path.join(workspaceRoot, ".vrev", "settings.json");
   if (existsSync(settingsPath) && lstatSync(settingsPath).isSymbolicLink()) throw new Error(".vrev/settings.json must not be a symbolic link");
   return loadSettings(settingsPath, hasWorkspaceDeclaration(workspaceRoot));
+}
+
+export function workspaceSettingsRevision(settings: WorkspaceSettings): string {
+  return createHash("sha256").update(JSON.stringify(settings), "utf8").digest("hex");
+}
+
+export function updateWorkspaceUiSettings(input: WorkspaceUiSettingsUpdateInput, workspaceRoot: string): { settings: WorkspaceSettings; revision: string } {
+  const settingsPath = path.join(workspaceRoot, ".vrev", "settings.json");
+  if (typeof input !== "object" || input === null || Object.keys(input).some((key) => key !== "revision" && key !== "allow_scripts")
+    || typeof input.revision !== "string" || typeof input.allow_scripts !== "boolean") {
+    throw new Error("workspace UI settings update is invalid");
+  }
+  if (existsSync(settingsPath) && lstatSync(settingsPath).isSymbolicLink()) throw new Error(".vrev/settings.json must not be a symbolic link");
+  return withFileLock(settingsPath, () => {
+    const settings = loadSettings(settingsPath, hasWorkspaceDeclaration(workspaceRoot));
+    if (workspaceSettingsRevision(settings) !== input.revision) throw new Error("workspace settings revision conflict");
+    settings.ui = { ...settings.ui, allow_scripts: input.allow_scripts };
+    atomicWriteJson(settingsPath, settings);
+    return { settings, revision: workspaceSettingsRevision(settings) };
+  });
 }
 
 export function registerWorkspaceReview(target: ResolvedTarget, projectDirectory: string, reviewPath: string, resolvedPath: string): WorkspaceSettings {

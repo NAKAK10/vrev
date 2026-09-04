@@ -21,6 +21,18 @@ const METHOD_KINDS = new Set(["cli", "external-command", "api", "sdk", "remote",
 const MODES = new Set(["workspace-write", "text-only"]);
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_OUTPUT_LIMIT = 1024 * 1024;
+const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+
+function diagnosticMessage(value, fallback = "AI invocation failed") {
+  const text = typeof value === "string" ? value : value instanceof Error ? value.message : value == null ? fallback : String(value);
+  const redacted = text
+    .replace(/\b(Bearer)\s+[^\s]+/gi, "$1 [REDACTED]")
+    .replace(/([?&](?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)=)[^&\s]+/gi, "$1[REDACTED]")
+    .replace(/\b((?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/:\/\/[^\s/@:]+:[^\s/@]+@/g, "://[REDACTED]@");
+  const bytes = Buffer.from(redacted, "utf8");
+  return (bytes.length <= MAX_DIAGNOSTIC_BYTES ? redacted : bytes.subarray(bytes.length - MAX_DIAGNOSTIC_BYTES).toString("utf8")).trim() || fallback;
+}
 
 function assertWorkspaceRoot(value) {
   if (typeof value !== "string" || !value) throw new Error("AI workspace root is required");
@@ -105,10 +117,11 @@ export function createAiIntegrationRegistry() {
 }
 
 function processResultFromAi(result) {
-  if (!result || typeof result !== "object" || typeof result.output !== "string") return { exitCode: null, reason: "spawn-error", stdout: "" };
+  if (!result || typeof result !== "object" || typeof result.output !== "string") return { exitCode: null, reason: "spawn-error", stdout: "", errorMessage: "AI integration returned an invalid result" };
   if (result.status === "completed" && result.exit_code === 0) return { exitCode: 0, reason: "exit", stdout: result.output };
-  const reason = result.status === "cancelled" ? "cancelled" : result.status === "timeout" ? "timeout" : result.status === "output-limit" ? "output-limit" : "spawn-error";
-  return { exitCode: Number.isInteger(result.exit_code) ? result.exit_code : null, reason, stdout: result.output };
+  const exitCode = Number.isInteger(result.exit_code) ? result.exit_code : null;
+  const reason = result.status === "cancelled" ? "cancelled" : result.status === "timeout" ? "timeout" : result.status === "output-limit" ? "output-limit" : result.status === "failed" && exitCode !== null && exitCode !== 0 ? "exit" : "spawn-error";
+  return { exitCode, reason, stdout: result.output, ...(typeof result.message === "string" && result.message.trim() ? { errorMessage: diagnosticMessage(result.message) } : {}) };
 }
 
 /**
@@ -207,11 +220,12 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
         if (processResult.reason === "timeout") return timeoutResult();
         if (processResult.reason === "cancelled") return cancelledResult();
         if (processResult.reason === "exit" && processResult.exitCode === 0) return { status: "completed", output, exit_code: 0 };
-        return { status: processResult.reason === "output-limit" ? "output-limit" : "failed", output, exit_code: processResult.exitCode, message: `AI invocation failed: ${processResult.reason}`, retryable: processResult.reason === "spawn-error" };
+        const detail = typeof processResult.errorMessage === "string" && processResult.errorMessage.trim() ? diagnosticMessage(processResult.errorMessage) : "";
+        return { status: processResult.reason === "output-limit" ? "output-limit" : "failed", output, exit_code: processResult.exitCode, message: diagnosticMessage([`AI invocation failed: ${processResult.reason}`, detail].filter(Boolean).join("\n")), retryable: processResult.reason === "spawn-error" };
       } catch (error) {
         if (invocation.timedOut) return timeoutResult();
         if (invocation.cancelled || stopped) return cancelledResult();
-        return { status: "failed", output: "", exit_code: null, message: error instanceof Error ? error.message : "AI invocation failed", retryable: false };
+        return { status: "failed", output: "", exit_code: null, message: diagnosticMessage(error), retryable: false };
       }
     })();
     const result = Promise.race([execution, interrupted]).finally(() => { clearTimeout(timer); active.delete(invocation); });

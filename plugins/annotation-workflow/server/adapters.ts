@@ -1,5 +1,5 @@
 export interface ProcessSupervisorPortV1 {
-  run(spec: CommandSpec): { result: Promise<{ exitCode: number | null; reason: CommandResult["reason"]; stdout: string }>; cancel(): void };
+  run(spec: CommandSpec): { result: Promise<{ exitCode: number | null; reason: CommandResult["reason"]; stdout: string; errorMessage?: string }>; cancel(): void };
 }
 
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -16,6 +16,7 @@ export interface CommandResult {
   exitCode: number | null;
   reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error";
   output?: string;
+  errorMessage?: string;
 }
 
 export interface RunningCommand {
@@ -30,7 +31,7 @@ export function createSupervisorExecutor(supervisor: ProcessSupervisorPortV1): C
     const running = supervisor.run(spec);
     return {
       cancel: () => running.cancel(),
-      result: running.result.then(({ exitCode, reason, stdout }) => ({ exitCode, reason, output: stdout })),
+      result: running.result.then(({ exitCode, reason, stdout, errorMessage }) => ({ exitCode, reason, output: stdout, ...(errorMessage ? { errorMessage } : {}) })),
     };
   };
 }

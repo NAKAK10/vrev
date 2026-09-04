@@ -3,6 +3,23 @@ import type { Readable } from "node:stream";
 
 export const DEFAULT_PROCESS_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_PROCESS_STDOUT_LIMIT = 1024 * 1024;
+const MAX_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024;
+
+function redactDiagnostic(value: string): string {
+  return value
+    .replace(/\b(Bearer)\s+[^\s]+/gi, "$1 [REDACTED]")
+    .replace(/([?&](?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)=)[^&\s]+/gi, "$1[REDACTED]")
+    .replace(/\b((?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/:\/\/[^\s/@:]+:[^\s/@]+@/g, "://[REDACTED]@");
+}
+
+function diagnosticTail(value: Buffer): Buffer {
+  return value.length <= MAX_PROCESS_DIAGNOSTIC_BYTES ? value : Buffer.from(value.subarray(value.length - MAX_PROCESS_DIAGNOSTIC_BYTES));
+}
+
+function boundedDiagnostic(value: string): string {
+  return diagnosticTail(Buffer.from(redactDiagnostic(value), "utf8")).toString("utf8").trim();
+}
 
 export interface ProcessSpecV1 {
   readonly command: string;
@@ -17,6 +34,7 @@ export interface ProcessResultV1 {
   readonly exitCode: number | null;
   readonly reason: "exit" | "cancelled" | "timeout" | "output-limit" | "spawn-error";
   readonly stdout: string;
+  readonly errorMessage?: string;
 }
 
 export interface RunningProcessV1 {
@@ -60,6 +78,8 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
       let requestedReason: ProcessResultV1["reason"] | undefined;
       let settled = false;
       let stdoutBytes = 0;
+      let stderrTail: Buffer = Buffer.alloc(0);
+      let spawnError: string | undefined;
       const stdoutChunks: Buffer[] = [];
       let killTimer: NodeJS.Timeout | undefined;
       let timeoutTimer: NodeJS.Timeout | undefined;
@@ -71,7 +91,8 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
         settled = true;
         if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
         if (killTimer !== undefined) clearTimeout(killTimer);
-        resolveResult({ exitCode, reason, stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString("utf8") });
+        const diagnostic = boundedDiagnostic([spawnError, stderrTail.toString("utf8").trim()].filter(Boolean).join("\n"));
+        resolveResult({ exitCode, reason, stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString("utf8"), ...(diagnostic && (reason !== "exit" || exitCode !== 0) ? { errorMessage: diagnostic } : {}) });
       };
       const signalTree = (signal: NodeJS.Signals): void => {
         if (child.pid === undefined) return;
@@ -104,7 +125,8 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
           stdio: ["ignore", "pipe", "pipe"],
           detached: platform !== "win32",
         }) as ChildProcess & { stdout: Readable; stderr: Readable };
-      } catch {
+      } catch (error) {
+        spawnError = error instanceof Error ? error.message : String(error);
         finish(null, "spawn-error");
         return { result, cancel: () => undefined };
       }
@@ -130,8 +152,17 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
           }
         }
       });
-      child.stderr.resume();
-      child.once("error", () => finish(null, requestedReason ?? "spawn-error"));
+      // Drain stderr without mixing it into protocol stdout; retain only a bounded tail.
+      child.stderr.on("data", (value: Buffer | string) => {
+        const chunk = Buffer.from(value);
+        stderrTail = chunk.length >= MAX_PROCESS_DIAGNOSTIC_BYTES
+          ? diagnosticTail(chunk)
+          : diagnosticTail(Buffer.concat([stderrTail, chunk], stderrTail.length + chunk.length));
+      });
+      child.once("error", (error) => {
+        spawnError = error.message;
+        finish(null, requestedReason ?? "spawn-error");
+      });
       child.once("close", (code) => finish(code, requestedReason ?? "exit"));
       timeoutTimer = setTimeout(() => terminate("timeout"), invocationTimeoutMs);
       timeoutTimer.unref();

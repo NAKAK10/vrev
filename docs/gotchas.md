@@ -3,7 +3,7 @@
 - Windowsのcoordinator cancelで使う`taskkill`は実機未検証。
 - OpenCode / Claude / Codex CLIのversion差により、session引継ぎやoptionがdriftする可能性がある。
 - beta.7の宣言的review/settings surfaceはdesktop/tablet/mobileのbrowser acceptanceを完了している。ただしVue/React/WordPressのfixtureをCIで自動実行するbrowser E2Eは未整備であり、localhost framework/HMR変更時は対象fixtureで再確認する。
-- AI一括修正はCLI既定で有効。trusted `--allow-scripts` modeで意図的にAI修正を止める場合は`--no-ai-jobs-with-scripts`を指定する。
+- local targetのJavaScriptとAI一括修正は既定で有効。JavaScriptはworkspace設定画面、AI修正は`--no-ai-jobs-with-scripts`で無効化する。public targetのJavaScriptは常に無効。
 - TypeScript生成の`jobs.js`末尾には`export {}`が入るため、HTMLでは必ず`type="module"`で読み込む。通常scriptに戻すとAI一括修正UIが初期化されず、未対応件数が0のままになる。
 - 同じreview directoryを対象とするserverは共通leaseを使うため同時起動できない。
 - 外部projectも`.code/htmls/`または`assets/`という公開target配置規則に従う必要がある。

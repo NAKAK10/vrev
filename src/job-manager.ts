@@ -64,6 +64,7 @@ export class JobManager extends PluginJobManager {
             status: completed.reason === "exit" && completed.exitCode === 0 ? "completed" as const : completed.reason === "exit" || completed.reason === "spawn-error" ? "failed" as const : completed.reason,
             output: completed.output ?? "",
             exit_code: completed.exitCode,
+            ...(completed.errorMessage ? { message: completed.errorMessage } : {}),
           };
         })();
         return { cancel: () => { cancelled = true; running?.cancel(); }, result };
