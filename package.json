@@ -43,8 +43,9 @@
     "build": "node scripts/copy-ui.mjs --clean && tsc -p tsconfig.json && node scripts/copy-ui.mjs && node scripts/make-cli-executable.mjs",
     "start": "node dist/src/cli.js serve",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "test:secrets": "node --test test/check-secrets.test.mjs",
     "pretest": "npm run check:secrets",
-    "test": "npm run build && node --test dist/test/*.test.js && npm run test:plugins",
+    "test": "npm run test:secrets && npm run build && node --test dist/test/*.test.js && npm run test:plugins",
     "test:plugins": "npm --prefix plugins/firestore test && npm --prefix plugins/ai test && npm --prefix plugins/page-map test",
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
   },
