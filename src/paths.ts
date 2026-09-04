@@ -181,13 +181,13 @@ function assertReviewStoragePath(target: ResolvedTarget, result: string): string
 }
 
 export function reviewFilePath(target: ResolvedTarget): string {
-  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vreview", "reviews", reviewDirectoryName(target.entryPath), "review.json"));
+  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vrev", "reviews", reviewDirectoryName(target.entryPath), "review.json"));
 }
 
 export function resolvedReviewFilePath(target: ResolvedTarget): string {
-  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vreview", "reviews", reviewDirectoryName(target.entryPath), "resolved.json"));
+  return assertReviewStoragePath(target, path.join(target.projectRoot, ".vrev", "reviews", reviewDirectoryName(target.entryPath), "resolved.json"));
 }
 
 export function legacyReviewFilePath(target: ResolvedTarget): string {
-  return path.join(target.projectRoot, ".code", "visual-reviews", reviewDirectoryName(target.entryPath), "review.json");
+  return path.join(target.projectRoot, ".code", "vrevs", reviewDirectoryName(target.entryPath), "review.json");
 }

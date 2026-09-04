@@ -6,7 +6,7 @@ import test from "node:test";
 
 import provider, { createAiCapability, createAiIntegrationRegistry } from "../server/index.js";
 
-function workspace() { return mkdtempSync(path.join(os.tmpdir(), "visual-review-ai-")); }
+function workspace() { return mkdtempSync(path.join(os.tmpdir(), "vrev-ai-")); }
 
 function fixture(result = { exitCode: 0, reason: "exit", stdout: "done" }, workspaceRoot = "/workspace") {
   const resolutions = [];
@@ -70,8 +70,8 @@ test("AI supports namespaced API, SDK, and remote integration providers", async 
 
 test("AI falls back to another capable method when the configured default cannot serve the requested mode", async () => {
   const root = workspace();
-  mkdirSync(path.join(root, ".vreview"), { recursive: true });
-  writeFileSync(path.join(root, ".vreview", "ai-settings.json"), JSON.stringify({ schema_version: 1, method_id: "command-id" }));
+  mkdirSync(path.join(root, ".vrev"), { recursive: true });
+  writeFileSync(path.join(root, ".vrev", "ai-settings.json"), JSON.stringify({ schema_version: 1, method_id: "command-id" }));
   const { capability, resolutions } = fixture(undefined, root);
   const invocation = await capability.invoke({ mode: "text-only", prompt: "draft" });
   assert.equal((await invocation.result).status, "completed");

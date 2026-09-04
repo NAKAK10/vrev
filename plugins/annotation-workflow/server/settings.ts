@@ -10,7 +10,7 @@ export interface WorkflowSettings {
 const defaults: WorkflowSettings = { schema_version: 1, max_parallel: 2, auto_run: false };
 
 function settingsPath(workspaceRoot: string): string {
-  return path.join(workspaceRoot, ".vreview", "workflow-settings.json");
+  return path.join(workspaceRoot, ".vrev", "workflow-settings.json");
 }
 
 export function readWorkflowSettings(workspaceRoot: string): WorkflowSettings {

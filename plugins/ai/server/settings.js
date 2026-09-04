@@ -6,13 +6,13 @@ const METHOD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SETTINGS_VERSION = 1;
 
 function settingsPath(workspaceRoot) {
-  return path.join(workspaceRoot, ".vreview", "ai-settings.json");
+  return path.join(workspaceRoot, ".vrev", "ai-settings.json");
 }
 
 export function readAiSettings(workspaceRoot) {
   const filePath = settingsPath(workspaceRoot);
   if (!existsSync(filePath)) {
-    const legacyPath = path.join(workspaceRoot, ".vreview", "workflow-settings.json");
+    const legacyPath = path.join(workspaceRoot, ".vrev", "workflow-settings.json");
     if (existsSync(legacyPath) && !lstatSync(legacyPath).isSymbolicLink()) {
       try {
         const legacy = JSON.parse(readFileSync(legacyPath, "utf8"));

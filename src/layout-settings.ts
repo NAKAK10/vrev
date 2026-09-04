@@ -32,7 +32,7 @@ const CORNERS = new Set<LayoutCornerV1>(["top-left", "top-right", "bottom-left",
 const CONTRIBUTION_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?\/[a-z][a-z0-9-]{0,62}$/;
 
 export function layoutSettingsPath(workspace = process.cwd()): string {
-  return path.join(findWorkspaceRoot(workspace), ".vreview", "layout-settings.json");
+  return path.join(findWorkspaceRoot(workspace), ".vrev", "layout-settings.json");
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {

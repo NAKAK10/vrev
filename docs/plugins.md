@@ -1,29 +1,29 @@
 # Plugin foundation
 
-Visual Reviewの拡張単位はnpm packageである。対応packageは`package.json`へversioned metadataを宣言し、manifestの位置をCoreへ知らせる。
+Vrevの拡張単位はnpm packageである。対応packageは`package.json`へversioned metadataを宣言し、manifestの位置をCoreへ知らせる。
 
 ```json
 {
-  "name": "@example/visual-review-tool",
-  "visualReview": {
+  "name": "@example/vrev-tool",
+  "vrev": {
     "apiVersion": 1,
-    "manifest": "./visual-review.plugin.json"
+    "manifest": "./vrev.plugin.json"
   }
 }
 ```
 
 Coreが検出するのは対象workspaceの`dependencies`、`devDependencies`、`optionalDependencies`に列挙された**直接依存だけ**である。`node_modules`全体、推移依存、package名patternは走査せず、検出時にpackage codeをimportしない。manifestはpackage内の通常fileを指すcanonicalな`./` pathでなければならない。
 
-従来のworkspace単位installも移行用compatibility layerとして維持する。repository内ではpluginごとに一段のdirectoryを設け、`.vreview/plugins/<id>`へ導入できる。同じIDをnpm packageとlegacy registryの両方が提供した場合はfail closedとする。`.vreview`へnpm package本体はcopyしない。
+従来のworkspace単位installも移行用compatibility layerとして維持する。repository内ではpluginごとに一段のdirectoryを設け、`.vrev/plugins/<id>`へ導入できる。同じIDをnpm packageとlegacy registryの両方が提供した場合はfail closedとする。`.vrev`へnpm package本体はcopyしない。
 
 ```text
 plugins/
   example/
-    visual-review.plugin.json
+    vrev.plugin.json
     dist/index.js
 ```
 
-`visual-review.plugin.json`がplugin rootを示す。legacy install元directoryはこのfileを直下に持つ必要があり、親の`plugins/`をまとめてinstallするものではない。
+`vrev.plugin.json`がplugin rootを示す。legacy install元directoryはこのfileを直下に持つ必要があり、親の`plugins/`をまとめてinstallするものではない。
 
 ## Manifest schema
 
@@ -69,7 +69,7 @@ schema v4が新規pluginの既定contractである。v3のdisplay/configuration�
 - schema v3/v4の`display`はtitle、短いsummary、安全なREADME相対pathを宣言する。`configuration`はCoreが描画するstring/integer/boolean/selectだけを使い、任意HTMLは指定できない。
 - schema v4の`server`はAPI/bridge version、module、JSON contractを宣言する。`ui`はrenderer/bridge version、Core slot（`review.header`/`review.stage`/`review.sidebar`/`settings.detail`）または他pluginのextension pointへのJSON document、任意の`browser_module`、自pluginが受け入れる`extension_points`を宣言できる（[plugin-ui-bridge.md §2.2](plugin-ui-bridge.md)）。`browser_module`は導入済みplugin内のcanonical local ES moduleだけをCore route経由で実行し、remote script・任意HTML・plugin CSSは許可しない。trusted host codeとして扱うため、未信頼pluginは導入しない。
 - schema v4の`requires`/`provides`はcapability名とexact `api_version: 1`を宣言する。required capability不足は明示的にunavailableとなり、暗黙fallbackしない。
-- credentialは`source: environment`で環境変数名だけを宣言するか（値をUIや`.vreview/plugin-settings.json`へ保存しない）、schema v3以降では`source: "credential"`（`type: "secret"`必須、両方セットで宣言する）でCore管理のcredential storeへ登録できる。credential fieldは`default`・`options`・`environment`を持てない。任意で`format: "text" | "json"`を指定でき（credential field以外では指定不可）、`json`はUIがmultiline textareaを表示しサーバがJSON objectとしてparseできる値だけを受理する。値は`.vreview/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vreview/.gitignore`へ自動追記）へ保存され、UI・APIへ値そのものは返らない（登録有無・更新日時・値のsha256先頭8文字のfingerprintのみ）。設定画面は`PUT`/`DELETE` `/api/settings/plugins/:id/credentials/:key`でcredentialを登録・削除する（`key`はmanifestで宣言済みのcredential fieldでなければならない）。
+- credentialは`source: environment`で環境変数名だけを宣言するか（値をUIや`.vrev/plugin-settings.json`へ保存しない）、schema v3以降では`source: "credential"`（`type: "secret"`必須、両方セットで宣言する）でCore管理のcredential storeへ登録できる。credential fieldは`default`・`options`・`environment`を持てない。任意で`format: "text" | "json"`を指定でき（credential field以外では指定不可）、`json`はUIがmultiline textareaを表示しサーバがJSON objectとしてparseできる値だけを受理する。値は`.vrev/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vrev/.gitignore`へ自動追記）へ保存され、UI・APIへ値そのものは返らない（登録有無・更新日時・値のsha256先頭8文字のfingerprintのみ）。設定画面は`PUT`/`DELETE` `/api/settings/plugins/:id/credentials/:key`でcredentialを登録・削除する（`key`はmanifestで宣言済みのcredential fieldでなければならない）。
 - `module`はplugin rootからの`./`始まりのcanonical POSIX relative pathでなければならない。絶対path、`..`、backslashは受理しない。
 - `export`を省略すると`default`をloadする。
 - schemaにないfield、重複command、存在しないmoduleはinstall時に拒否する。
@@ -79,53 +79,53 @@ schema v4が新規pluginの既定contractである。v3のdisplay/configuration�
 最小構成はCLIで生成できる。生成先はworkspace rootの`plugins/<id>/`で、schema v4 manifest（`requires`でreview capabilityを宣言）、server module（`server/index.js`）とbridge contract（`server.contract.json`）、`annotation-workflow.annotation.actions`へのUI contribution（`ui/annotation-action.ui.json`）、editor用の型re-export（`types.d.ts`）、`index.js`、`package.json`、README、Node testを含む。hello commandとUI contributionは生成直後からそのまま動作する。serverのquery/commandを増やす場合はcontractと`server/index.js`を、extension pointをhostする場合は`ui.extension_points`をそれぞれ書き換える。
 
 ```sh
-visual-review plugin create --help
-visual-review plugin create my-plugin --title "My Plugin" --summary "概要"
+vrev plugin create --help
+vrev plugin create my-plugin --title "My Plugin" --summary "概要"
 # または生成直後にworkspaceへinstall
-visual-review plugin create my-plugin --install
+vrev plugin create my-plugin --install
 ```
 
 既存directoryは上書きしない。生成された`hello` commandをtest・実行してから、必要なcommand/providerへ置き換えられる。
 
 ```sh
 cd plugins/my-plugin && npm test
-visual-review plugin run my-plugin hello world
+vrev plugin run my-plugin hello world
 ```
 
 ## Installation and registry
 
 first-party feature packageは次の6つだけで、public npm registryへ個別publishする。
 
-- `@visual-review/ai` — CLI選択、外部AIコマンド、共通AI実行
-- `@visual-review/storage-firestore` — Firestore storage provider
-- `@visual-review/review` — review domain
-- `@visual-review/annotation-workflow` — annotation job workflow
-- `@visual-review/page-map` — 静的画面遷移解析
-- `@visual-review/github-issue` — GitHub Issue draft/create
+- `@vrev/ai` — CLI選択、外部AIコマンド、共通AI実行
+- `@vrev/storage-firestore` — Firestore storage provider
+- `@vrev/review` — review domain
+- `@vrev/annotation-workflow` — annotation job workflow
+- `@vrev/page-map` — 静的画面遷移解析
+- `@vrev/github-issue` — GitHub Issue draft/create
 
 ```sh
-npm install --save-dev @visual-review/ai @visual-review/storage-firestore @visual-review/review @visual-review/annotation-workflow @visual-review/page-map @visual-review/github-issue
+npm install --save-dev @vrev/ai @vrev/storage-firestore @vrev/review @vrev/annotation-workflow @vrev/page-map @vrev/github-issue
 npm install --save-dev @scope/public-plugin@1.2.0
-npx visual-review plugin list
+npx vrev plugin list
 ```
 
 Core runtimeとplugin author向けSDKはhost infrastructureであり、この6つのfeature packageには数えない。
 
-`visual-review serve`は最寄りのGit rootをworkspaceとし、その`package.json`の直接依存をNodeのpackage resolutionで解決する。package managerが管理する実体は`node_modules`に留め、`.vreview`にはplugin設定、credential、review/runtime状態だけを保存する。package pluginの削除・version変更はnpm/pnpm/yarn側で行う。
+`vrev serve`は最寄りのGit rootをworkspaceとし、その`package.json`の直接依存をNodeのpackage resolutionで解決する。package managerが管理する実体は`node_modules`に留め、`.vrev`にはplugin設定、credential、review/runtime状態だけを保存する。package pluginの削除・version変更はnpm/pnpm/yarn側で行う。
 
 one-beta移行期間は次のlegacy操作も維持する。
 
 ```sh
-visual-review plugin install ./plugins/example
-visual-review plugin install @scope/public-plugin@1.2.0
-visual-review plugin list
-visual-review plugin run example-storage sync --dry-run
-visual-review plugin remove example-storage
+vrev plugin install ./plugins/example
+vrev plugin install @scope/public-plugin@1.2.0
+vrev plugin list
+vrev plugin run example-storage sync --dry-run
+vrev plugin remove example-storage
 ```
 
-legacy installの実体は`.vreview/plugins/<plugin-id>/`、registry/lockは`.vreview/plugins.json`へ保存する。同じIDの再installは暗黙に上書きせず失敗する。global Coreだけで起動する既存workspace向けには標準packageのbundled copyを自動導入する。同じbundled source由来でmanifest一致を確認できるtrusted copyだけはatomic upgradeし、local/third-partyのsame-IDや改変済みcopyは上書きしない。
+legacy installの実体は`.vrev/plugins/<plugin-id>/`、registry/lockは`.vrev/plugins.json`へ保存する。同じIDの再installは暗黙に上書きせず失敗する。global Coreだけで起動する既存workspace向けには標準packageのbundled copyを自動導入する。同じbundled source由来でmanifest一致を確認できるtrusted copyだけはatomic upgradeし、local/third-partyのsame-IDや改変済みcopyは上書きしない。
 
-local directoryはsymlinkと通常file/directory以外を拒否してcopyする。npm specは一時directoryで`shell: false`の`npm pack <spec> --json --ignore-scripts`を実行し、archive entryを検査してから展開する。absolute path、traversal、link、特殊entry、不正manifestを拒否する。認証情報を含むURLやcredential query、control文字を含むsourceも拒否し、install実体・registry・plugin設定・AI packageの外部command設定は`.vreview/.gitignore`へ追加する。install中にplugin moduleをimportせず、manifestをdataとしてだけ検証する。registry更新には既存のfile lockとatomic JSON writeを使う。
+local directoryはsymlinkと通常file/directory以外を拒否してcopyする。npm specは一時directoryで`shell: false`の`npm pack <spec> --json --ignore-scripts`を実行し、archive entryを検査してから展開する。absolute path、traversal、link、特殊entry、不正manifestを拒否する。認証情報を含むURLやcredential query、control文字を含むsourceも拒否し、install実体・registry・plugin設定・AI packageの外部command設定は`.vrev/.gitignore`へ追加する。install中にplugin moduleをimportせず、manifestをdataとしてだけ検証する。registry更新には既存のfile lockとatomic JSON writeを使う。
 
 legacy npm source installではinstall scriptやdependency installを実行しない。公開pluginはNode標準APIだけで自己完結させるか、runtime dependencyを成果物へbundleしてpackageへ含める必要がある。標準packageはrelease workflowから個別にpublic npm registryへpublishされる。
 
@@ -149,9 +149,9 @@ installに成功したentryへは`resolved`（`{ kind, ref?, integrity?, digest,
 
 ## Declarative UI and plugin management
 
-1.1.9ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。レビュー画面のshell（header・左の描画領域・右のcontent column）はCoreが所有し、pluginは`review.header`（header右側への追加）、`review.stage`（左側の描画。2つ以上あればCoreが切り替えmenuを提供）、`review.sidebar`（右側への追加）の各slotへ部品だけを提供する。公式`review` pluginはheader用のレビュー操作toolbarとstage用の対象表示を提供し、AI、workflow、page-map、Issue pluginのdocumentをslotへ合成する。headerとsidebarの表示順、表示するstage、切り替えmenuの位置（四隅、既定は右下）は`/settings`で編集し、Git管理外の`.vreview/layout-settings.json`へ保存する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
+1.1.9ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。レビュー画面のshell（header・左の描画領域・右のcontent column）はCoreが所有し、pluginは`review.header`（header右側への追加）、`review.stage`（左側の描画。2つ以上あればCoreが切り替えmenuを提供）、`review.sidebar`（右側への追加）の各slotへ部品だけを提供する。公式`review` pluginはheader用のレビュー操作toolbarとstage用の対象表示を提供し、AI、workflow、page-map、Issue pluginのdocumentをslotへ合成する。headerとsidebarの表示順、表示するstage、切り替えmenuの位置（四隅、既定は右下）は`/settings`で編集し、Git管理外の`.vrev/layout-settings.json`へ保存する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
 
-レビュー画面headerの「設定」は`/settings`（レイアウト設定）へ遷移し、そこからinstall済みplugin一覧`/settings/plugins`へ移動できる。`/settings/plugins`は既定で公開する。`.vreview/settings.json`の`ui.plugin_management`がexactly `false`のworkspaceだけ非表示にする。UIからこのvisibility自体は変更できない。管理画面はinstall済みpluginをtitle・summary・即時保存toggle・「詳細」だけのcompact listで表示する。詳細buttonは共通modalを開き、version/capability、必要情報、plugin固有設定、READMEを集約する。CLI選択と外部AIコマンド登録はAI packageの詳細だけに表示する。READMEはraw HTMLを実行せず、安全なMarkdown subsetをDOM nodeとして整形する。有効/無効toggleは設定保存buttonを要求せずworkspaceへ即時保存し、結果をtoastで通知する。`annotation-workflow`で「注釈を保存したら自動でAI修正を開始」が有効な場合、メイン画面の「AIにまとめて修正依頼」buttonは重複操作になるため非表示にする。`annotation-workflow`を無効化するとレビュー画面のAI一括修正領域とworkflow固有設定を非表示にし、新規job登録をserver側でも拒否する。AI packageを無効化すると登録データを残したままAI設定と実行を利用不能にする。workspace設定値はGit管理外の`.vreview/plugin-settings.json`へatomic保存し、disabled状態はpluginのinstall状態と分離して再起動後も維持する。
+レビュー画面headerの「設定」は`/settings`（レイアウト設定）へ遷移し、そこからinstall済みplugin一覧`/settings/plugins`へ移動できる。`/settings/plugins`は既定で公開する。`.vrev/settings.json`の`ui.plugin_management`がexactly `false`のworkspaceだけ非表示にする。UIからこのvisibility自体は変更できない。管理画面はinstall済みpluginをtitle・summary・即時保存toggle・「詳細」だけのcompact listで表示する。詳細buttonは共通modalを開き、version/capability、必要情報、plugin固有設定、READMEを集約する。CLI選択と外部AIコマンド登録はAI packageの詳細だけに表示する。READMEはraw HTMLを実行せず、安全なMarkdown subsetをDOM nodeとして整形する。有効/無効toggleは設定保存buttonを要求せずworkspaceへ即時保存し、結果をtoastで通知する。`annotation-workflow`で「注釈を保存したら自動でAI修正を開始」が有効な場合、メイン画面の「AIにまとめて修正依頼」buttonは重複操作になるため非表示にする。`annotation-workflow`を無効化するとレビュー画面のAI一括修正領域とworkflow固有設定を非表示にし、新規job登録をserver側でも拒否する。AI packageを無効化すると登録データを残したままAI設定と実行を利用不能にする。workspace設定値はGit管理外の`.vrev/plugin-settings.json`へatomic保存し、disabled状態はpluginのinstall状態と分離して再起動後も維持する。
 
 ## Runtime API
 
@@ -166,8 +166,8 @@ import {
   type PluginCommandHandler,
   type PluginIssueProvider,
   type PluginStorageProvider,
-} from "@visual-review/core";
-import type { VisualReviewPluginManifestV1 } from "@visual-review/plugin-sdk";
+} from "vrev";
+import type { VrevPluginManifestV1 } from "@vrev/plugin-sdk";
 ```
 
 ```ts

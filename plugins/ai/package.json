@@ -1,7 +1,7 @@
 {
-  "name": "@visual-review/ai",
+  "name": "@vrev/ai",
   "version": "1.0.1",
-  "description": "Reusable AI capability and integration-method facade for Visual Review",
+  "description": "Reusable AI capability and integration-method facade for Vrev",
   "license": "UNLICENSED",
   "type": "module",
   "files": [
@@ -9,7 +9,7 @@
     "server",
     "server.contract.json",
     "ui",
-    "visual-review.plugin.json"
+    "vrev.plugin.json"
   ],
   "exports": {
     ".": "./server/index.js"
@@ -24,8 +24,8 @@
   "scripts": {
     "test": "node --test test/*.test.js"
   },
-  "visualReview": {
+  "vrev": {
     "apiVersion": 1,
-    "manifest": "./visual-review.plugin.json"
+    "manifest": "./vrev.plugin.json"
   }
 }

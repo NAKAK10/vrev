@@ -7,7 +7,7 @@ export declare const AI_CAPABILITY_API_VERSION = 1;
 export declare const AI_INTEGRATION_REGISTRY_CAPABILITY_ID = "ai.integration-registry";
 export declare const AI_INTEGRATION_REGISTRY_CAPABILITY_API_VERSION = 1;
 
-export interface VisualReviewPackageMetadataV1 {
+export interface VrevPackageMetadataV1 {
   apiVersion: 1;
   /** Canonical `./`-prefixed path to the manifest within this package. */
   manifest: string;
@@ -74,7 +74,7 @@ export interface PluginBridgeContractV1 {
   commands: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
 
-export interface VisualReviewPluginManifestV1 {
+export interface VrevPluginManifestV1 {
   schema_version: 4;
   id: string;
   version: string;
@@ -91,7 +91,7 @@ export interface VisualReviewPluginManifestV1 {
   custom_command_provider?: PluginModuleReferenceV1 & { api_version: 1 };
 }
 
-export type VisualReviewPluginManifest = VisualReviewPluginManifestV1;
+export type VrevPluginManifest = VrevPluginManifestV1;
 
 export type PluginPrincipalV1 = "human-ui" | "local-cli" | "system";
 

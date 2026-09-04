@@ -37,7 +37,7 @@ interface CacheEntry {
 }
 
 // One cache entry per project root: several workspaces can share this process (tests, a long-lived
-// server handling multiple targets). Invalidated whenever `.vreview/plugin-settings.json` changes.
+// server handling multiple targets). Invalidated whenever `.vrev/plugin-settings.json` changes.
 const backendCache = new Map<string, CacheEntry>();
 
 async function resolveEnabledStorageBackend(projectRoot: string): Promise<ResolvedBackend> {

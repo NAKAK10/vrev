@@ -18,7 +18,7 @@ import {
 } from "../src/index.js";
 
 function repository(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-extraction-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-extraction-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Review</h1>");
@@ -47,7 +47,7 @@ test("deprecated ReviewStore and ReviewCapability share the plugin-owned persist
     source_hash: fileSha256(facade.targetPath),
   }, "review:0"), /review revision conflict/);
   assert.equal((await capability.store.load()).revision, 1);
-  assert.match(facade.path, /\.vreview\/reviews\/index--60e665b01e89\/review\.json$/);
+  assert.match(facade.path, /\.vrev\/reviews\/index--60e665b01e89\/review\.json$/);
 });
 
 test("bundled review server registers and removes ReviewCapabilityV1", async () => {

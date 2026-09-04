@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 import { atomicWriteJson, fileSha256, resolveTarget, ReviewStore, reviewDirectoryName, sanitizeAnchor, withFileLock } from "../src/index.js";
 
 function repository(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-"));
   mkdirSync(path.join(root, ".code/htmls/pages"), { recursive: true });
   mkdirSync(path.join(root, "assets"));
   writeFileSync(path.join(root, ".code/htmls/pages/index.html"), "<h1>日本語</h1>");
@@ -25,8 +25,8 @@ test("uses deterministic destination and stable JSON format", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: root });
   assert.equal(reviewDirectoryName(store.entryPath), "index--d324f44dd58b");
   await store.load();
-  assert.match(store.path, /\.vreview\/reviews\/index--d324f44dd58b\/review\.json$/);
-  assert.match(store.resolvedPath, /\.vreview\/reviews\/index--d324f44dd58b\/resolved\.json$/);
+  assert.match(store.path, /\.vrev\/reviews\/index--d324f44dd58b\/review\.json$/);
+  assert.match(store.resolvedPath, /\.vrev\/reviews\/index--d324f44dd58b\/resolved\.json$/);
   const text = readFileSync(store.path, "utf8");
   assert.ok(text.includes("日本語") === false);
   assert.ok(text.endsWith("\n"));
@@ -71,17 +71,17 @@ test("rejects absolute, traversal, hidden, sensitive, wrong-root and symlink tar
 });
 
 test("stores workspace settings centrally for a monorepo project", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-monorepo-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-monorepo-"));
   mkdirSync(path.join(root, ".git"));
   const project = path.join(root, "apps/web");
   mkdirSync(path.join(project, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(project, ".code/htmls/index.html"), "<h1>Web</h1>");
   const store = new ReviewStore("apps/web/.code/htmls/index.html", { projectRoot: root, projectDirectory: project });
   await store.load();
-  const settings = JSON.parse(readFileSync(path.join(root, ".vreview/settings.json"), "utf8")) as { workspace: { monorepo: boolean }; projects: Array<{ path: string; reviews: Array<{ review_path: string }> }> };
+  const settings = JSON.parse(readFileSync(path.join(root, ".vrev/settings.json"), "utf8")) as { workspace: { monorepo: boolean }; projects: Array<{ path: string; reviews: Array<{ review_path: string }> }> };
   assert.equal(settings.workspace.monorepo, true);
   assert.equal(settings.projects[0]?.path, "apps/web");
-  assert.match(settings.projects[0]?.reviews[0]?.review_path ?? "", /^\.vreview\/reviews\/.*\/review\.json$/);
+  assert.match(settings.projects[0]?.reviews[0]?.review_path ?? "", /^\.vrev\/reviews\/.*\/review\.json$/);
 });
 
 test("separates resolved annotations and moves reopened feedback back to active JSON", async () => {
@@ -107,7 +107,7 @@ test("active reads exclude archived annotations without loading the resolved pay
   await assert.rejects(store.load());
 });
 
-test("migrates legacy review JSON into root .vreview storage", async () => {
+test("migrates legacy review JSON into root .vrev storage", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   const review = await store.load();
   unlinkSync(store.path);
@@ -165,8 +165,8 @@ test("refreshes the annotation source hash after an AI fix", async () => {
 
 test("rejects a symlinked review storage root", () => {
   const root = repository();
-  const outside = mkdtempSync(path.join(os.tmpdir(), "visual-review-outside-"));
-  symlinkSync(outside, path.join(root, ".vreview"));
+  const outside = mkdtempSync(path.join(os.tmpdir(), "vrev-outside-"));
+  symlinkSync(outside, path.join(root, ".vrev"));
   assert.throws(
     () => new ReviewStore("assets/image.png", { projectRoot: root }),
     /storage path.*symbolic links/,

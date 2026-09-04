@@ -1,6 +1,6 @@
-# @visual-review/plugin-sdk
+# @vrev/plugin-sdk
 
-Visual Review package API v1、Plugin Host bridge、server lifecycle、versioned capability、`ai/v1`、AI integration provider、workspace storage providerのTypeScript contractを提供します。
+Vrev package API v1、Plugin Host bridge、server lifecycle、versioned capability、`ai/v1`、AI integration provider、workspace storage providerのTypeScript contractを提供します。
 
 runtime helperは定数だけで、Coreやfeature packageへ依存しません。
 
@@ -12,16 +12,16 @@ import {
   type AiIntegrationProviderV1,
   type PluginServerProviderV1,
   type RunnerProviderV1,
-} from "@visual-review/plugin-sdk";
+} from "@vrev/plugin-sdk";
 ```
 
-Visual Review対応npm packageは、自身の`package.json`へ次を宣言します。
+Vrev対応npm packageは、自身の`package.json`へ次を宣言します。
 
 ```json
 {
-  "visualReview": {
+  "vrev": {
     "apiVersion": 1,
-    "manifest": "./visual-review.plugin.json"
+    "manifest": "./vrev.plugin.json"
   }
 }
 ```

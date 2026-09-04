@@ -15,7 +15,7 @@ let activeToast = null;
 let deferredReviewRender = false;
 const reviewSelection = { annotation_id: null, page_path: null, anchor: null };
 let activeSelection = null;
-const DISCLOSURE_SEEN_KEY = "visual-review.disclosure-seen/v1";
+const DISCLOSURE_SEEN_KEY = "vrev.disclosure-seen/v1";
 const disclosureSeenValues = (() => {
   try {
     const value = JSON.parse(localStorage.getItem(DISCLOSURE_SEEN_KEY) || "{}");
@@ -113,7 +113,7 @@ function matchesSchema(value, schema) {
   }
 }
 function contributionLocalState(contribution) {
-  const key = `visual-review:renderer:1:${contribution.plugin_id}:${contribution.id}`;
+  const key = `vrev:renderer:1:${contribution.plugin_id}:${contribution.id}`;
   const state = {};
   for (const declaration of contribution.document.local_state || []) state[declaration.key] = structuredClone(declaration.default);
   try {
@@ -141,7 +141,7 @@ function pluginLocalState(pluginId) {
   const declarations = pluginLocalStateDeclarations(pluginId);
   const state = {};
   for (const declaration of declarations) state[declaration.key] = structuredClone(declaration.default);
-  const key = `visual-review:renderer:2:${pluginId}`;
+  const key = `vrev:renderer:2:${pluginId}`;
   let restored = false;
   try {
     const stored = JSON.parse(localStorage.getItem(key) || "null");
@@ -151,7 +151,7 @@ function pluginLocalState(pluginId) {
     for (const contribution of surface?.contributions || []) {
       if (contribution.plugin_id !== pluginId) continue;
       try {
-        const legacy = JSON.parse(localStorage.getItem(`visual-review:renderer:1:${pluginId}:${contribution.id}`) || "null");
+        const legacy = JSON.parse(localStorage.getItem(`vrev:renderer:1:${pluginId}:${contribution.id}`) || "null");
         if (legacy?.schema_version === 1 && legacy.values && typeof legacy.values === "object") Object.assign(state, legacy.values);
       } catch {}
     }
@@ -901,7 +901,7 @@ function ensureShell() {
   appShell.dataset.baseShell = "review";
   const header = element("header", "vr-header vr-base-header");
   const brand = element("div", "vr-brand-copy");
-  const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW";
+  const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VREV";
   const title = element("h1", "vr-page-title");
   brand.append(eyebrow, title);
   const actions = element("div", "vr-header-actions");
@@ -1020,7 +1020,7 @@ function rerender() {
   deferredReviewRender = false;
   const activeId = document.activeElement?.id; dialogs.clear();
   const shellElements = ensureShell();
-  shellElements.title.textContent = surface.page?.title || "Visual Redline Review";
+  shellElements.title.textContent = surface.page?.title || "Vrev";
   renderHeaderActions(shellElements.actions);
   renderStageHost(shellElements.stageHost);
   renderSidebarHost(shellElements.sidebarHost);
@@ -1089,7 +1089,7 @@ async function renderSettings() {
   const management = await managementResponse.json(); surface = await surfaceResponse.json(); applyTheme(surface.theme);
   const shell = element("div", "vr-app-shell vr-settings-shell");
   const header = element("header", "vr-header vr-settings-header");
-  const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW"; const heading = element("h1"); heading.textContent = "プラグイン設定"; brand.append(eyebrow, heading);
+  const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VREV"; const heading = element("h1"); heading.textContent = "プラグイン設定"; brand.append(eyebrow, heading);
   const generalSettings = element("a", "vr-link"); generalSettings.href = "/settings"; generalSettings.textContent = "設定へ戻る";
   header.append(brand, generalSettings); shell.append(header);
   const page = element("main", "vr-settings-page");
@@ -1265,8 +1265,8 @@ function renderStorageTransferSection(plugin) {
   const directionField = element("label", "vr-field vr-field-select");
   const directionLabel = element("span", "vr-field-label"); directionLabel.textContent = "方向"; directionField.append(directionLabel);
   const directionSelect = element("select", "vr-select");
-  const localToPlugin = element("option"); localToPlugin.value = "local-to-plugin"; localToPlugin.textContent = `ローカル（.vreview） → ${plugin.title}`;
-  const pluginToLocal = element("option"); pluginToLocal.value = "plugin-to-local"; pluginToLocal.textContent = `${plugin.title} → ローカル（.vreview）`;
+  const localToPlugin = element("option"); localToPlugin.value = "local-to-plugin"; localToPlugin.textContent = `ローカル（.vrev） → ${plugin.title}`;
+  const pluginToLocal = element("option"); pluginToLocal.value = "plugin-to-local"; pluginToLocal.textContent = `${plugin.title} → ローカル（.vrev）`;
   directionSelect.append(localToPlugin, pluginToLocal);
   directionField.append(directionSelect);
   section.append(directionField);
@@ -1454,7 +1454,7 @@ async function saveLayoutSettings(patch, layoutPayload) {
 function paintGeneralSettings(layoutPayload) {
   const shell = element("div", "vr-app-shell vr-settings-shell");
   const header = element("header", "vr-header vr-settings-header");
-  const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW"; const heading = element("h1"); heading.textContent = "設定"; brand.append(eyebrow, heading);
+  const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VREV"; const heading = element("h1"); heading.textContent = "設定"; brand.append(eyebrow, heading);
   const back = element("a", "vr-link"); back.href = "/"; back.textContent = "レビューへ戻る"; header.append(brand, back); shell.append(header);
   const page = element("main", "vr-settings-page");
   const pluginSection = element("section", "vr-settings-card");

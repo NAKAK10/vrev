@@ -9,15 +9,15 @@ import test, { after, before } from "node:test";
 import {
   acquireServerLease,
   assertLoopbackHost,
-  createVisualReviewServer,
+  createVrevServer,
   fileSha256,
   MAX_REQUEST_BODY,
-  type VisualReviewServer,
+  type VrevServer,
 } from "../src/index.js";
 import { ensureDefaultPlugins, listenOnAvailablePort, parseCliArguments } from "../src/cli.js";
 
 let root: string;
-let visualReview: VisualReviewServer;
+let vrev: VrevServer;
 let baseUrl: string;
 const createdIssueDrafts: Array<{ title: string; body: string }> = [];
 let releaseIssueCreation: (() => void) | null = null;
@@ -50,9 +50,9 @@ async function openEventStream(url: string): Promise<{ next(): Promise<Record<st
 }
 
 before(async () => {
-  root = mkdtempSync(path.join(os.tmpdir(), "visual-review-server-"));
+  root = mkdtempSync(path.join(os.tmpdir(), "vrev-server-"));
   mkdirSync(path.join(root, ".code/htmls/pages"), { recursive: true });
-  mkdirSync(path.join(root, ".code/visual-reviews"), { recursive: true });
+  mkdirSync(path.join(root, ".code/vrevs"), { recursive: true });
   mkdirSync(path.join(root, "assets"));
   writeFileSync(
     path.join(root, ".code/htmls/pages/index.html"),
@@ -62,10 +62,10 @@ before(async () => {
   writeFileSync(path.join(root, ".code/htmls/pages/styles.css"), "body{};");
   writeFileSync(path.join(root, ".code/htmls/pages/.hidden.html"), "hidden");
   writeFileSync(path.join(root, ".code/htmls/pages/secret-token.js"), "secret");
-  writeFileSync(path.join(root, ".code/visual-reviews/review.json"), "{}");
+  writeFileSync(path.join(root, ".code/vrevs/review.json"), "{}");
   writeFileSync(path.join(root, "assets/logo.png"), "png-data");
   await ensureDefaultPlugins(root);
-  visualReview = createVisualReviewServer({
+  vrev = createVrevServer({
     projectRoot: root,
     target: ".code/htmls/pages/index.html",
     jobManager: {
@@ -77,14 +77,14 @@ before(async () => {
       return { url: "https://github.com/example/project/issues/42" };
     },
   });
-  await new Promise<void>((resolve) => visualReview.server.listen(0, "127.0.0.1", resolve));
-  const address = visualReview.server.address();
+  await new Promise<void>((resolve) => vrev.server.listen(0, "127.0.0.1", resolve));
+  const address = vrev.server.address();
   assert.ok(address && typeof address !== "string");
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
 
 after(async () => {
-  await visualReview.close();
+  await vrev.close();
 });
 
 test("serves built UI and compatible session/security headers", async () => {
@@ -147,7 +147,7 @@ test("broadcasts mutations to multiple event-stream clients", async () => {
     const created = await fetch(`${baseUrl}/api/annotations`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "dom", page_path: ".code/htmls/pages/index.html", comment: "Concurrent sync", anchor: { selector: "h1" }, source_hash: visualReview.store.sourceHash() }),
+      body: JSON.stringify({ kind: "dom", page_path: ".code/htmls/pages/index.html", comment: "Concurrent sync", anchor: { selector: "h1" }, source_hash: vrev.store.sourceHash() }),
     });
     assert.equal(created.status, 200);
     const [left, right] = await Promise.all([first.next(), second.next()]);
@@ -162,19 +162,19 @@ test("plugin management is visible by default and can be explicitly hidden", asy
   assert.equal((await fetch(`${baseUrl}/settings/plugins`)).status, 200);
   assert.equal((await fetch(`${baseUrl}/api/settings/plugins`)).status, 200);
 
-  const hiddenRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-hidden-plugin-settings-"));
+  const hiddenRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-hidden-plugin-settings-"));
   mkdirSync(path.join(hiddenRoot, ".git"));
   mkdirSync(path.join(hiddenRoot, ".code/htmls"), { recursive: true });
-  mkdirSync(path.join(hiddenRoot, ".vreview"), { recursive: true });
+  mkdirSync(path.join(hiddenRoot, ".vrev"), { recursive: true });
   writeFileSync(path.join(hiddenRoot, ".code/htmls/index.html"), "<h1>Hidden settings</h1>");
-  writeFileSync(path.join(hiddenRoot, ".vreview/settings.json"), JSON.stringify({
+  writeFileSync(path.join(hiddenRoot, ".vrev/settings.json"), JSON.stringify({
     schema_version: 1,
     workspace: { root: ".", monorepo: false },
     ui: { plugin_management: false },
     projects: [],
   }));
   await ensureDefaultPlugins(hiddenRoot);
-  const hiddenServer = createVisualReviewServer({ projectRoot: hiddenRoot, target: ".code/htmls/index.html" });
+  const hiddenServer = createVrevServer({ projectRoot: hiddenRoot, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => hiddenServer.server.listen(0, "127.0.0.1", resolve));
   try {
     const hiddenAddress = hiddenServer.server.address();
@@ -186,19 +186,19 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     await hiddenServer.close();
   }
 
-  const settingsRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-settings-"));
+  const settingsRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-plugin-settings-"));
   mkdirSync(path.join(settingsRoot, ".git"));
   mkdirSync(path.join(settingsRoot, ".code/htmls"), { recursive: true });
-  mkdirSync(path.join(settingsRoot, ".vreview"), { recursive: true });
+  mkdirSync(path.join(settingsRoot, ".vrev"), { recursive: true });
   writeFileSync(path.join(settingsRoot, ".code/htmls/index.html"), "<h1>Settings</h1>");
-  writeFileSync(path.join(settingsRoot, ".vreview/settings.json"), JSON.stringify({
+  writeFileSync(path.join(settingsRoot, ".vrev/settings.json"), JSON.stringify({
     schema_version: 1,
     workspace: { root: ".", monorepo: false },
     ui: { plugin_management: true },
     projects: [],
   }));
   await ensureDefaultPlugins(settingsRoot);
-  const server = createVisualReviewServer({ projectRoot: settingsRoot, target: ".code/htmls/index.html" });
+  const server = createVrevServer({ projectRoot: settingsRoot, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => server.server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.server.address();
@@ -211,7 +211,7 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     assert.equal(ai?.enabled, true);
     assert.equal(ai?.has_readme, true);
     const readme = await (await fetch(`${url}/api/settings/plugins/ai/readme`)).json() as { readme: string };
-    assert.match(readme.readme, /@visual-review\/ai/);
+    assert.match(readme.readme, /@vrev\/ai/);
     const aiSettingsResponse = await fetch(`${url}/api/plugin-host/v1/plugins/ai/queries/ai.settings`, {
       method: "POST",
       headers: { "Content-Type": "application/json", origin: url },
@@ -223,7 +223,7 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     assert.equal(aiSettings.data.available, true);
     assert.equal(aiSettings.data.options.some(({ value }) => value === "claude"), true);
 
-    const probeScript = `require("node:fs").writeFileSync(".visual-review-command-test","VISUAL_REVIEW_OK");process.stdout.write("VISUAL_REVIEW_OK")`;
+    const probeScript = `require("node:fs").writeFileSync(".vrev-command-test","VISUAL_REVIEW_OK");process.stdout.write("VISUAL_REVIEW_OK")`;
     const addedResponse = await fetch(`${url}/api/jobs/custom-commands`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Server runner", command: `${process.execPath} -e '${probeScript}' {prompt}` }),
@@ -335,7 +335,7 @@ test("safe mode preserves source bytes and relies on the compatible iframe sandb
   const ui = readFileSync(new URL("../src/ui/index.html", import.meta.url), "utf8");
   assert.match(ui, /sandbox="allow-same-origin allow-forms"/);
 
-  const trusted = createVisualReviewServer({
+  const trusted = createVrevServer({
     projectRoot: root,
     target: ".code/htmls/pages/other.html",
     allowScripts: true,
@@ -354,7 +354,7 @@ test("safe mode preserves source bytes and relies on the compatible iframe sandb
 });
 
 test("owner lease rejects a live owner, recovers stale PID, and only owner token releases", () => {
-  const leaseRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-lease-"));
+  const leaseRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-lease-"));
   const reviewPath = path.join(leaseRoot, "review.json");
   const lease = acquireServerLease(reviewPath, "test");
   assert.throws(() => acquireServerLease(reviewPath, "second"), /already owns/);
@@ -397,7 +397,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
   assert.ok(upstreamAddress && typeof upstreamAddress !== "string");
   const liveUrl = `http://127.0.0.1:${upstreamAddress.port}/`;
   alternateOrigin = `http://localhost:${upstreamAddress.port}`;
-  const live = createVisualReviewServer({ projectRoot: root, target: liveUrl, allowAiJobsWithScripts: true });
+  const live = createVrevServer({ projectRoot: root, target: liveUrl, allowAiJobsWithScripts: true });
   await new Promise<void>((resolve) => live.server.listen(0, "127.0.0.1", resolve));
   try {
     const address = live.server.address();
@@ -421,7 +421,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
     assert.match(html, /href="\/live\/alias"/);
     assert.equal(
       await (await fetch(`${url}/live/app.js`)).text(),
-      `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(window.__visualReviewUrl(route));\nfetch('/live/api/data');`,
+      `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(window.__vrevUrl(route));\nfetch('/live/api/data');`,
     );
     const evalScript = await (await fetch(`${url}/live/eval.js`)).text();
     assert.equal(evalScript, `eval("const page = window.location.pathname;");`);
@@ -452,7 +452,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
 });
 
 test("public targets stay script-free and reject private network resolution", async () => {
-  const live = createVisualReviewServer({ projectRoot: root, target: "https://10.0.0.1/", allowScripts: true });
+  const live = createVrevServer({ projectRoot: root, target: "https://10.0.0.1/", allowScripts: true });
   await new Promise<void>((resolve) => live.server.listen(0, "127.0.0.1", resolve));
   const address = live.server.address();
   assert.ok(address && typeof address !== "string");
@@ -470,7 +470,7 @@ test("public targets stay script-free and reject private network resolution", as
 });
 
 test("trusted script mode disables every jobs API without explicit AI consent", async () => {
-  const trusted = createVisualReviewServer({ projectRoot: root, target: ".code/htmls/pages/other.html", allowScripts: true });
+  const trusted = createVrevServer({ projectRoot: root, target: ".code/htmls/pages/other.html", allowScripts: true });
   await new Promise<void>((resolve) => trusted.server.listen(0, "127.0.0.1", resolve));
   try {
     const address = trusted.server.address();
@@ -486,7 +486,7 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
 });
 
 test("trusted script mode enables jobs only with explicit AI consent", async () => {
-  const trusted = createVisualReviewServer({
+  const trusted = createVrevServer({
     projectRoot: root,
     target: ".code/htmls/pages/other.html",
     allowScripts: true,
@@ -514,11 +514,11 @@ test("trusted script mode enables jobs only with explicit AI consent", async () 
 });
 
 test("returns an installation instruction when the GitHub Issue plugin is absent", async () => {
-  const missingRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-missing-issue-plugin-"));
+  const missingRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-missing-issue-plugin-"));
   mkdirSync(path.join(missingRoot, ".git"));
   mkdirSync(path.join(missingRoot, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(missingRoot, ".code/htmls/index.html"), "<h1>Target</h1>");
-  const withoutPlugin = createVisualReviewServer({
+  const withoutPlugin = createVrevServer({
     projectRoot: missingRoot,
     target: ".code/htmls/index.html",
     jobManager: { executor: () => ({ result: Promise.resolve({ exitCode: 0, reason: "exit" }), cancel: () => undefined }) },
@@ -550,7 +550,7 @@ test("returns an installation instruction when the GitHub Issue plugin is absent
 });
 
 test("stores an Issue request, then creates and archives the AI-authored draft", async () => {
-  const before = (await visualReview.store.load()).annotations.length;
+  const before = (await vrev.store.load()).annotations.length;
   const annotation = {
     comment: "大きめに整理してほしい",
     page_path: ".code/htmls/pages/index.html",
@@ -561,7 +561,7 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   const reference = {
     ...annotation,
     anchor: { selector: "h1", tag: "h1" },
-    source_hash: visualReview.store.sourceHash(annotation.page_path),
+    source_hash: vrev.store.sourceHash(annotation.page_path),
   };
   const requestResponse = await fetch(`${baseUrl}/api/issues/request`, {
     method: "POST",
@@ -572,10 +572,10 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   const requested = (await requestResponse.json() as { annotations: Array<{ id: string; status: string; issue_state: string }> }).annotations.at(-1)!;
   assert.equal(requested.status, "open");
   assert.equal(requested.issue_state, "requested");
-  assert.equal((await visualReview.store.load()).annotations.length, before + 1);
-  await visualReview.store.setStatus(requested.id, { actor: "ai", status: "in_progress" });
-  await visualReview.store.setIssueDraftReady(requested.id, "整理されたIssue", "## 期待結果\n正しく表示する");
-  const ready = (await visualReview.store.load()).annotations.find(({ id }) => id === requested.id)!;
+  assert.equal((await vrev.store.load()).annotations.length, before + 1);
+  await vrev.store.setStatus(requested.id, { actor: "ai", status: "in_progress" });
+  await vrev.store.setIssueDraftReady(requested.id, "整理されたIssue", "## 期待結果\n正しく表示する");
+  const ready = (await vrev.store.load()).annotations.find(({ id }) => id === requested.id)!;
   assert.equal(ready.status, "addressed");
   assert.equal(ready.issue_state, "ready");
 
@@ -612,7 +612,7 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   const laterDuplicateResponse = await fetch(`${baseUrl}/api/issues`, issuePayload);
   assert.equal(laterDuplicateResponse.status, 200);
   assert.equal(createdIssueDrafts.length, issueCountBefore + 1);
-  const archived = (await visualReview.store.load()).annotations.find(({ id }) => id === requested.id)!;
+  const archived = (await vrev.store.load()).annotations.find(({ id }) => id === requested.id)!;
   assert.equal(archived.status, "resolved");
   assert.equal(archived.issue_url, "https://github.com/example/project/issues/42");
   assert.equal(archived.issue_title, "編集後のIssue");
@@ -622,7 +622,7 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
 });
 
 test("the issue.create bridge command rejects direct creation without an AI-generated draft", async () => {
-  const before = (await visualReview.store.load()).annotations.length;
+  const before = (await vrev.store.load()).annotations.length;
   const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.create`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: baseUrl },
@@ -638,11 +638,11 @@ test("the issue.create bridge command rejects direct creation without an AI-gene
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "VALIDATION_FAILED");
   assert.equal(result.error.request_id, "issue-create-bridge");
-  assert.equal((await visualReview.store.load()).annotations.length, before);
+  assert.equal((await vrev.store.load()).annotations.length, before);
 });
 
 test("the issue.create bridge command rejects invalid manual input", async () => {
-  const before = (await visualReview.store.load()).annotations.length;
+  const before = (await vrev.store.load()).annotations.length;
   const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.create`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: baseUrl },
@@ -658,7 +658,7 @@ test("the issue.create bridge command rejects invalid manual input", async () =>
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, "VALIDATION_FAILED");
   assert.equal(payload.error.request_id, "issue-create-invalid");
-  assert.equal((await visualReview.store.load()).annotations.length, before);
+  assert.equal((await vrev.store.load()).annotations.length, before);
 });
 
 test("supports file-state and annotation/message/status APIs through ReviewStore", async () => {
@@ -706,7 +706,7 @@ test("supports file-state and annotation/message/status APIs through ReviewStore
   assert.equal(resolved.annotations.some((annotation) => annotation.id === id), false);
   const session = await (await fetch(`${baseUrl}/api/session`)).json() as { review: { annotations: Array<{ id: string }> } };
   assert.equal(session.review.annotations.some((annotation) => annotation.id === id), false);
-  assert.equal((JSON.parse(readFileSync(visualReview.store.resolvedPath, "utf8")) as { annotations: Array<{ id: string }> }).annotations.some((annotation) => annotation.id === id), true);
+  assert.equal((JSON.parse(readFileSync(vrev.store.resolvedPath, "utf8")) as { annotations: Array<{ id: string }> }).annotations.some((annotation) => annotation.id === id), true);
 
   const archiveResponse = await fetch(`${baseUrl}/api/archive?offset=0&limit=1`);
   const archive = await archiveResponse.json() as {
@@ -734,7 +734,7 @@ test("supports file-state and annotation/message/status APIs through ReviewStore
 test("rejects traversal, hidden, secret and review-data paths", async () => {
   for (const pathname of [
     "/target/.git/config",
-    "/target/.code/visual-reviews/review.json",
+    "/target/.code/vrevs/review.json",
     "/target/.code/htmls/pages/.hidden.html",
     "/target/.code/htmls/pages/secret-token.js",
     "/target/%2e%2e/outside.html",
@@ -774,8 +774,8 @@ test("returns JSON errors for malformed and over-limit bodies", async () => {
 });
 
 test("CLI entrypoint runs when invoked through a package-bin symlink", async () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "visual-review-bin-"));
-  const link = path.join(directory, "visual-review");
+  const directory = mkdtempSync(path.join(os.tmpdir(), "vrev-bin-"));
+  const link = path.join(directory, "vrev");
   symlinkSync(new URL("../src/cli.js", import.meta.url), link);
   const result = await new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
     const child = spawn(process.execPath, [link], { stdio: ["ignore", "ignore", "pipe"] });
@@ -806,7 +806,7 @@ test("server increments from an occupied port", async () => {
 });
 
 test("CLI normalizes project root and accepts loopback or private-network targets", () => {
-  const cliRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-cli-"));
+  const cliRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-cli-"));
   mkdirSync(path.join(cliRoot, "project"));
   const parsed = parseCliArguments([
     "serve", "--project-root", "project", "--target", ".code/htmls/page.html", "--host", "::1", "--port", "65535", "--allow-scripts", "--allow-ai-jobs-with-scripts", "--no-open",
@@ -821,7 +821,7 @@ test("CLI normalizes project root and accepts loopback or private-network target
   assert.equal(parsed.open, false);
   const defaults = parseCliArguments(["serve", "--target", "assets/x.png"], cliRoot);
   assert.equal(defaults.projectRoot, realpathSync(cliRoot));
-  const monorepo = mkdtempSync(path.join(os.tmpdir(), "visual-review-cli-monorepo-"));
+  const monorepo = mkdtempSync(path.join(os.tmpdir(), "vrev-cli-monorepo-"));
   mkdirSync(path.join(monorepo, ".git"));
   const appDirectory = path.join(monorepo, "apps/web");
   mkdirSync(appDirectory, { recursive: true });

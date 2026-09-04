@@ -1,6 +1,6 @@
-# @visual-review/ai
+# @vrev/ai
 
-Visual ReviewのAI連携を`ai/v1` capabilityとして提供する、6つのfirst-party feature packageの1つです。
+VrevのAI連携を`ai/v1` capabilityとして提供する、6つのfirst-party feature packageの1つです。
 
 このpackageが次を一括して所有します。
 
@@ -21,5 +21,5 @@ processを起動しない連携は`AiIntegrationProviderV1`として`ai.integrat
 このpackageのbridgeは汎用prompt実行APIをbrowserへ公開しません。AI呼び出しは、注釈ワークフローやGitHub Issueなど、用途と権限を定義したserver packageからだけ行います。
 
 ```sh
-npm install --save-dev @visual-review/ai
+npm install --save-dev @vrev/ai
 ```

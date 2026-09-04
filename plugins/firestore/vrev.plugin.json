@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "display": {
     "title": "Firestore",
-    "summary": "Firestore を Visual Review の workspace storage backend として使います。",
+    "summary": "Firestore を Vrev の workspace storage backend として使います。",
     "readme": "./README.md"
   },
   "configuration": [
@@ -73,7 +73,7 @@
       "type": "string",
       "source": "workspace",
       "required": false,
-      "default": "visual-review-storage"
+      "default": "vrev-storage"
     },
     {
       "key": "database_id",

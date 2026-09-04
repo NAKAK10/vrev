@@ -4,7 +4,7 @@ This repository is intended to become public. Never commit credentials, tokens, 
 
 ## Local-only data
 
-Review files are written below the reviewed repository root's `.vreview/`, not this tool repository. Do not copy `.vreview/` from customer or private projects into this repository. Workspace settings and context use repository-relative paths only; runtime job/lease/lock files are ignored by `.vreview/.gitignore`.
+Review files are written below the reviewed repository root's `.vrev/`, not this tool repository. Do not copy `.vrev/` from customer or private projects into this repository. Workspace settings and context use repository-relative paths only; runtime job/lease/lock files are ignored by `.vrev/.gitignore`.
 
 Live targets accept plain HTTP on `localhost`, `127.0.0.1`, or `::1`. Public targets require HTTPS and run in script-free, read-only static mode. URL credentials, private/reserved DNS destinations, cross-origin redirects, and cookie or authorization forwarding are rejected. Framework source hints are reduced to repository-like relative paths before persistence.
 

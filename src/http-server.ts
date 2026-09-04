@@ -112,7 +112,7 @@ const CONTENT_TYPES: Record<string, string> = {
 
 const SENSITIVE_PREFIXES = ["credential", "secret"];
 
-export interface VisualReviewServerOptions {
+export interface VrevServerOptions {
   projectRoot: string;
   projectDirectory?: string;
   target: string;
@@ -126,7 +126,7 @@ export interface VisualReviewServerOptions {
   storagePreflightTimeoutMs?: number;
 }
 
-export interface VisualReviewServer {
+export interface VrevServer {
   server: Server;
   store: ReviewStore;
   jobManager: JobManager;
@@ -181,7 +181,7 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
   }
   if (contentTypeValue.includes("text/html")) {
     if (!publicTarget && !/<base\b/i.test(result)) {
-      const bridge = `<base href="/live/"><script>window.__visualReviewUrl=(value)=>{const url=new URL(value,window.location.href);if(url.origin===window.location.origin&&!url.pathname.startsWith('/live'))url.pathname='/live'+(url.pathname.startsWith('/')?url.pathname:'/'+url.pathname);return url.href}</script>`;
+      const bridge = `<base href="/live/"><script>window.__vrevUrl=(value)=>{const url=new URL(value,window.location.href);if(url.origin===window.location.origin&&!url.pathname.startsWith('/live'))url.pathname='/live'+(url.pathname.startsWith('/')?url.pathname:'/'+url.pathname);return url.href}</script>`;
       result = result.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${bridge}`);
     }
     result = result.replace(/\b(src|href|action)=(['"])\/(?!\/|live\/)/gi, (_match, name: string, quote: string) => `${name}=${quote}/live/`);
@@ -199,7 +199,7 @@ function rewriteLiveText(content: string, contentTypeValue: string, origin: stri
   if (contentTypeValue.includes("javascript")) {
     result = result.replace(/(\b(?:from|import)\s*(?:\(\s*)?)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
     result = result.replace(/(\b(?:fetch|EventSource|Worker|SharedWorker|URL)\s*\(\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
-    result = result.replace(/window\.location\.(replace|assign)\(([^()\n;]+)\)/g, "window.location.$1(window.__visualReviewUrl($2))");
+    result = result.replace(/window\.location\.(replace|assign)\(([^()\n;]+)\)/g, "window.location.$1(window.__vrevUrl($2))");
     result = result.replace(/((?:window\.)?location\.href\s*=\s*)(['"`])\/(?!\/|live\/)/g, "$1$2/live/");
   }
   return result;
@@ -558,7 +558,7 @@ function pluginManagementPayload(projectRoot: string): object {
         id,
         version,
         title: manifest.display?.title ?? id,
-        summary: manifest.display?.summary ?? `Visual Review plugin: ${id}`,
+        summary: manifest.display?.summary ?? `Vrev plugin: ${id}`,
         capabilities: pluginCapabilities(manifest),
         enabled: effective.enabled,
         missing: effective.missing,
@@ -590,7 +590,7 @@ async function createIssueWithInstalledPlugin(projectRoot: string, draft: GitHub
     return await provider.createIssue(projectRoot, draft);
   } catch (error) {
     if (error instanceof Error && error.message === "plugin is not installed: github-issue") {
-      throw new Error("GitHub Issue provider plugin 'github-issue' is not installed. Add it to the workspace with: npm install --save-dev @visual-review/github-issue");
+      throw new Error("GitHub Issue provider plugin 'github-issue' is not installed. Add it to the workspace with: npm install --save-dev @vrev/github-issue");
     }
     throw error;
   }
@@ -622,7 +622,7 @@ export function assertLoopbackHost(host: string): void {
   if (!LOOPBACK_HOSTS.has(host)) throw new Error("host must be 127.0.0.1 or ::1");
 }
 
-export function createVisualReviewServer(options: VisualReviewServerOptions): VisualReviewServer {
+export function createVrevServer(options: VrevServerOptions): VrevServer {
   // Deprecated HTTP routes are transport adapters over the review plugin capability.
   const reviewCapability = createReviewCapability(options.target, {
     projectRoot: options.projectRoot,

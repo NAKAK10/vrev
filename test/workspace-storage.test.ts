@@ -21,7 +21,7 @@ import {
 import { createPluginReviewDocumentStorage } from "../src/review-storage-plugin.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-workspace-storage-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-workspace-storage-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Review</h1>");
@@ -35,7 +35,7 @@ function workspace(): string {
 function memoryStoragePlugin(root: string, id: string, options: { alwaysConflict?: boolean; failFactory?: boolean } = {}): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 3,
     id,
     version: "1.0.0",
@@ -193,11 +193,11 @@ function fakeTarget(root: string): ResolvedTarget {
 }
 
 function fakePaths(root: string) {
-  const directory = path.join(root, ".vreview", "reviews", "x");
+  const directory = path.join(root, ".vrev", "reviews", "x");
   return {
     active: path.join(directory, "review.json"),
     resolved: path.join(directory, "resolved.json"),
-    legacy: path.join(root, ".code", "visual-reviews", "x", "review.json"),
+    legacy: path.join(root, ".code", "vrevs", "x", "review.json"),
     transaction: path.join(directory, ".transaction.json"),
     context: path.join(directory, "context.json"),
   };
@@ -237,7 +237,7 @@ class CountingMemoryProvider implements WorkspaceStorageProviderV1 {
 }
 
 test("withLock retries the whole action on a compare-and-swap conflict and succeeds within the retry budget", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider(2); // fails the first 2 calls, then succeeds
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
 
@@ -252,7 +252,7 @@ test("withLock retries the whole action on a compare-and-swap conflict and succe
 });
 
 test("concurrent withLock calls isolate observed versions and retry stale mutations", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider(0);
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
   await storage.withLock(async () => { await storage.write("active", { revision: 1 }); });
@@ -281,7 +281,7 @@ test("concurrent withLock calls isolate observed versions and retry stale mutati
 });
 
 test("withLock gives up and throws after exceeding the retry budget on a permanently conflicting backend", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider(); // always conflicts
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
 
@@ -298,7 +298,7 @@ test("withLock gives up and throws after exceeding the retry budget on a permane
 });
 
 test("a document written without being read this attempt keeps its existing version instead of asserting it is new", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider(0);
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
 
@@ -311,7 +311,7 @@ test("a document written without being read this attempt keeps its existing vers
 });
 
 test("removing a document that was not read this attempt deletes it with its current version", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider(0);
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
 
@@ -322,7 +322,7 @@ test("removing a document that was not read this attempt deletes it with its cur
 });
 
 test("createPluginReviewDocumentStorage treats the legacy document as a no-op", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-plugin-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-plugin-"));
   const provider = new CountingMemoryProvider();
   const storage = createPluginReviewDocumentStorage(fakeTarget(root), fakePaths(root), provider);
 

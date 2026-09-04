@@ -48,17 +48,17 @@ jobs:
           const files = [
             "packages/plugin-sdk/package.json",
             "plugins/review/package.json",
-            "plugins/review/visual-review.plugin.json",
+            "plugins/review/vrev.plugin.json",
             "plugins/ai/package.json",
-            "plugins/ai/visual-review.plugin.json",
+            "plugins/ai/vrev.plugin.json",
             "plugins/annotation-workflow/package.json",
-            "plugins/annotation-workflow/visual-review.plugin.json",
+            "plugins/annotation-workflow/vrev.plugin.json",
             "plugins/github-issue/package.json",
-            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/github-issue/vrev.plugin.json",
             "plugins/firestore/package.json",
-            "plugins/firestore/visual-review.plugin.json",
+            "plugins/firestore/vrev.plugin.json",
             "plugins/page-map/package.json",
-            "plugins/page-map/visual-review.plugin.json",
+            "plugins/page-map/vrev.plugin.json",
           ];
           for (const file of files) {
             const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -79,17 +79,17 @@ jobs:
             "package-lock.json",
             "packages/plugin-sdk/package.json",
             "plugins/review/package.json",
-            "plugins/review/visual-review.plugin.json",
+            "plugins/review/vrev.plugin.json",
             "plugins/ai/package.json",
-            "plugins/ai/visual-review.plugin.json",
+            "plugins/ai/vrev.plugin.json",
             "plugins/annotation-workflow/package.json",
-            "plugins/annotation-workflow/visual-review.plugin.json",
+            "plugins/annotation-workflow/vrev.plugin.json",
             "plugins/github-issue/package.json",
-            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/github-issue/vrev.plugin.json",
             "plugins/firestore/package.json",
-            "plugins/firestore/visual-review.plugin.json",
+            "plugins/firestore/vrev.plugin.json",
             "plugins/page-map/package.json",
-            "plugins/page-map/visual-review.plugin.json",
+            "plugins/page-map/vrev.plugin.json",
           ];
           for (const file of files) {
             const data = JSON.parse(fs.readFileSync(file, "utf8"));

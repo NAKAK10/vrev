@@ -41,7 +41,7 @@ test("page-map.get on a live target returns an empty result with a warning", asy
 });
 
 test("page-map.get distinguishes an empty static directory from an unsupported target", async () => {
-  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-page-map-empty-"));
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-page-map-empty-"));
   mkdirSync(path.join(projectRoot, "public"));
   const adapter = createPageMapBridgeAdapter({ projectRoot, entryPath: "public/index.html", kind: "html" });
   const result = await adapter.query("page-map.get", { request_id: "r-empty", input: {} });
@@ -52,7 +52,7 @@ test("page-map.get distinguishes an empty static directory from an unsupported t
 });
 
 test("page-map.get reports an incomplete scan when the public directory is missing", async () => {
-  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-page-map-missing-"));
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-page-map-missing-"));
   const adapter = createPageMapBridgeAdapter({ projectRoot, entryPath: "public/index.html", kind: "html" });
   const result = await adapter.query("page-map.get", { request_id: "r-missing", input: {} });
   assert.equal(result.ok, true);

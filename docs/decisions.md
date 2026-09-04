@@ -4,7 +4,7 @@
 
 Status: accepted; npm package API v1 migration is implemented with a one-beta legacy compatibility layer.
 
-first-party feature packageは`@visual-review/ai`、`@visual-review/storage-firestore`、`@visual-review/review`、`@visual-review/annotation-workflow`、`@visual-review/page-map`、`@visual-review/github-issue`の6つだけである。Review persistence and validation are owned by `@visual-review/review`; CLI selection, external AI command management, and reusable AI execution by `@visual-review/ai`; job orchestration and annotation UI by `@visual-review/annotation-workflow`; Firestore storage by `@visual-review/storage-firestore`; static navigation analysis by `@visual-review/page-map`; and the independent Issue tool/modal/sidebar by `@visual-review/github-issue`. Core retains bootstrap, package discovery, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned capability routing.
+first-party feature packageは`@vrev/ai`、`@vrev/storage-firestore`、`@vrev/review`、`@vrev/annotation-workflow`、`@vrev/page-map`、`@vrev/github-issue`の6つだけである。Review persistence and validation are owned by `@vrev/review`; CLI selection, external AI command management, and reusable AI execution by `@vrev/ai`; job orchestration and annotation UI by `@vrev/annotation-workflow`; Firestore storage by `@vrev/storage-firestore`; static navigation analysis by `@vrev/page-map`; and the independent Issue tool/modal/sidebar by `@vrev/github-issue`. Core retains bootstrap, package discovery, plugin lifecycle, target/proxy security, declarative rendering, bridge routing, generic process supervision, and versioned capability routing.
 
 Plugin UIの構造はbounded declarative JSONをCoreが描画する。加えて、manifestで`browser_module`を明示した導入済みpluginだけは、Coreが検証・配信したsame-origin ES moduleをcontribution mount後に実行できる。browser moduleはUI操作・選択UXなど宣言だけでは不足する挙動を担当し、unmount cleanupを返す。任意HTML・plugin CSS・remote scriptは引き続き許可しない。browser moduleはhost DOMへ到達できるtrusted codeであるため、未信頼pluginを導入しないことを運用境界とする。Validation and business rules are server-authoritative. UI and server contributions communicate through the transport-neutral PluginBridge.
 
@@ -20,9 +20,9 @@ Phases 1–10 are covered by focused manifest, host lifecycle, extraction, serve
 
 ### npm package discovery and publication
 
-対応packageは`package.json`へ`visualReview: { apiVersion: 1, manifest: "./..." }`を宣言する。Coreは対象workspaceのdependencies/devDependencies/optionalDependenciesにある直接依存だけをNode resolutionで解決する。package名patternや`node_modules`再帰scanは使わず、discovery時にpackage codeを評価しない。package managerがpackage本体とversionを管理し、`.vreview`には設定・credential・review/runtime状態だけを置く。
+対応packageは`package.json`へ`vrev: { apiVersion: 1, manifest: "./..." }`を宣言する。Coreは対象workspaceのdependencies/devDependencies/optionalDependenciesにある直接依存だけをNode resolutionで解決する。package名patternや`node_modules`再帰scanは使わず、discovery時にpackage codeを評価しない。package managerがpackage本体とversionを管理し、`.vrev`には設定・credential・review/runtime状態だけを置く。
 
-feature package同士のnpm依存とimplementation importは禁止する。連携はCore/`@visual-review/plugin-sdk`のversioned capabilityだけを使う。AI利用側は`@visual-review/ai`が提供する`ai/v1`へ用途とmodeを指定して接続し、methodの選択はAI packageのworkspace設定へ委ねる。legacy `.vreview/plugins`/`plugins.json`はone-beta統合対象とし、npm packageとplugin IDが衝突した場合はfail closedにする。
+feature package同士のnpm依存とimplementation importは禁止する。連携はCore/`@vrev/plugin-sdk`のversioned capabilityだけを使う。AI利用側は`@vrev/ai`が提供する`ai/v1`へ用途とmodeを指定して接続し、methodの選択はAI packageのworkspace設定へ委ねる。legacy `.vrev/plugins`/`plugins.json`はone-beta統合対象とし、npm packageとplugin IDが衝突した場合はfail closedにする。
 
 6つのfirst-party feature packageはpublic npm registryへ個別publishする。GitHub ActionsはOIDC trusted publishingとprovenanceを使い、既存versionは上書きしない。GitHub Packagesは配布先として利用しない。
 
@@ -53,7 +53,7 @@ absolute pathはproject-relativeな`src`、`app`、`pages`、`components`、`pac
 
 review directory名のpath hashはtarget pathから安定した保存先IDを作るためだけに使う。annotationの`source_hash`はfile targetでは対象HTML/imageそのもののbyte列、live targetでは正規化route URLのSHA-256であり、CSSなど依存resource一式のvisual fingerprintではない。annotation作成時のhash差を恒久的な警告には使わない。
 
-AI jobをqueueへ入れる時点で現在のhashをjob checkpointとして取り直し、coordinator起動直前に再比較する。これにより過去のannotationを現在のsourceへ適用できる一方、queue後の同時変更だけを停止できる。ただし同じpageの先行Visual Review jobがactiveな間に追加されたjobはdeferred checkpointとし、先行job終了後に初めてbaselineを確定する。先行AI編集を外部競合と誤認して後続jobを連続skipしないためである。AIが`addressed`へ変更した時点でannotationの`source_hash`も修正後sourceへ更新する。
+AI jobをqueueへ入れる時点で現在のhashをjob checkpointとして取り直し、coordinator起動直前に再比較する。これにより過去のannotationを現在のsourceへ適用できる一方、queue後の同時変更だけを停止できる。ただし同じpageの先行Vrev jobがactiveな間に追加されたjobはdeferred checkpointとし、先行job終了後に初めてbaselineを確定する。先行AI編集を外部競合と誤認して後続jobを連続skipしないためである。AIが`addressed`へ変更した時点でannotationの`source_hash`も修正後sourceへ更新する。
 
 ## Automatic port selection
 
@@ -96,7 +96,7 @@ public targetでは`--allow-scripts`を受理せず、対象scriptからlocal AP
 
 UIではSession IDやAttach URLを入力させず、batchごとにAI packageがworkspace設定から解決したCLIがfresh coordinator sessionを自動作成する。
 OpenCode / Claude / Codexのsession IDは相互互換ではなく、存在しないIDを生成してresume指定すると失敗するため、
-Visual Review側ではIDを捏造しない。HTTP APIの`session_id`と`opencode_attach`は既存client互換のため当面受理するが、標準UIは送信しない。
+Vrev側ではIDを捏造しない。HTTP APIの`session_id`と`opencode_attach`は既存client互換のため当面受理するが、標準UIは送信しない。
 
 ## Responsive viewport switching
 
@@ -113,7 +113,7 @@ Root and six-feature-package publication is non-atomic. Because the root package
 
 ## Automatic installation of first-party runtime plugins
 
-`visual-review serve`は、workspace registryに存在しない`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`をCLI package内のschema-v4同梱コピーから自動installする。first-party feature packageはこの6つだけである。plugin実体とregistryは意図的にGit管理外であり、repository差分だけを別環境へ持ち込んだ場合に手動setupを要求しないためである。network経由の自動取得はregistry認証・version drift・供給元変更に左右されるため行わず、build時に検証済みplugin server/UI assetを`dist/plugins/`へcopyする。pluginのESM境界をworkspace側のpackage typeから独立させるため、各pluginの`package.json`も同梱する。
+`vrev serve`は、workspace registryに存在しない`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`をCLI package内のschema-v4同梱コピーから自動installする。first-party feature packageはこの6つだけである。plugin実体とregistryは意図的にGit管理外であり、repository差分だけを別環境へ持ち込んだ場合に手動setupを要求しないためである。network経由の自動取得はregistry認証・version drift・供給元変更に左右されるため行わず、build時に検証済みplugin server/UI assetを`dist/plugins/`へcopyする。pluginのESM境界をworkspace側のpackage typeから独立させるため、各pluginの`package.json`も同梱する。
 
 同じplugin IDが既に導入済みでも、registry sourceが同じCLI package内bundled pathを指し、registry manifestとinstalled manifestが一致してprovenanceを確認できるtrusted copyに限り、同梱manifestのschemaまたはSemVerが新しければserver/UIをatomic upgradeする。same-IDのlocal/third-party source、manifest改変copy、同版以上は上書きせず、明示導入されたworkspace固有の選択を尊重する。UI起動時に自動評価する`annotation-workflow`は、installed manifestとmodule digestがCLI package内のbundled copyに一致する場合だけ実行する。同じIDのworkspace overrideを無断実行せず、自動修正をfail closedにする。GitHub CLIの認証やAI packageでの外部AIコマンド登録もcredential・利用者選択を伴うため自動化しない。
 
@@ -127,7 +127,7 @@ storage pluginはbackend I/Oとopaque versionによるcompare-and-swapだけを�
 
 ## AI-authored GitHub Issues for large changes
 
-GitHub Issueは注釈とは独立した選択tool、modal、Sidebar Accordionを持つ。humanがnodeまたはregionを選び、短い要望を入力すると、`github-issue`が`text-only` modeを`ai/v1`へ要求してtitle/body draftを生成する。利用するAI methodはAI packageのworkspace設定が解決する。この時点ではreviewへ永続化せず、GitHubにも作成しない。humanが生成内容を確認・編集して明示的に作成した場合だけ、対象repositoryをcwdとして`gh issue create`を実行し、成功したIssueをreviewへ記録する。draft framing・入力検証・single-flight・timeout・cancelは`github-issue`が所有し、AI methodの解決・実行は`@visual-review/ai`が所有する。新フローはdraft段階で注釈recordを作らず、作成成功後のIssueだけを解決済みrecordとして保存するため、annotation workflowのworkspace-write queueへ混在させない。target scriptから任意のAI/gh実行を起動できないよう、AI jobs無効modeではlegacy APIとPlugin BridgeのIssue draft/createおよびannotation jobs操作をserver側で拒否する。
+GitHub Issueは注釈とは独立した選択tool、modal、Sidebar Accordionを持つ。humanがnodeまたはregionを選び、短い要望を入力すると、`github-issue`が`text-only` modeを`ai/v1`へ要求してtitle/body draftを生成する。利用するAI methodはAI packageのworkspace設定が解決する。この時点ではreviewへ永続化せず、GitHubにも作成しない。humanが生成内容を確認・編集して明示的に作成した場合だけ、対象repositoryをcwdとして`gh issue create`を実行し、成功したIssueをreviewへ記録する。draft framing・入力検証・single-flight・timeout・cancelは`github-issue`が所有し、AI methodの解決・実行は`@vrev/ai`が所有する。新フローはdraft段階で注釈recordを作らず、作成成功後のIssueだけを解決済みrecordとして保存するため、annotation workflowのworkspace-write queueへ混在させない。target scriptから任意のAI/gh実行を起動できないよう、AI jobs無効modeではlegacy APIとPlugin BridgeのIssue draft/createおよびannotation jobs操作をserver側で拒否する。
 
 ## Modal operation feedback
 
@@ -135,7 +135,7 @@ modal内の長時間commandは開始時に所要時間を通知し、対象butto
 
 ## AI integration boundary
 
-`@visual-review/ai`はCLI選択、外部AIコマンドの登録・検証・実行、`ai/v1`を所有し、CLI・外部コマンド・API/SDK/remote連携を共通のAI methodとして扱う。feature packageはmode、prompt、timeout、出力上限だけを渡し、methodを選ばず、raw command、argv、environment、templateを受け取らない。processを使わないproviderは`ai.integration-registry/v1`へ登録できる。外部AIコマンドは隔離directoryでcapability testを完了した場合だけmethodとして公開する。AIの選択と統合方法の表示はAI packageの設定UIに限定する。
+`@vrev/ai`はCLI選択、外部AIコマンドの登録・検証・実行、`ai/v1`を所有し、CLI・外部コマンド・API/SDK/remote連携を共通のAI methodとして扱う。feature packageはmode、prompt、timeout、出力上限だけを渡し、methodを選ばず、raw command、argv、environment、templateを受け取らない。processを使わないproviderは`ai.integration-registry/v1`へ登録できる。外部AIコマンドは隔離directoryでcapability testを完了した場合だけmethodとして公開する。AIの選択と統合方法の表示はAI packageの設定UIに限定する。
 
 ## Selection mode listener lifecycle
 
@@ -157,7 +157,7 @@ annotation workflowの`auto_run`が有効な場合、注釈保存時に自動enq
 
 ## Plugin management discoverability
 
-review header左上の「設定」は新規workspaceでも既定表示する。plugin管理を隠す必要があるworkspaceだけ`.vreview/settings.json`へ`ui.plugin_management: false`を明示する。設定導線が存在しないままbuilt-in pluginの状態や外部AI commandを変更できなくなる構成をdefaultにしない。
+review header左上の「設定」は新規workspaceでも既定表示する。plugin管理を隠す必要があるworkspaceだけ`.vrev/settings.json`へ`ui.plugin_management: false`を明示する。設定導線が存在しないままbuilt-in pluginの状態や外部AI commandを変更できなくなる構成をdefaultにしない。
 
 ## Script-free target navigation
 
@@ -181,13 +181,13 @@ local static HTMLにはframeworkのHMRがないため、current page上のannota
 
 ## Workspace storage and monorepos
 
-review dataは最寄りのGit root（Git管理外では実行directory）の`.vreview/`へ集約する。`--project-root`は省略可能で、
+review dataは最寄りのGit root（Git管理外では実行directory）の`.vrev/`へ集約する。`--project-root`は省略可能で、
 通常は実行directoryをproject contextとして使う。monorepo childから起動した場合はworkspace rootをAIのworking directoryとし、
-child pathを`.vreview/settings.json`へrepository相対pathで登録する。基本的なroot検出は決定的に行い、初回AI coordinatorは同じ実行内で
+child pathを`.vrev/settings.json`へrepository相対pathで登録する。基本的なroot検出は決定的に行い、初回AI coordinatorは同じ実行内で
 manifest・route・source hintからprimary projectとshared scopeを調査して`context.json`を更新する。
 
 active annotation（`open`・`in_progress`・`failed`・`addressed`）は`review.json`、humanが解決したannotationは`resolved.json`へ分離する。
-通常sessionとjob managerはactive-only readを使い、polling payloadを小さく保つ。reviewerは別のarchive APIから解決済みannotationを取得してfilter・card・overlay・件数へ含め、履歴だけは24件単位でpage取得する。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/visual-reviews`のreviewはtargetを開いた時点で新storageへ移行する。
+通常sessionとjob managerはactive-only readを使い、polling payloadを小さく保つ。reviewerは別のarchive APIから解決済みannotationを取得してfilter・card・overlay・件数へ含め、履歴だけは24件単位でpage取得する。mutationは互換性のため両fileをmergeして対象を検索するので、annotation IDを指定したhumanの再openや返信はresolved archiveからactive JSONへ戻せる。annotation orderとglobal revisionを両ファイルへ持たせ、status移動後も順序とevent履歴を維持する。旧`.code/vrevs`のreviewはtargetを開いた時点で新storageへ移行する。
 
 ## Multi-client synchronization
 

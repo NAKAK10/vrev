@@ -1,6 +1,6 @@
-# visual-review
+# vrev
 
-HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVisual Reviewツールです。
+HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVrevツールです。
 
 ## 主な機能
 
@@ -23,26 +23,26 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 
 ```bash
 npm install --save-dev \
-  @visual-review/core \
-  @visual-review/ai \
-  @visual-review/storage-firestore \
-  @visual-review/review \
-  @visual-review/annotation-workflow \
-  @visual-review/page-map \
-  @visual-review/github-issue
+  vrev \
+  @vrev/ai \
+  @vrev/storage-firestore \
+  @vrev/review \
+  @vrev/annotation-workflow \
+  @vrev/page-map \
+  @vrev/github-issue
 ```
 
 ```bash
-npx visual-review serve --target .code/htmls/example/index.html
+npx vrev serve --target .code/htmls/example/index.html
 ```
 
-first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@visual-review/storage-firestore`を省略できます。plugin開発用contractは`@visual-review/plugin-sdk`からimportできます。
+first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractは`@vrev/plugin-sdk`からimportできます。
 
 sourceから利用する場合:
 
 ```bash
-git clone https://github.com/NAKAK10/visual-review.git
-cd visual-review
+git clone https://github.com/NAKAK10/vrev.git
+cd vrev
 npm ci
 npm run build
 npm link
@@ -53,25 +53,25 @@ npm link
 対象リポジトリで実行します。
 
 ```bash
-visual-review serve --target .code/htmls/example/index.html
+vrev serve --target .code/htmls/example/index.html
 ```
 
 画像:
 
 ```bash
-visual-review serve --target assets/example.png
+vrev serve --target assets/example.png
 ```
 
 起動済みのlocalhostアプリ:
 
 ```bash
-visual-review serve --target http://127.0.0.1:5173
+vrev serve --target http://127.0.0.1:5173
 ```
 
 開発サーバーも起動する場合:
 
 ```bash
-visual-review serve \
+vrev serve \
   --target http://127.0.0.1:5173 \
   --start "npm run dev"
 ```
@@ -79,13 +79,13 @@ visual-review serve \
 同一LAN上のprivate IPもHTTPで指定できます:
 
 ```bash
-visual-review serve --target http://192.168.11.13:3000
+vrev serve --target http://192.168.11.13:3000
 ```
 
 HTTPSのstagingサイト:
 
 ```bash
-visual-review serve --target https://staging.example.com/products
+vrev serve --target https://staging.example.com/products
 ```
 
 既定ポートは`18765`です。使用中の場合は次の空きポートを自動選択します。起動後は既定ブラウザを開き、ブラウザ起動コマンドの完了まで待って取りこぼしを防ぎます。`--no-open`でブラウザの自動起動を無効化できます。
@@ -95,7 +95,7 @@ visual-review serve --target https://staging.example.com/products
 static HTMLでは対象JavaScriptを既定で無効化します。信頼できる対象でのみ有効化してください。
 
 ```bash
-visual-review serve \
+vrev serve \
   --target .code/htmls/example/index.html \
   --allow-scripts
 ```
@@ -121,40 +121,40 @@ API keyやtokenはcommandへ記載せず、各CLIの認証設定または環境�
 
 schema v4のPlugin Hostが現在の既定architectureです。Coreの宣言的rendererが、pluginの検証済みJSON UI documentを描画します。first-party feature packageは`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`の6つです。`ai`がCLI選択と外部AIコマンドを含むAI method管理、`review`が注釈・履歴・永続化、`annotation-workflow`がAI job、`page-map`が画面遷移解析、`firestore`がremote storage、`github-issue`が専用のIssue選択・modal・sidebar・GitHub処理を所有します。feature package同士は実装に依存せず、versioned host capabilityだけで接続します。
 
-Coreは対象workspaceの`dependencies`、`devDependencies`、`optionalDependencies`に列挙された直接依存だけを検出します。packageは`visualReview.apiVersion: 1`とmanifest pathを宣言し、検出時にcodeを評価しません。`node_modules`全体や推移依存は走査しません。
+Coreは対象workspaceの`dependencies`、`devDependencies`、`optionalDependencies`に列挙された直接依存だけを検出します。packageは`vrev.apiVersion: 1`とmanifest pathを宣言し、検出時にcodeを評価しません。`node_modules`全体や推移依存は走査しません。
 
-従来の`.vreview/plugins/<plugin-id>/`と`.vreview/plugins.json`は移行用compatibility layerとしてnpm packageと統合されます。同じplugin IDが両方に存在する場合は曖昧な実装を選ばずエラーにします。`.vreview`には設定、credential、review/runtime状態だけを置き、npm package本体はコピーしません。global Coreだけで利用する既存workspace向けには標準packageのbundled copyもone-beta互換として維持します。
+従来の`.vrev/plugins/<plugin-id>/`と`.vrev/plugins.json`は移行用compatibility layerとしてnpm packageと統合されます。同じplugin IDが両方に存在する場合は曖昧な実装を選ばずエラーにします。`.vrev`には設定、credential、review/runtime状態だけを置き、npm package本体はコピーしません。global Coreだけで利用する既存workspace向けには標準packageのbundled copyもone-beta互換として維持します。
 
 ローカルdirectoryと公開npm package specによる手動追加や、新規pluginのbase生成もできます。`plugin create`はprovider/command互換のschema v3 manifest、title/summary、README、設定項目テンプレート、example command、testを生成します。server capabilityや宣言的UIを提供するpluginは[`docs/plugins.md`](docs/plugins.md)のschema v4 contractへ更新してください。
 
 ```bash
-visual-review plugin create --help
-visual-review plugin create my-plugin \
+vrev plugin create --help
+vrev plugin create my-plugin \
   --title "My Plugin" \
   --summary "レビュー処理を拡張します" \
   --install
-visual-review plugin run my-plugin hello world
-visual-review plugin install ./plugins/firestore
-visual-review plugin list
+vrev plugin run my-plugin hello world
+vrev plugin install ./plugins/firestore
+vrev plugin list
 ```
 
 プラグイン管理画面への「設定」メニューは左上に既定表示します。明示的に非表示へ切り替える場合だけworkspace設定へ`false`を指定します。UI内にこの表示切替はありません。
 
 ```json
-// .vreview/settings.json
+// .vrev/settings.json
 {
   "ui": { "plugin_management": false }
 }
 ```
 
-有効/無効、manifestで宣言した必要情報、README、AI packageが所有するCLI選択と外部AIコマンド登録は左上の設定画面へ集約されます。workspace値はGit管理外の`.vreview/plugin-settings.json`へ保存し、token/passwordは保存せず環境変数項目として存在だけを表示します。
+有効/無効、manifestで宣言した必要情報、README、AI packageが所有するCLI選択と外部AIコマンド登録は左上の設定画面へ集約されます。workspace値はGit管理外の`.vrev/plugin-settings.json`へ保存し、token/passwordは保存せず環境変数項目として存在だけを表示します。
 
 `/settings/plugins`からもnpm specやGitHubリンクでpluginをinstall・removeできます。npm specはexactなversionを、GitHub specはtag/commit SHAを`#`で固定してください（未固定のGitHub specは拒否します）。install時にplugin codeは実行されず、追加直後は無効状態で始まるため、内容を確認してから有効化してください。認証情報を含むURLは拒否します。同梱pluginはUIから削除できず、無効化だけができます。
 
 プラグインcommandは次の形式で実行します。
 
 ```bash
-visual-review plugin run <plugin-id> <command> [args...]
+vrev plugin run <plugin-id> <command> [args...]
 ```
 
 このrepositoryには次の6つのfirst-party feature packageを収録しています。
@@ -194,10 +194,10 @@ beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`
 
 ## データ保存
 
-レビュー情報は対象Gitリポジトリの`.vreview/`へ保存します。
+レビュー情報は対象Gitリポジトリの`.vrev/`へ保存します。
 
 ```text
-.vreview/
+.vrev/
 ├── settings.json
 └── reviews/<target-id>/
     ├── review.json

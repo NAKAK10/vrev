@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-export const CONFIG_RELATIVE_PATH = ".vreview/custom-commands.json";
+export const CONFIG_RELATIVE_PATH = ".vrev/custom-commands.json";
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_OUTPUT_LIMIT = 1024 * 1024;
 
@@ -26,7 +26,7 @@ const MAX_TEMPLATE_LENGTH = 2_000;
 const MAX_PROMPT_LENGTH = 256 * 1024;
 const NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
 const RUNNER_ID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|legacy-[0-9a-f]{32})$/;
-const PROBE_MARKER = ".visual-review-command-test";
+const PROBE_MARKER = ".vrev-command-test";
 const PROBE_TOKEN = "VISUAL_REVIEW_OK";
 const SECRET_OPTION_PATTERN = /^(?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)(?:=|$)/i;
 
@@ -93,10 +93,10 @@ function emptyConfig() {
 
 function storagePaths(workspaceRoot, createDirectory = false) {
   if (typeof workspaceRoot !== "string" || !path.isAbsolute(workspaceRoot)) throw new Error("workspaceRoot must be an absolute path");
-  const directory = path.join(workspaceRoot, ".vreview");
+  const directory = path.join(workspaceRoot, ".vrev");
   if (existsSync(directory)) {
     const info = lstatSync(directory);
-    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(".vreview must be a real directory, not a symbolic link");
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(".vrev must be a real directory, not a symbolic link");
   } else if (createDirectory) {
     mkdirSync(directory, { mode: 0o700 });
   }
@@ -342,7 +342,7 @@ export async function runCommand(workspaceRoot, name, prompt, limits) {
 }
 
 async function probeTemplate(template, limits = {}) {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "visual-review-command-test-"));
+  const directory = mkdtempSync(path.join(os.tmpdir(), "vrev-command-test-"));
   const prompt = `This is a capability test. In the current working directory, create a file named ${PROBE_MARKER} containing exactly ${PROBE_TOKEN} using your file or shell tools. Then reply exactly ${PROBE_TOKEN}. Do not read or modify anything outside the current working directory.`;
   const startedAt = Date.now();
   try {

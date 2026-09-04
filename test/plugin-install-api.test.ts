@@ -4,17 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 
-import { createVisualReviewServer, type VisualReviewServer } from "../src/index.js";
+import { createVrevServer, type VrevServer } from "../src/index.js";
 import { ensureDefaultPlugins } from "../src/cli.js";
 
 let root: string;
-let visualReview: VisualReviewServer;
+let vrev: VrevServer;
 let baseUrl: string;
 
 function localFixture(root: string, id: string): string {
   const source = path.join(root, "fixtures", id);
   mkdirSync(path.join(source, "dist"), { recursive: true });
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 1,
     id,
     version: "1.0.0",
@@ -41,34 +41,34 @@ function serverFixture(root: string, id: string): string {
     writeFileSync(path.join(import.meta.dirname, "evaluated"), "yes");
     export default { apiVersion: 1, create(context) { return { start() {}, query() { return { ok: true, data: { value: "ready" } }; }, command() {}, stop() { writeFileSync(path.join(context.plugin.root, "stopped"), "yes"); } }; } };
   `);
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({ schema_version: 4, id, version: "1.0.0", display: { title: id, summary: "Runtime fixture", readme: "./README.md" }, configuration: [], server: { api_version: 1, bridge_api_version: 1, module: "./server.js", contract: "./contract.json" } }));
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({ schema_version: 4, id, version: "1.0.0", display: { title: id, summary: "Runtime fixture", readme: "./README.md" }, configuration: [], server: { api_version: 1, bridge_api_version: 1, module: "./server.js", contract: "./contract.json" } }));
   return source;
 }
 
 function npmPackableFixture(root: string, id: string): string {
   const source = path.join(root, "npm-fixtures", id);
   mkdirSync(source, { recursive: true });
-  writeFileSync(path.join(source, "package.json"), JSON.stringify({ name: `visual-review-test-${id}`, version: "1.0.0", type: "module", files: ["visual-review.plugin.json", "index.js"] }));
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({ schema_version: 1, id, version: "1.0.0", commands: [{ name: "run", module: "./index.js" }] }));
+  writeFileSync(path.join(source, "package.json"), JSON.stringify({ name: `vrev-test-${id}`, version: "1.0.0", type: "module", files: ["vrev.plugin.json", "index.js"] }));
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({ schema_version: 1, id, version: "1.0.0", commands: [{ name: "run", module: "./index.js" }] }));
   writeFileSync(path.join(source, "index.js"), "export default () => undefined;\n");
   return source;
 }
 
 before(async () => {
-  root = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-install-api-"));
+  root = mkdtempSync(path.join(os.tmpdir(), "vrev-plugin-install-api-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Target</h1>");
   await ensureDefaultPlugins(root);
-  visualReview = createVisualReviewServer({ projectRoot: root, target: ".code/htmls/index.html" });
-  await new Promise<void>((resolve) => visualReview.server.listen(0, "127.0.0.1", resolve));
-  const address = visualReview.server.address();
+  vrev = createVrevServer({ projectRoot: root, target: ".code/htmls/index.html" });
+  await new Promise<void>((resolve) => vrev.server.listen(0, "127.0.0.1", resolve));
+  const address = vrev.server.address();
   assert.ok(address && typeof address !== "string");
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
 
 after(async () => {
-  await visualReview.close();
+  await vrev.close();
 });
 
 test("installs a local plugin without evaluating it, disabled by default, with a local resolution digest", async () => {
@@ -95,14 +95,14 @@ test("installs a local plugin without evaluating it, disabled by default, with a
   assert.equal(listed?.bundled, false);
   assert.equal(listed?.resolved?.kind, "local");
 
-  assert.equal(existsSync(path.join(root, ".vreview/plugins/install-api-local/dist/evaluated")), false);
+  assert.equal(existsSync(path.join(root, ".vrev/plugins/install-api-local/dist/evaluated")), false);
 });
 
 test("enabling and disabling a newly installed package server reconciles its lifecycle", async () => {
   const source = serverFixture(root, "runtime-api-local");
   const installed = await fetch(`${baseUrl}/api/settings/plugins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source }) });
   assert.equal(installed.status, 201);
-  const directory = path.join(root, ".vreview/plugins/runtime-api-local");
+  const directory = path.join(root, ".vrev/plugins/runtime-api-local");
   assert.equal(existsSync(path.join(directory, "evaluated")), false);
 
   const initial = await (await fetch(`${baseUrl}/api/settings/plugins`)).json() as { revision: string };
@@ -194,7 +194,7 @@ test("removes an installed plugin, refuses a bundled plugin, and 404s an unknown
   assert.equal(removed.status, 200);
   const afterRemoval = await (await fetch(`${baseUrl}/api/settings/plugins`)).json() as { plugins: Array<{ id: string }> };
   assert.equal(afterRemoval.plugins.some((plugin) => plugin.id === "install-api-removable"), false);
-  assert.equal(existsSync(path.join(root, ".vreview/plugins/install-api-removable")), false);
+  assert.equal(existsSync(path.join(root, ".vrev/plugins/install-api-removable")), false);
 
   const bundledRemoval = await fetch(`${baseUrl}/api/settings/plugins/review`, { method: "DELETE" });
   assert.equal(bundledRemoval.status, 409);
@@ -204,19 +204,19 @@ test("removes an installed plugin, refuses a bundled plugin, and 404s an unknown
 });
 
 test("plugin install and remove routes 404 when plugin management is hidden", async () => {
-  const hiddenRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-install-api-hidden-"));
+  const hiddenRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-plugin-install-api-hidden-"));
   mkdirSync(path.join(hiddenRoot, ".git"));
   mkdirSync(path.join(hiddenRoot, ".code/htmls"), { recursive: true });
-  mkdirSync(path.join(hiddenRoot, ".vreview"), { recursive: true });
+  mkdirSync(path.join(hiddenRoot, ".vrev"), { recursive: true });
   writeFileSync(path.join(hiddenRoot, ".code/htmls/index.html"), "<h1>Hidden</h1>");
-  writeFileSync(path.join(hiddenRoot, ".vreview/settings.json"), JSON.stringify({
+  writeFileSync(path.join(hiddenRoot, ".vrev/settings.json"), JSON.stringify({
     schema_version: 1,
     workspace: { root: ".", monorepo: false },
     ui: { plugin_management: false },
     projects: [],
   }));
   await ensureDefaultPlugins(hiddenRoot);
-  const hiddenServer = createVisualReviewServer({ projectRoot: hiddenRoot, target: ".code/htmls/index.html" });
+  const hiddenServer = createVrevServer({ projectRoot: hiddenRoot, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => hiddenServer.server.listen(0, "127.0.0.1", resolve));
   try {
     const hiddenAddress = hiddenServer.server.address();

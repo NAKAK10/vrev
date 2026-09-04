@@ -4,7 +4,7 @@ import path from "node:path";
 import { readJson } from "./file-utils.js";
 import { parseBoundedJsonSchema } from "./plugin-bridge-contract.js";
 
-export const PLUGIN_MANIFEST_FILE = "visual-review.plugin.json";
+export const PLUGIN_MANIFEST_FILE = "vrev.plugin.json";
 
 export interface PluginModuleReference {
   module: string;
@@ -97,7 +97,7 @@ export interface PluginCapabilityProvisionV1 {
   api_version: 1;
 }
 
-export interface VisualReviewPluginManifest {
+export interface VrevPluginManifest {
   schema_version: 1 | 2 | 3 | 4;
   id: string;
   version: string;
@@ -204,7 +204,7 @@ function parseExtensionPoints(value: unknown, pluginId: string): PluginUiExtensi
   });
 }
 
-export function parsePluginManifest(value: unknown): VisualReviewPluginManifest {
+export function parsePluginManifest(value: unknown): VrevPluginManifest {
   const record = object(value, "plugin manifest");
   const schemaVersion = record.schema_version;
   if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4) throw new Error("plugin manifest schema_version must be 1, 2, 3, or 4");
@@ -366,7 +366,7 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
   };
 }
 
-export function readPluginManifestFile(manifestPath: string, requireModules = false): VisualReviewPluginManifest {
+export function readPluginManifestFile(manifestPath: string, requireModules = false): VrevPluginManifest {
   const pluginDirectory = path.dirname(manifestPath);
   const manifest = parsePluginManifest(readJson(manifestPath));
   if (requireModules) {
@@ -391,6 +391,6 @@ export function readPluginManifestFile(manifestPath: string, requireModules = fa
   return manifest;
 }
 
-export function readPluginManifest(pluginDirectory: string, requireModules = false): VisualReviewPluginManifest {
+export function readPluginManifest(pluginDirectory: string, requireModules = false): VrevPluginManifest {
   return readPluginManifestFile(path.join(pluginDirectory, PLUGIN_MANIFEST_FILE), requireModules);
 }

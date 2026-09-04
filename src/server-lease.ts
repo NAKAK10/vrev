@@ -90,7 +90,7 @@ function withLeaseGuard<T>(reviewDirectory: string, tool: string, action: () => 
         }
         continue;
       }
-      if (Date.now() >= deadline) throw new Error("timed out waiting for visual review server lease guard");
+      if (Date.now() >= deadline) throw new Error("timed out waiting for vrev server lease guard");
       sleep(GUARD_RETRY_MS);
     }
   }
@@ -101,7 +101,7 @@ function withLeaseGuard<T>(reviewDirectory: string, tool: string, action: () => 
   }
 }
 
-export function acquireServerLease(reviewPath: string, tool = "visual-review"): ServerLease {
+export function acquireServerLease(reviewPath: string, tool = "vrev"): ServerLease {
   const leasePath = path.join(path.dirname(reviewPath), ".server-lease.json");
   const record: ServerLeaseRecord = {
     token: randomUUID(),
@@ -114,11 +114,11 @@ export function acquireServerLease(reviewPath: string, tool = "visual-review"): 
     try {
       const owner = JSON.parse(readFileSync(leasePath, "utf8")) as Partial<ServerLeaseRecord>;
       if (typeof owner.pid === "number" && pidIsAlive(owner.pid)) {
-        throw new Error(`visual review server already owns this review directory (pid ${owner.pid})`);
+        throw new Error(`vrev server already owns this review directory (pid ${owner.pid})`);
       }
       unlinkSync(leasePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && error instanceof Error && error.message.startsWith("visual review server already owns")) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && error instanceof Error && error.message.startsWith("vrev server already owns")) throw error;
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         try { unlinkSync(leasePath); } catch (unlinkError) { if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError; }
       }
@@ -130,7 +130,7 @@ export function acquireServerLease(reviewPath: string, tool = "visual-review"): 
       let owner: Partial<ServerLeaseRecord> = {};
       try { owner = JSON.parse(readFileSync(leasePath, "utf8")) as Partial<ServerLeaseRecord>; } catch { /* malformed lease is stale */ }
       if (typeof owner.pid === "number" && pidIsAlive(owner.pid)) {
-        throw new Error(`visual review server already owns this review directory (pid ${owner.pid})`);
+        throw new Error(`vrev server already owns this review directory (pid ${owner.pid})`);
       }
       throw error;
     }

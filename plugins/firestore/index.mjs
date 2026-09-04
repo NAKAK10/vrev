@@ -1,4 +1,4 @@
-// Firestore storage plugin for Visual Review. Unlike the legacy Firebase Storage plugin, this
+// Firestore storage plugin for Vrev. Unlike the legacy Firebase Storage plugin, this
 // plugin keeps one Firestore document per storage key instead of packing every file into a
 // single snapshot document. A storage key such as `reviews/home/review.json` is deterministically
 // and reversibly encoded into a Firestore document ID (see `encodeStorageKeyToDocumentId` /
@@ -24,7 +24,7 @@ import path from "node:path";
 import { createTokenSource } from "./auth.mjs";
 
 const DOCUMENT_SCHEMA_VERSION = 1;
-const DEFAULT_COLLECTION_ID = "visual-review-storage";
+const DEFAULT_COLLECTION_ID = "vrev-storage";
 const DEFAULT_DATABASE_ID = "(default)";
 const MAX_PAYLOAD_BYTES = 850 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
@@ -34,7 +34,7 @@ const MAX_DOCUMENT_ID_BYTES = 1500;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const RUNTIME_NAMES = new Set(["job-state.json", ".server-lease.json", ".transaction.json"]);
 const SECRET_SEGMENT = /^(?:secret|secrets|credential|credentials|token|tokens)(?:[._-].*)?$/i;
-const LOCAL_SYNC_PREFIX = ".vreview/";
+const LOCAL_SYNC_PREFIX = ".vrev/";
 // Every encoded document ID starts with this letter, which guarantees it can never equal "."
 // or "..", never starts with "_" (so it can never match Firestore's reserved `/^__.*__$/`
 // pattern), and never collides with a plain ASCII collection listing of unrelated documents.
@@ -97,9 +97,9 @@ export function encodeStorageKeyToDocumentId(key) {
 
 /** Inverse of `encodeStorageKeyToDocumentId`. Throws if `documentId` was not produced by it. */
 export function decodeStorageKeyFromDocumentId(documentId) {
-  if (typeof documentId !== "string" || !documentId.startsWith(DOCUMENT_ID_PREFIX)) throw new Error(`not a Visual Review storage document ID: ${documentId}`);
+  if (typeof documentId !== "string" || !documentId.startsWith(DOCUMENT_ID_PREFIX)) throw new Error(`not a Vrev storage document ID: ${documentId}`);
   const key = Buffer.from(documentId.slice(DOCUMENT_ID_PREFIX.length), "base64url").toString("utf8");
-  if (encodeStorageKeyToDocumentId(key) !== documentId) throw new Error(`not a Visual Review storage document ID: ${documentId}`);
+  if (encodeStorageKeyToDocumentId(key) !== documentId) throw new Error(`not a Vrev storage document ID: ${documentId}`);
   return key;
 }
 
@@ -116,7 +116,7 @@ function tryDecodeStorageKeyFromDocumentId(documentId) {
 // Local file <-> storage key mapping (defined exactly once)
 // ---------------------------------------------------------------------------------------------
 
-/** `.vreview/reviews/home/review.json` -> `reviews/home/review.json`. */
+/** `.vrev/reviews/home/review.json` -> `reviews/home/review.json`. */
 export function localPathToStorageKey(relativePath) {
   if (!relativePath.startsWith(LOCAL_SYNC_PREFIX)) throw new Error(`local path is outside the synchronized ${LOCAL_SYNC_PREFIX} directory: ${relativePath}`);
   return validateStorageKey(relativePath.slice(LOCAL_SYNC_PREFIX.length));
@@ -142,8 +142,8 @@ function validateRelativePath(relativePath) {
   }
   const segments = relativePath.split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) throw new Error("file path contains path traversal");
-  if (relativePath !== ".vreview/settings.json" && !(segments[0] === ".vreview" && segments[1] === "reviews" && segments.length >= 4)) {
-    throw new Error(`file path is outside the supported Visual Review data: ${relativePath}`);
+  if (relativePath !== ".vrev/settings.json" && !(segments[0] === ".vrev" && segments[1] === "reviews" && segments.length >= 4)) {
+    throw new Error(`file path is outside the supported Vrev data: ${relativePath}`);
   }
   const basename = segments.at(-1).toLowerCase();
   if (!basename.endsWith(".json")) throw new Error(`only JSON files can be synchronized: ${relativePath}`);
@@ -187,9 +187,9 @@ function parseLocalJsonFile(workspaceRoot, relativePath) {
 
 function discoverReviewJsonPaths(workspaceRoot) {
   const root = normalizeWorkspaceRoot(workspaceRoot);
-  const reviewsRoot = path.join(root, ".vreview", "reviews");
+  const reviewsRoot = path.join(root, ".vrev", "reviews");
   if (!existsSync(reviewsRoot)) return [];
-  if (lstatSync(reviewsRoot).isSymbolicLink() || !lstatSync(reviewsRoot).isDirectory()) throw new Error(".vreview/reviews must be a regular directory");
+  if (lstatSync(reviewsRoot).isSymbolicLink() || !lstatSync(reviewsRoot).isDirectory()) throw new Error(".vrev/reviews must be a regular directory");
   const result = [];
   const visit = (directory, relativeDirectory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -203,7 +203,7 @@ function discoverReviewJsonPaths(workspaceRoot) {
       }
     }
   };
-  visit(reviewsRoot, ".vreview/reviews");
+  visit(reviewsRoot, ".vrev/reviews");
   return result;
 }
 
@@ -211,7 +211,7 @@ function discoverReviewJsonPaths(workspaceRoot) {
 export function collectLocalFiles(workspaceRoot = process.cwd()) {
   const root = normalizeWorkspaceRoot(workspaceRoot);
   const relativePaths = [];
-  if (existsSync(path.join(root, ".vreview", "settings.json"))) relativePaths.push(".vreview/settings.json");
+  if (existsSync(path.join(root, ".vrev", "settings.json"))) relativePaths.push(".vrev/settings.json");
   relativePaths.push(...discoverReviewJsonPaths(root));
   if (relativePaths.length > MAX_FILES) throw new Error(`workspace contains more than ${MAX_FILES} synchronizable files`);
   return [...new Set(relativePaths)]

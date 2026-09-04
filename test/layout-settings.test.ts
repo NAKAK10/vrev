@@ -13,7 +13,7 @@ import {
 } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-layout-settings-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-layout-settings-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -22,7 +22,7 @@ test("defaults are returned when the layout settings file is missing", () => {
   const root = workspace();
   const settings = readLayoutSettings(root);
   assert.deepEqual(settings, DEFAULT_LAYOUT_SETTINGS);
-  assert.equal(layoutSettingsPath(root), path.join(realpathSync(root), ".vreview/layout-settings.json"));
+  assert.equal(layoutSettingsPath(root), path.join(realpathSync(root), ".vrev/layout-settings.json"));
 });
 
 test("updates persist and reject a stale revision", () => {

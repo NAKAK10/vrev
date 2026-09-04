@@ -18,7 +18,7 @@ export interface PluginScaffoldOptions {
 
 function packageName(id: string): string {
   const safe = id.replace(/[._]+/g, "-").replace(/-+/g, "-");
-  return `visual-review-plugin-${safe}`;
+  return `vrev-plugin-${safe}`;
 }
 
 function writeNew(file: string, contents: string): void {
@@ -31,7 +31,7 @@ function writeNewJson(file: string, value: unknown): void {
 
 export function createPluginScaffold(id: string, workspace = process.cwd(), options: PluginScaffoldOptions = {}): PluginScaffoldResult {
   const title = options.title?.trim() || id;
-  const summary = options.summary?.trim() || `Visual Review plugin: ${id}`;
+  const summary = options.summary?.trim() || `Vrev plugin: ${id}`;
   const serverContract = { schema_version: 1, queries: [], commands: [] };
   const annotationActionDocument = {
     schema_version: 1,
@@ -76,18 +76,18 @@ export function createPluginScaffold(id: string, workspace = process.cwd(), opti
 
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   try {
-    writeNewJson(path.join(directory, "visual-review.plugin.json"), manifest);
+    writeNewJson(path.join(directory, "vrev.plugin.json"), manifest);
     writeNewJson(path.join(directory, "package.json"), {
       name: packageName(manifest.id),
       version: manifest.version,
       private: true,
-      description: `Visual Review plugin: ${manifest.id}`,
+      description: `Vrev plugin: ${manifest.id}`,
       type: "module",
-      files: ["index.js", "README.md", "visual-review.plugin.json", "server/index.js", "server.contract.json", "ui/annotation-action.ui.json", "types.d.ts"],
+      files: ["index.js", "README.md", "vrev.plugin.json", "server/index.js", "server.contract.json", "ui/annotation-action.ui.json", "types.d.ts"],
       engines: { node: ">=20" },
       scripts: { test: "node --test test.js" },
-      devDependencies: { "@visual-review/plugin-sdk": `^${manifest.version}` },
-      visualReview: { apiVersion: 1, manifest: "./visual-review.plugin.json" },
+      devDependencies: { "@vrev/plugin-sdk": `^${manifest.version}` },
+      vrev: { apiVersion: 1, manifest: "./vrev.plugin.json" },
     });
     writeNew(path.join(directory, "index.js"), `/** @param {{ workspaceRoot: string, pluginDirectory: string, args: readonly string[] }} context */\nexport async function hello(context) {\n  console.log(\`Hello from ${manifest.id}: \${context.args.join(" ")}\`);\n}\n`);
     writeNew(path.join(directory, "test.js"), `import assert from "node:assert/strict";\nimport test from "node:test";\nimport { hello } from "./index.js";\n\ntest("exports the hello command", () => {\n  assert.equal(typeof hello, "function");\n});\n`);
@@ -129,7 +129,7 @@ export default provider;
     mkdirSync(path.join(directory, "ui"), { mode: 0o700 });
     writeNewJson(path.join(directory, "ui/annotation-action.ui.json"), annotationActionDocument);
     writeNew(path.join(directory, "types.d.ts"), `export type {
-  VisualReviewPluginManifest,
+  VrevPluginManifest,
   PluginUiExtensionPointV1,
   PluginUiExtensionEventSchemaV1,
   PluginUiContributionV1,
@@ -137,7 +137,7 @@ export default provider;
   PluginUiSurfaceExtensionPointV1,
   PluginServerProviderV1,
   PluginBridgeContractV1,
-} from "@visual-review/plugin-sdk";
+} from "@vrev/plugin-sdk";
 `);
     writeNew(path.join(directory, "README.md"), `# ${title}
 
@@ -185,8 +185,8 @@ JSON manifest fields cannot carry comments, so this section keeps a \`ui.extensi
 
 \`\`\`sh
 npm test
-visual-review plugin install ./${path.relative(root, directory).split(path.sep).join("/")}
-visual-review plugin run ${manifest.id} hello world
+vrev plugin install ./${path.relative(root, directory).split(path.sep).join("/")}
+vrev plugin run ${manifest.id} hello world
 \`\`\`
 
 Set \`private\` to \`false\`, choose a publishable package name, add a license, and review the source before publishing.

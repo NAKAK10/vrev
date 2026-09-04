@@ -5,16 +5,16 @@ import test from "node:test";
 
 const root = process.cwd();
 const featurePackages = new Map([
-  ["plugins/review", "@visual-review/review"],
-  ["plugins/ai", "@visual-review/ai"],
-  ["plugins/firestore", "@visual-review/storage-firestore"],
-  ["plugins/annotation-workflow", "@visual-review/annotation-workflow"],
-  ["plugins/page-map", "@visual-review/page-map"],
-  ["plugins/github-issue", "@visual-review/github-issue"],
+  ["plugins/review", "@vrev/review"],
+  ["plugins/ai", "@vrev/ai"],
+  ["plugins/firestore", "@vrev/storage-firestore"],
+  ["plugins/annotation-workflow", "@vrev/annotation-workflow"],
+  ["plugins/page-map", "@vrev/page-map"],
+  ["plugins/github-issue", "@vrev/github-issue"],
 ]);
 const packages = new Map([
-  [".", "@visual-review/core"],
-  ["packages/plugin-sdk", "@visual-review/plugin-sdk"],
+  [".", "vrev"],
+  ["packages/plugin-sdk", "@vrev/plugin-sdk"],
   ...featurePackages,
 ]);
 
@@ -23,14 +23,14 @@ test("the agreed package set targets public npm and feature packages expose pack
     const packageJson = JSON.parse(readFileSync(path.join(root, directory, "package.json"), "utf8")) as {
       name: string;
       publishConfig?: { access?: string; registry?: string };
-      visualReview?: { apiVersion?: number; manifest?: string };
+      vrev?: { apiVersion?: number; manifest?: string };
       dependencies?: Record<string, string>;
     };
     assert.equal(packageJson.name, expectedName);
     assert.deepEqual(packageJson.publishConfig, { access: "public", registry: "https://registry.npmjs.org" });
     if (directory.startsWith("plugins/")) {
-      assert.deepEqual(packageJson.visualReview, { apiVersion: 1, manifest: "./visual-review.plugin.json" });
-      assert.equal(existsSync(path.join(root, directory, "visual-review.plugin.json")), true);
+      assert.deepEqual(packageJson.vrev, { apiVersion: 1, manifest: "./vrev.plugin.json" });
+      assert.equal(existsSync(path.join(root, directory, "vrev.plugin.json")), true);
       for (const dependency of Object.keys(packageJson.dependencies ?? {})) {
         assert.equal([...featurePackages.values()].includes(dependency), false, `${expectedName} must not depend on feature package ${dependency}`);
       }

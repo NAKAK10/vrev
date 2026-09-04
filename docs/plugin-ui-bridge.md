@@ -58,7 +58,7 @@ Implementation status: Phase 7–8 complete; legacy renderer remains available f
 
 ### Layout settings
 
-Coreは`.vreview/layout-settings.json`（Git管理外）に次を保存し、sha256 revisionによるCASで更新する。
+Coreは`.vrev/layout-settings.json`（Git管理外）に次を保存し、sha256 revisionによるCASで更新する。
 
 ```json
 {
@@ -152,7 +152,7 @@ annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI�
 
 ### 型
 
-plugin開発者は`@visual-review/plugin-sdk`からmanifest、UI contribution、server lifecycle、bridge、capabilityのversioned contractをimportできる。Core runtime helperが必要なlegacy integrationだけ`@visual-review/core`を利用する。`visual-review plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
+plugin開発者は`@vrev/plugin-sdk`からmanifest、UI contribution、server lifecycle、bridge、capabilityのversioned contractをimportできる。Core runtime helperが必要なlegacy integrationだけ`vrev`を利用する。`vrev plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
 
 ## 3. Limits
 
@@ -657,12 +657,12 @@ Browser `required`、`maxlength`、disabled controlはUX補助でありsecurity 
 
 | Setting | Authority/persistence | UI contribution |
 |---|---|---|
-| plugin enabled | Core `.vreview/plugin-settings.json` revision/CAS | Core plugin list toggle |
-| manifest configuration | Core `.vreview/plugin-settings.json`; secret value禁止 | selected plugin `settings.detail` |
+| plugin enabled | Core `.vrev/plugin-settings.json` revision/CAS | Core plugin list toggle |
+| manifest configuration | Core `.vrev/plugin-settings.json`; secret value禁止 | selected plugin `settings.detail` |
 | auto-run/max parallel | annotation-workflow server（workspace non-secret settings） | annotation-workflow `settings.detail` |
 | CLI selection / external AI command definition and verified state | AI server package | AI `settings.detail` |
 | transient filter/viewport/drafts | Core renderer local-state namespace | owning contribution |
-| credentials | environment変数（値をCoreへ渡さない）、またはCore管理のcredential store `.vreview/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vreview/plugin-settings.json`や`.vreview/.gitignore`外へ漏らさない）; `PUT`/`DELETE /api/settings/plugins/:id/credentials/:key`で登録・削除 | selected plugin `settings.detail`内のcredential field UI（presence/updated_at/fingerprintのみ表示、値は表示・保存しない） |
+| credentials | environment変数（値をCoreへ渡さない）、またはCore管理のcredential store `.vrev/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vrev/plugin-settings.json`や`.vrev/.gitignore`外へ漏らさない）; `PUT`/`DELETE /api/settings/plugins/:id/credentials/:key`で登録・削除 | selected plugin `settings.detail`内のcredential field UI（presence/updated_at/fingerprintのみ表示、値は表示・保存しない） |
 
 Plugin detail surface receives typed host context（plugin metadata、enabled state、effective configuration、missing capability、README、revision）。Hash/deep-link initialization、modal close、opener focus restorationはCore管理。
 
@@ -672,7 +672,7 @@ Core publishes a reserved static `host.settings/1` bridge contract:
 - `plugin-settings.update-enabled`
 - `plugin-settings.update-configuration`
 
-These operations own `.vreview/plugin-settings.json` revision/CAS and exact manifest-configuration validation. A `settings.detail` document may call them through the same renderer instruction path without a plugin server contribution; Core assigns the selected plugin ID from slot context and rejects a body-supplied override. Plugin-specific save/test/retest/delete（workflow settings、AI packageのexternal-command registry等）はeach plugin static bridge contractでpermission付きcommandとして宣言する。これによりCore persistence authorityを維持しつつCore ID-specific logicを作らない。
+These operations own `.vrev/plugin-settings.json` revision/CAS and exact manifest-configuration validation. A `settings.detail` document may call them through the same renderer instruction path without a plugin server contribution; Core assigns the selected plugin ID from slot context and rejects a body-supplied override. Plugin-specific save/test/retest/delete（workflow settings、AI packageのexternal-command registry等）はeach plugin static bridge contractでpermission付きcommandとして宣言する。これによりCore persistence authorityを維持しつつCore ID-specific logicを作らない。
 
 ## 20. Permissions
 

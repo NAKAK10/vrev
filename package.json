@@ -1,8 +1,8 @@
 {
-  "name": "@visual-review/core",
+  "name": "vrev",
   "version": "1.3.0",
   "private": false,
-  "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
+  "description": "Local vrev and annotation workflow for AI-assisted UI fixes",
   "license": "UNLICENSED",
   "type": "module",
   "files": [
@@ -15,11 +15,11 @@
     "dist/plugins/github-issue"
   ],
   "bin": {
-    "visual-review": "dist/src/cli.js"
+    "vrev": "dist/src/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NAKAK10/visual-review.git"
+    "url": "git+https://github.com/NAKAK10/vrev.git"
   },
   "publishConfig": {
     "access": "public",

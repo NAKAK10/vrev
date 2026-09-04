@@ -35,12 +35,12 @@ function isStorageConflictError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { name?: unknown }).name === "StorageConflictError";
 }
 
-/** Maps a review document's absolute path (under `<projectRoot>/.vreview/`) to a canonical storage key. */
+/** Maps a review document's absolute path (under `<projectRoot>/.vrev/`) to a canonical storage key. */
 function storageKeyFor(target: ResolvedTarget, paths: ReviewDocumentPaths, kind: SyncableKind): string {
-  const vreviewRoot = path.join(target.projectRoot, ".vreview");
+  const vreviewRoot = path.join(target.projectRoot, ".vrev");
   const relative = path.relative(vreviewRoot, paths[kind]);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`review storage path is outside .vreview: ${kind}`);
+    throw new Error(`review storage path is outside .vrev: ${kind}`);
   }
   const key = relative.split(path.sep).join("/");
   if (!isCanonicalStorageKey(key)) throw new Error(`review storage key is not canonical: ${key}`);

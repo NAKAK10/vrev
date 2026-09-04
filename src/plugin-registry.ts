@@ -22,7 +22,7 @@ import { gunzipSync } from "node:zlib";
 
 import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
 import { findWorkspaceRoot } from "./paths.js";
-import { parsePluginManifest, readPluginManifest, readPluginManifestFile, type VisualReviewPluginManifest } from "./plugin-manifest.js";
+import { parsePluginManifest, readPluginManifest, readPluginManifestFile, type VrevPluginManifest } from "./plugin-manifest.js";
 import { parsePluginSource } from "./plugin-source.js";
 
 export interface InstalledPluginResolution {
@@ -38,7 +38,7 @@ export interface InstalledPlugin {
   version: string;
   source: string;
   installed_at: string;
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   resolved?: InstalledPluginResolution;
   /** Present only for plugins discovered from workspace package dependencies. */
   directory?: string;
@@ -63,18 +63,18 @@ export interface BundledPluginUpgradeResult extends PluginInstallResult {
 
 interface TarEntry { name: string; data?: Buffer }
 
-function storagePaths(workspace = process.cwd()): { registry: string; plugins: string; vreview: string } {
+function storagePaths(workspace = process.cwd()): { registry: string; plugins: string; vrev: string } {
   const root = findWorkspaceRoot(workspace);
-  const vreview = path.join(root, ".vreview");
-  if (existsSync(vreview) && lstatSync(vreview).isSymbolicLink()) throw new Error("plugin storage path must not contain symbolic links");
-  const plugins = path.join(vreview, "plugins");
+  const vrev = path.join(root, ".vrev");
+  if (existsSync(vrev) && lstatSync(vrev).isSymbolicLink()) throw new Error("plugin storage path must not contain symbolic links");
+  const plugins = path.join(vrev, "plugins");
   if (existsSync(plugins) && lstatSync(plugins).isSymbolicLink()) throw new Error("plugin storage path must not contain symbolic links");
-  return { registry: path.join(vreview, "plugins.json"), plugins, vreview };
+  return { registry: path.join(vrev, "plugins.json"), plugins, vrev };
 }
 
-function ensurePluginIgnores(vreview: string): void {
-  mkdirSync(vreview, { recursive: true });
-  const ignorePath = path.join(vreview, ".gitignore");
+function ensurePluginIgnores(vrev: string): void {
+  mkdirSync(vrev, { recursive: true });
+  const ignorePath = path.join(vrev, ".gitignore");
   if (existsSync(ignorePath) && lstatSync(ignorePath).isSymbolicLink()) throw new Error("plugin storage ignore file must not be a symbolic link");
   const required = ["plugins/", "plugins.json", "plugin-settings.json", "ai-settings.json", "workflow-settings.json", "custom-commands.json", "layout-settings.json"];
   const current = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
@@ -327,7 +327,7 @@ async function prepareSource(source: string, cwd: string, temporaryRoot: string)
 
 export async function installPlugin(source: string, workspace = process.cwd()): Promise<PluginInstallResult> {
   const paths = storagePaths(workspace);
-  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-"));
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-plugin-"));
   try {
     const prepared = await prepareSource(source, path.resolve(workspace), temporaryRoot);
     const manifest = readPluginManifest(prepared.directory, true);
@@ -336,7 +336,7 @@ export async function installPlugin(source: string, workspace = process.cwd()): 
     return withFileLock(paths.registry, () => {
       const registry = readRegistry(paths.registry);
       if (registry.plugins.some(({ id }) => id === manifest.id)) throw new Error(`plugin is already installed: ${manifest.id}`);
-      ensurePluginIgnores(paths.vreview);
+      ensurePluginIgnores(paths.vrev);
       mkdirSync(paths.plugins, { recursive: true });
       const staging = path.join(paths.plugins, `.${manifest.id}.${randomUUID()}.tmp`);
       const destination = path.join(paths.plugins, manifest.id);
@@ -397,7 +397,7 @@ function compareSemver(left: string, right: string): number {
   return 0;
 }
 
-function isOlderBundledManifest(installed: VisualReviewPluginManifest, bundled: VisualReviewPluginManifest): boolean {
+function isOlderBundledManifest(installed: VrevPluginManifest, bundled: VrevPluginManifest): boolean {
   const schemaComparison = installed.schema_version - bundled.schema_version;
   const versionComparison = compareSemver(installed.version, bundled.version);
   return schemaComparison <= 0 && versionComparison <= 0 && (schemaComparison < 0 || versionComparison < 0);
@@ -425,7 +425,7 @@ export function upgradeBundledPlugin(
     if (!path.isAbsolute(existing.source) || path.resolve(existing.source) !== path.resolve(source)) return null;
 
     const destination = path.join(paths.plugins, existing.id);
-    let installedManifest: VisualReviewPluginManifest;
+    let installedManifest: VrevPluginManifest;
     try {
       if (!existsSync(destination)) return null;
       assertSafeTree(destination);
@@ -473,7 +473,7 @@ export function upgradeBundledPlugin(
 
 interface PackageMetadata {
   name?: unknown;
-  visualReview?: unknown;
+  vrev?: unknown;
 }
 
 function resolvedPackageJson(packageName: string, workspaceRoot: string): string | null {
@@ -530,27 +530,27 @@ export function discoverPackagePlugins(workspace = process.cwd()): InstalledPlug
     try { packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageMetadata; }
     catch { throw new Error(`package ${packageName} has an invalid package.json`); }
     if (typeof packageJson !== "object" || packageJson === null || Array.isArray(packageJson)) throw new Error(`package ${packageName} has an invalid package.json`);
-    if (packageJson.visualReview === undefined) continue;
-    if (typeof packageJson.visualReview !== "object" || packageJson.visualReview === null || Array.isArray(packageJson.visualReview)) {
-      throw new Error(`package ${packageName} visualReview metadata is invalid`);
+    if (packageJson.vrev === undefined) continue;
+    if (typeof packageJson.vrev !== "object" || packageJson.vrev === null || Array.isArray(packageJson.vrev)) {
+      throw new Error(`package ${packageName} vrev metadata is invalid`);
     }
-    const declaration = packageJson.visualReview as Record<string, unknown>;
+    const declaration = packageJson.vrev as Record<string, unknown>;
     if (declaration.apiVersion !== 1 || typeof declaration.manifest !== "string") {
-      throw new Error(`package ${packageName} visualReview.apiVersion must be 1 and manifest must be a path`);
+      throw new Error(`package ${packageName} vrev.apiVersion must be 1 and manifest must be a path`);
     }
     const manifestReference = declaration.manifest;
     const parts = manifestReference.startsWith("./") ? manifestReference.slice(2).split("/") : [];
     if (parts.length === 0 || parts.some((part) => !part || part === "." || part === "..") || manifestReference.includes("\\")) {
-      throw new Error(`package ${packageName} visualReview manifest path is invalid`);
+      throw new Error(`package ${packageName} vrev manifest path is invalid`);
     }
     const packageDirectory = realpathSync(path.dirname(packageJsonPath));
     const candidate = path.join(packageDirectory, ...parts);
     if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink() || !statSync(candidate).isFile()) {
-      throw new Error(`package ${packageName} visualReview manifest does not exist or is unsafe`);
+      throw new Error(`package ${packageName} vrev manifest does not exist or is unsafe`);
     }
     const manifestPath = realpathSync(candidate);
     const relative = path.relative(packageDirectory, manifestPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`package ${packageName} visualReview manifest path is unsafe`);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`package ${packageName} vrev manifest path is unsafe`);
     const manifest = readPluginManifestFile(manifestPath, true);
     const duplicate = plugins.find(({ id }) => id === manifest.id);
     if (duplicate) throw new Error(`duplicate plugin id ${manifest.id}: ${duplicate.source} and ${packageName}`);

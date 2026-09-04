@@ -58,7 +58,7 @@ export async function createWorkflowRuntimeSnapshot(
   ]);
   const review = projectReview(loadedReview, annotationIds);
   if (review.annotations.length !== new Set(annotationIds).size) throw new Error("runtime snapshot is missing a claimed annotation");
-  const directory = await mkdtemp(path.join(os.tmpdir(), "visual-review-workflow-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "vrev-workflow-"));
   if (isInside(store.target.projectRoot, directory)) {
     await rm(directory, { recursive: true, force: true });
     throw new Error("runtime snapshot directory must be outside the workspace");

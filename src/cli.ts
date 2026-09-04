@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { bundledPluginsRoot } from "./bundled-plugins-root.js";
 import { normalizeGitHubIssueDraft } from "./github-issue.js";
-import { assertLoopbackHost, createVisualReviewServer } from "./http-server.js";
+import { assertLoopbackHost, createVrevServer } from "./http-server.js";
 import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
 import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, upgradeBundledPlugin } from "./plugin-registry.js";
 import { loadPluginCommand, pluginRuntimeContext } from "./plugin-runtime.js";
@@ -30,7 +30,7 @@ interface ServeArguments {
 }
 
 function serveUsage(): never {
-  throw new Error("usage: visual-review serve [--project-root <root>] --target <relative|local-network-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
+  throw new Error("usage: vrev serve [--project-root <root>] --target <relative|local-network-url> [--start <command>] [--stop <command>] [--host 127.0.0.1|::1] [--port 18765] [--allow-scripts] [--no-ai-jobs-with-scripts] [--no-open]");
 }
 
 export function parseCliArguments(argv: string[], cwd = process.cwd()): ServeArguments {
@@ -94,7 +94,7 @@ interface AnnotationArguments {
 }
 
 function annotationUsage(): never {
-  throw new Error("usage: visual-review annotation add-message|set-status|set-issue-draft --project-root <root> --review-path <relative review.json> --annotation-id <id> [--actor ai --body-stdin|--status addressed|--draft-stdin]");
+  throw new Error("usage: vrev annotation add-message|set-status|set-issue-draft --project-root <root> --review-path <relative review.json> --annotation-id <id> [--actor ai --body-stdin|--status addressed|--draft-stdin]");
 }
 
 export function parseAnnotationArguments(argv: string[], cwd = process.cwd()): AnnotationArguments {
@@ -293,17 +293,17 @@ function runLifecycleCommand(command: string | null, cwd: string): Promise<void>
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
-    console.log("usage: visual-review serve --target <path|url> [options]\n       visual-review plugin <create|install|list|remove|run> ...\n       visual-review annotation <add-message|set-status|set-issue-draft> ...\n\nRun 'visual-review plugin --help' or 'visual-review plugin create --help' for plugin development help.");
+    console.log("usage: vrev serve --target <path|url> [options]\n       vrev plugin <create|install|list|remove|run> ...\n       vrev annotation <add-message|set-status|set-issue-draft> ...\n\nRun 'vrev plugin --help' or 'vrev plugin create --help' for plugin development help.");
     return;
   }
   if (argv[0] === "plugin") {
     const action = argv[1];
     if (action === undefined || action === "--help" || action === "-h") {
-      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n       visual-review plugin install <source>\n       visual-review plugin list\n       visual-review plugin remove <id>\n       visual-review plugin run <id> <command> [args...]\n\n'create' generates a schema-v4 manifest, server module and bridge contract, UI contribution, types, README, command, package, and test.");
+      console.log("usage: vrev plugin create <id> [--title <title>] [--summary <summary>] [--install]\n       vrev plugin install <source>\n       vrev plugin list\n       vrev plugin remove <id>\n       vrev plugin run <id> <command> [args...]\n\n'create' generates a schema-v4 manifest, server module and bridge contract, UI contribution, types, README, command, package, and test.");
       return;
     }
     if (action === "create" && (argv[2] === "--help" || argv[2] === "-h")) {
-      console.log("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]\n\nCreates plugins/<id>/ with:\n  visual-review.plugin.json     schema v4 manifest (display, server, UI contribution)\n  server/index.js               minimal plugin server provider\n  server.contract.json          empty plugin bridge contract\n  ui/annotation-action.ui.json  declarative UI contribution document\n  types.d.ts                    SDK type re-exports for editor typing\n  README.md                     detailed description shown in plugin settings\n  index.js                      example command\n  package.json                  Node.js 20+ package metadata\n  test.js                       zero-dependency Node test\n\nConfiguration fields are declarative; use source=environment for credentials.");
+      console.log("usage: vrev plugin create <id> [--title <title>] [--summary <summary>] [--install]\n\nCreates plugins/<id>/ with:\n  vrev.plugin.json     schema v4 manifest (display, server, UI contribution)\n  server/index.js               minimal plugin server provider\n  server.contract.json          empty plugin bridge contract\n  ui/annotation-action.ui.json  declarative UI contribution document\n  types.d.ts                    SDK type re-exports for editor typing\n  README.md                     detailed description shown in plugin settings\n  index.js                      example command\n  package.json                  Node.js 20+ package metadata\n  test.js                       zero-dependency Node test\n\nConfiguration fields are declarative; use source=environment for credentials.");
       return;
     }
     if (action === "create" && argv[2]) {
@@ -313,7 +313,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       for (let index = 3; index < argv.length; index += 1) {
         const argument = argv[index]!;
         if (argument === "--install") { install = true; continue; }
-        if (argument !== "--title" && argument !== "--summary") throw new Error("usage: visual-review plugin create <id> [--title <title>] [--summary <summary>] [--install]");
+        if (argument !== "--title" && argument !== "--summary") throw new Error("usage: vrev plugin create <id> [--title <title>] [--summary <summary>] [--install]");
         const value = argv[++index];
         if (!value) throw new Error(`${argument} requires a value`);
         if (argument === "--title") title = value; else summary = value;
@@ -361,7 +361,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       });
       return;
     }
-    throw new Error("usage: visual-review plugin create <id> [--install] | install <source> | list | remove <id> | run <id> <command> [args...]");
+    throw new Error("usage: vrev plugin create <id> [--install] | install <source> | list | remove <id> | run <id> <command> [args...]");
   }
   if (argv[0] === "annotation") {
     const args = parseAnnotationArguments(argv);
@@ -392,7 +392,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       throw error;
     }
   }
-  const visualReview = createVisualReviewServer({
+  const vrev = createVrevServer({
     projectRoot: args.projectRoot,
     target: args.target,
     projectDirectory: args.projectDirectory,
@@ -400,23 +400,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     allowAiJobsWithScripts: args.allowAiJobsWithScripts,
   });
   installShutdownHandlers(async () => {
-    await visualReview.close();
+    await vrev.close();
     stopStartedProcess(startedProcess);
     await runLifecycleCommand(args.stopCommand, args.projectDirectory);
   });
   try {
-    await listenOnAvailablePort(visualReview.server, args.host, args.port);
+    await listenOnAvailablePort(vrev.server, args.host, args.port);
   } catch (error) {
-    await visualReview.close();
+    await vrev.close();
     stopStartedProcess(startedProcess);
     await runLifecycleCommand(args.stopCommand, args.projectDirectory);
     throw error;
   }
-  const address = visualReview.server.address();
+  const address = vrev.server.address();
   if (address === null || typeof address === "string") throw new Error("server did not bind a TCP address");
   const url = `http://${args.host === "::1" ? "[::1]" : args.host}:${address.port}/`;
   console.log(`Visual review: ${url}`);
-  console.log(`Target: ${visualReview.store.entryPath}`);
+  console.log(`Target: ${vrev.store.entryPath}`);
   if (args.open) await openBrowser(url);
 }
 

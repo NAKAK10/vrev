@@ -16,12 +16,12 @@ function manifestBase(schemaVersion: 1 | 2 | 3, id: string): Record<string, unkn
 }
 
 async function serverFixture(legacyUi = false): Promise<{ baseUrl: string; close(): Promise<void> }> {
-  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-deprecation-"));
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-deprecation-"));
   mkdirSync(path.join(projectRoot, ".git"));
   mkdirSync(path.join(projectRoot, ".code/htmls"), { recursive: true });
-  mkdirSync(path.join(projectRoot, ".vreview"), { recursive: true });
+  mkdirSync(path.join(projectRoot, ".vrev"), { recursive: true });
   writeFileSync(path.join(projectRoot, ".code/htmls/index.html"), "<h1>Compatibility target</h1>");
-  writeFileSync(path.join(projectRoot, ".vreview/settings.json"), JSON.stringify({
+  writeFileSync(path.join(projectRoot, ".vrev/settings.json"), JSON.stringify({
     schema_version: 1,
     workspace: { root: ".", monorepo: false },
     ui: { plugin_management: true },
@@ -29,17 +29,17 @@ async function serverFixture(legacyUi = false): Promise<{ baseUrl: string; close
   }));
   await ensureDefaultPlugins(projectRoot);
 
-  const visualReview = rootApi.createVisualReviewServer({
+  const vrev = rootApi.createVrevServer({
     projectRoot,
     target: ".code/htmls/index.html",
     legacyUi,
   });
-  await new Promise<void>((resolve) => visualReview.server.listen(0, "127.0.0.1", resolve));
-  const address = visualReview.server.address();
+  await new Promise<void>((resolve) => vrev.server.listen(0, "127.0.0.1", resolve));
+  const address = vrev.server.address();
   assert.ok(address && typeof address !== "string");
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    close: () => visualReview.close(),
+    close: () => vrev.close(),
   };
 }
 

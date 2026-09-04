@@ -372,7 +372,7 @@ export class JobManager {
         };
       } else {
         if (!this.executor) throw new Error("AI package is unavailable");
-        command = this.executor({ command: "visual-review-ai", args: [prompt], cwd: this.reviewStore.target.projectRoot, env: { ...process.env } });
+        command = this.executor({ command: "vrev-ai", args: [prompt], cwd: this.reviewStore.target.projectRoot, env: { ...process.env } });
       }
       if (this.stopped || generation !== this.lifecycleGeneration) {
         command.cancel();

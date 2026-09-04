@@ -24,7 +24,7 @@ const LOAD_SCREEN_WIDTH = 150;
 const UNLOAD_SCREEN_WIDTH = 110;
 const MAX_LOADED_PREVIEWS = 16;
 const PREVIEW_DISABLE_PAGE_COUNT = 120;
-const PREVIEW_STORAGE_KEY = "visual-review.page-map.preview";
+const PREVIEW_STORAGE_KEY = "vrev.page-map.preview";
 
 // Pointer travel (px) past which a press-and-drag counts as a pan rather than a click.
 const PAN_CLICK_THRESHOLD = 4;

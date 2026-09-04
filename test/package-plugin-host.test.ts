@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createVisualReviewServer } from "../src/index.js";
+import { createVrevServer } from "../src/index.js";
 
 test("a directly depended-on package server is started and routed without a legacy plugin copy", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-package-host-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-package-host-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Package host</h1>");
@@ -18,7 +18,7 @@ test("a directly depended-on package server is started and routed without a lega
     name: "@fixture/package-server",
     version: "1.0.0",
     type: "module",
-    visualReview: { apiVersion: 1, manifest: "./visual-review.plugin.json" },
+    vrev: { apiVersion: 1, manifest: "./vrev.plugin.json" },
   }));
   writeFileSync(path.join(plugin, "README.md"), "# Package server\n");
   writeFileSync(path.join(plugin, "contract.json"), JSON.stringify({
@@ -43,7 +43,7 @@ test("a directly depended-on package server is started and routed without a lega
       };
     }
   };\n`);
-  writeFileSync(path.join(plugin, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(plugin, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4,
     id: "package-server",
     version: "1.0.0",
@@ -54,10 +54,10 @@ test("a directly depended-on package server is started and routed without a lega
     provides: [],
   }));
 
-  const visualReview = createVisualReviewServer({ projectRoot: root, target: ".code/htmls/index.html" });
-  await new Promise<void>((resolve) => visualReview.server.listen(0, "127.0.0.1", resolve));
+  const vrev = createVrevServer({ projectRoot: root, target: ".code/htmls/index.html" });
+  await new Promise<void>((resolve) => vrev.server.listen(0, "127.0.0.1", resolve));
   try {
-    const address = visualReview.server.address();
+    const address = vrev.server.address();
     assert.ok(address && typeof address !== "string");
     const response = await fetch(`http://127.0.0.1:${address.port}/api/plugin-host/v1/plugins/package-server/queries/fixture.get`, {
       method: "POST",
@@ -67,6 +67,6 @@ test("a directly depended-on package server is started and routed without a lega
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { ok: true, data: { value: "from-package" } });
   } finally {
-    await visualReview.close();
+    await vrev.close();
   }
 });

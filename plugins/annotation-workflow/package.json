@@ -1,7 +1,7 @@
 {
-  "name": "@visual-review/annotation-workflow",
+  "name": "@vrev/annotation-workflow",
   "version": "1.3.2",
-  "description": "Default annotation post-save workflow policy for Visual Review",
+  "description": "Default annotation post-save workflow policy for Vrev",
   "license": "UNLICENSED",
   "type": "module",
   "files": [
@@ -10,7 +10,7 @@
     "server",
     "server.contract.json",
     "ui",
-    "visual-review.plugin.json"
+    "vrev.plugin.json"
   ],
   "engines": {
     "node": ">=20"
@@ -19,8 +19,8 @@
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
-  "visualReview": {
+  "vrev": {
     "apiVersion": 1,
-    "manifest": "./visual-review.plugin.json"
+    "manifest": "./vrev.plugin.json"
   }
 }

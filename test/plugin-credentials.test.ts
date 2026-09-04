@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 
 import {
-  createVisualReviewServer,
+  createVrevServer,
   deletePluginCredential,
   installPlugin,
   loadPluginCommand,
@@ -19,11 +19,11 @@ import {
   updatePluginSettings,
   readPluginSettings,
   pluginSettingsRevision,
-  type VisualReviewServer,
+  type VrevServer,
 } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-credentials-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-credentials-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -69,7 +69,7 @@ test("manifest validation accepts a well-formed credential field and rejects mal
 function credentialFixturePlugin(root: string): string {
   const directory = path.join(root, "plugins", "credential-fixture");
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     ...baseManifestFields,
     configuration: [
       { key: "api_key", title: "API key", description: "text credential", type: "secret", source: "credential", required: false, format: "text" },
@@ -120,7 +120,7 @@ test("plugin-credentials store: set/read/delete/presence, file modes, symlink re
     assert.equal(statSync(path.dirname(filePath)).mode & 0o777, 0o700);
   }
 
-  const ignoreContent = readFileSync(path.join(root, ".vreview", ".gitignore"), "utf8");
+  const ignoreContent = readFileSync(path.join(root, ".vrev", ".gitignore"), "utf8");
   assert.match(ignoreContent, /^credentials\/$/m);
 
   deletePluginCredential("credential-fixture", "api_key", root);
@@ -131,16 +131,16 @@ test("plugin-credentials store: set/read/delete/presence, file modes, symlink re
 
 test("plugin credential directory and file symlinks are rejected", () => {
   const root = workspace();
-  mkdirSync(path.join(root, ".vreview"), { recursive: true });
-  const realDir = path.join(root, ".vreview", "real-credentials");
+  mkdirSync(path.join(root, ".vrev"), { recursive: true });
+  const realDir = path.join(root, ".vrev", "real-credentials");
   mkdirSync(realDir, { recursive: true });
-  symlinkSync(realDir, path.join(root, ".vreview", "credentials"));
+  symlinkSync(realDir, path.join(root, ".vrev", "credentials"));
   assert.throws(() => setPluginCredential("credential-fixture", "api_key", "value", root), /symbolic link/);
 
   const root2 = workspace();
-  mkdirSync(path.join(root2, ".vreview", "credentials"), { recursive: true });
-  writeFileSync(path.join(root2, ".vreview", "credentials", "real-file.json"), JSON.stringify({ schema_version: 1, values: {} }));
-  symlinkSync(path.join(root2, ".vreview", "credentials", "real-file.json"), path.join(root2, ".vreview", "credentials", "credential-fixture.json"));
+  mkdirSync(path.join(root2, ".vrev", "credentials"), { recursive: true });
+  writeFileSync(path.join(root2, ".vrev", "credentials", "real-file.json"), JSON.stringify({ schema_version: 1, values: {} }));
+  symlinkSync(path.join(root2, ".vrev", "credentials", "real-file.json"), path.join(root2, ".vrev", "credentials", "credential-fixture.json"));
   assert.throws(() => setPluginCredential("credential-fixture", "api_key", "value", root2), /symbolic link/);
 });
 
@@ -153,7 +153,7 @@ test("credential value validation rejects non-strings, oversized values, and NUL
 });
 
 let serverRoot: string;
-let server: VisualReviewServer;
+let server: VrevServer;
 let baseUrl: string;
 
 before(async () => {
@@ -162,7 +162,7 @@ before(async () => {
   writeFileSync(path.join(serverRoot, ".code/htmls/index.html"), "<h1>Fixture</h1>");
   const fixtureDirectory = credentialFixturePlugin(serverRoot);
   await installPlugin(fixtureDirectory, serverRoot);
-  server = createVisualReviewServer({ projectRoot: serverRoot, target: ".code/htmls/index.html" });
+  server = createVrevServer({ projectRoot: serverRoot, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => server.server.listen(0, "127.0.0.1", resolve));
   const address = server.server.address();
   assert.ok(address && typeof address !== "string");
@@ -255,7 +255,7 @@ test("the plain plugin settings PUT rejects a credential key in the configuratio
 });
 
 test("updatePluginSettings (direct call) also rejects a credential key even outside HTTP", () => {
-  const manifest = parsePluginManifest(JSON.parse(readFileSync(path.join(serverRoot, ".vreview", "plugins", "credential-fixture", "visual-review.plugin.json"), "utf8")));
+  const manifest = parsePluginManifest(JSON.parse(readFileSync(path.join(serverRoot, ".vrev", "plugins", "credential-fixture", "vrev.plugin.json"), "utf8")));
   const settings = readPluginSettings(serverRoot);
   const revision = pluginSettingsRevision(settings);
   assert.throws(
@@ -287,7 +287,7 @@ test("plugin run delivers credentials through PluginCommandContext, never throug
   const args = ["--not-secret", "plain-argument"];
   await handler({
     workspaceRoot: serverRoot,
-    pluginDirectory: path.join(serverRoot, ".vreview", "plugins", "credential-fixture"),
+    pluginDirectory: path.join(serverRoot, ".vrev", "plugins", "credential-fixture"),
     args,
     configuration: context.configuration,
     credentials: context.credentials,

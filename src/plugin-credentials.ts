@@ -29,7 +29,7 @@ export interface PluginCredentialPresence {
 
 function credentialsDirectory(workspace: string): string {
   const root = findWorkspaceRoot(workspace);
-  return path.join(root, ".vreview", "credentials");
+  return path.join(root, ".vrev", "credentials");
 }
 
 function assertNotSymlink(target: string, label: string): void {
@@ -78,7 +78,7 @@ function readStore(pluginId: string, workspace: string): PluginCredentialsFile {
 
 function ensureCredentialsIgnored(workspace: string): void {
   const root = findWorkspaceRoot(workspace);
-  const ignorePath = path.join(root, ".vreview", ".gitignore");
+  const ignorePath = path.join(root, ".vrev", ".gitignore");
   assertNotSymlink(ignorePath, "plugin credential ignore file");
   const current = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
   if (current.includes("credentials/")) return;

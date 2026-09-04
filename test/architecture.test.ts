@@ -210,7 +210,7 @@ test("plugin settings UI has no branches for built-in plugin IDs", () => {
   const settings = modulesByPath.get(path.join(repositoryRoot, "src/plugin-settings-ui/settings.js"));
   assert.ok(settings, "src/plugin-settings-ui/settings.js must exist");
   const pluginIds = readdirSync(path.join(repositoryRoot, "plugins"), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(path.join(repositoryRoot, "plugins", entry.name, "visual-review.plugin.json")))
+    .filter((entry) => entry.isDirectory() && existsSync(path.join(repositoryRoot, "plugins", entry.name, "vrev.plugin.json")))
     .map((entry) => entry.name);
   const violations = settings.source.split("\n").flatMap((line, index) => {
     const branchesOnId = /\b(?:if|else\s+if|case)\b|={2,3}|!={1,2}|pluginsById\.get\s*\(/.test(line);

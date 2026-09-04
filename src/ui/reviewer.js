@@ -2,7 +2,7 @@
 
 const DEFAULT_STATUS_FILTERS = ["open", "in_progress", "failed", "addressed", "resolved"];
 const DEFAULT_KIND_FILTERS = ["dom", "region"];
-const FILTER_STORAGE_KEY = "visual-review:annotation-filters";
+const FILTER_STORAGE_KEY = "vrev:annotation-filters";
 const FILTER_STORAGE_VERSION = 4;
 const HISTORY_PAGE_SIZE = 24;
 const replyDrafts = new Map();
@@ -697,7 +697,7 @@ function createReplyForm(id, previousStatus) {
       applyReview(review);
       const updated = annotations().find((annotation) => annotationId(annotation) === id);
       const reopened = previousStatus !== "open" && updated?.status === "open";
-      if (reopened) window.dispatchEvent(new CustomEvent("visual-review:annotation-reopened", { detail: { annotationId: id, reason: "human-reply" } }));
+      if (reopened) window.dispatchEvent(new CustomEvent("vrev:annotation-reopened", { detail: { annotationId: id, reason: "human-reply" } }));
       showToast(reopened ? "返信を追加し、再対応のため未対応に戻しました。" : "返信を追加しました。AIの対応を待ちます。");
     } catch (error) {
       showToast(`返信に失敗しました：${error.message}`, true);
@@ -727,7 +727,7 @@ async function updateStatus(id, status, button) {
     });
     if (status === "resolved" && state.highlightedId === id) state.highlightedId = null;
     applyReview(review);
-    if (status === "open") window.dispatchEvent(new CustomEvent("visual-review:annotation-reopened", { detail: { annotationId: id, reason: "manual-reopen" } }));
+    if (status === "open") window.dispatchEvent(new CustomEvent("vrev:annotation-reopened", { detail: { annotationId: id, reason: "manual-reopen" } }));
     showToast(status === "resolved" ? "注釈を解決済みにしました。" : "注釈を再オープンしました。");
   } catch (error) {
     showToast(`状態の更新に失敗しました：${error.message}`, true);
@@ -1648,7 +1648,7 @@ async function requestGitHubIssueFromPending() {
       body: JSON.stringify({ ...pending, comment, actor: "human" }),
     });
     applyReview(review);
-    window.dispatchEvent(new CustomEvent("visual-review:annotation-created"));
+    window.dispatchEvent(new CustomEvent("vrev:annotation-created"));
     showToast("Issue用の注釈を保存しました。AI実行設定に従ってラフを作成します。");
   } catch (error) {
     showToast(`Issue用注釈の保存に失敗しました：${error.message}`, true);
@@ -1715,7 +1715,7 @@ async function saveAnnotation() {
     elements.dialog.close();
     applyReview(review);
     setMode("browse");
-    window.dispatchEvent(new CustomEvent("visual-review:annotation-created"));
+    window.dispatchEvent(new CustomEvent("vrev:annotation-created"));
     showToast("注釈を保存しました。");
   } catch (error) {
     showToast(`注釈の保存に失敗しました：${error.message}`, true);
@@ -1804,7 +1804,7 @@ function isTypingTarget(target) {
 elements.modeButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 elements.viewportButtons.forEach((button) => button.addEventListener("click", () => setViewport(button.dataset.viewport)));
 elements.refreshButton.addEventListener("click", () => loadSession({ reloadTarget: true }));
-window.addEventListener("visual-review:session-refreshed", (event) => {
+window.addEventListener("vrev:session-refreshed", (event) => {
   if (document.activeElement?.classList.contains("reply-input")) return;
   if (event instanceof CustomEvent && event.detail?.review) applyReview(event.detail);
 });

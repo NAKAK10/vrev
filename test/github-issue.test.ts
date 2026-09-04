@@ -11,13 +11,13 @@ test("validates the human-editable GitHub Issue draft", () => {
 });
 
 test("the normal coordinator produces Issue drafts in the selected repository without creating GitHub Issues", () => {
-  const prompt = buildBatchPrompt(".vreview/reviews/index/review.json", ["annotation-id"], 2, "dist/src/cli.js");
+  const prompt = buildBatchPrompt(".vrev/reviews/index/review.json", ["annotation-id"], 2, "dist/src/cli.js");
   assert.match(prompt, /issue_stateがあるIssue用annotation/);
   assert.match(prompt, /sourceを一切編集せず/);
   assert.match(prompt, /現在のworking directoryで対象repository/);
   assert.match(prompt, /画像に依存せずrepository相対path/);
   assert.match(prompt, /Issue単体を初めて読む実装者が背景と修正対象を理解/);
-  assert.match(prompt, /annotation ID、review file path、\.vreview、Visual Review注釈など内部review情報はtitle\/bodyへ書かず/);
+  assert.match(prompt, /annotation ID、review file path、\.vrev、Vrev注釈など内部review情報はtitle\/bodyへ書かず/);
   assert.match(prompt, /GitHub Issue自体は作成せず/);
   assert.match(prompt, /VISUAL_REVIEW_ISSUE_DRAFT_START/);
   assert.match(prompt, /VISUAL_REVIEW_ISSUE_DRAFT_END/);

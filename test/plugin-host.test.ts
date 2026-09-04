@@ -20,7 +20,7 @@ import {
 } from "../src/index.js";
 
 function pluginWorkspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-host-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-host-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -62,7 +62,7 @@ async function installServerFixture(root: string, id: string, requiredCapability
       }
     };
   `);
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4,
     id,
     version: "1.0.0",
@@ -154,7 +154,7 @@ test("plugin host starts capability dependencies independently of package order"
   writeFileSync(path.join(source, "README.md"), "# Provider\n");
   writeFileSync(path.join(source, "contract.json"), JSON.stringify({ schema_version: 1, queries: [], commands: [] }));
   writeFileSync(path.join(source, "server.js"), `export default { apiVersion: 1, create() { return { start() {}, query() {}, command() {}, capabilities() { return [{ id: "late.port", apiVersion: 1, implementation: { ready: true } }]; }, stop() {} }; } };`);
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4,
     id: "z-provider",
     version: "1.0.0",

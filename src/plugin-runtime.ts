@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { findWorkspaceRoot } from "./paths.js";
 import { parsePluginBridgeContract, type PluginBridgeContractV1 } from "./plugin-bridge-contract.js";
 import { readPluginCredentials } from "./plugin-credentials.js";
-import { readPluginManifest, readPluginManifestFile, type PluginModuleReference, type VisualReviewPluginManifest } from "./plugin-manifest.js";
+import { readPluginManifest, readPluginManifestFile, type PluginModuleReference, type VrevPluginManifest } from "./plugin-manifest.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { assertPluginServerProviderV1, type PluginServerProviderV1 } from "./plugin-server.js";
 import { assertPluginEnabled, effectivePluginSettings } from "./plugin-settings.js";
@@ -64,22 +64,22 @@ export interface PluginIssueProvider {
 }
 
 export interface LoadedPluginCommand {
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   handler: PluginCommandHandler;
 }
 
 export interface LoadedPluginStorageProvider<T extends PluginStorageProvider = PluginStorageProvider> {
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   provider: T;
 }
 
 export interface LoadedPluginIssueProvider {
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   provider: PluginIssueProvider;
 }
 
 export interface LoadedPluginAnnotationFlowProvider {
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   provider: PluginAnnotationFlowProviderV1;
   policy: AnnotationFlowPolicyV1;
 }
@@ -94,9 +94,9 @@ export interface PluginCustomCommandProviderV1 {
   test(workspaceRoot: string, runnerId: string): Promise<{ duration_ms: number }>;
   resolve(workspaceRoot: string, runnerId: string): { name: string; template: string };
 }
-export interface LoadedPluginCustomCommandProvider { manifest: VisualReviewPluginManifest; provider: PluginCustomCommandProviderV1 }
+export interface LoadedPluginCustomCommandProvider { manifest: VrevPluginManifest; provider: PluginCustomCommandProviderV1 }
 
-function installedManifest(id: string, workspace: string, requireModules = true): { directory: string; manifest: VisualReviewPluginManifest } {
+function installedManifest(id: string, workspace: string, requireModules = true): { directory: string; manifest: VrevPluginManifest } {
   const entry = listPlugins(workspace).find((plugin) => plugin.id === id);
   if (!entry) throw new Error(`plugin is not installed: ${id}`);
   const directory = installedPluginDirectory(id, workspace);
@@ -134,7 +134,7 @@ async function loadExport(directory: string, reference: PluginModuleReference): 
   return loaded[exportName];
 }
 
-function buildRuntimeContext(installed: { directory: string; manifest: VisualReviewPluginManifest }, workspace: string): PluginRuntimeContextV1 {
+function buildRuntimeContext(installed: { directory: string; manifest: VrevPluginManifest }, workspace: string): PluginRuntimeContextV1 {
   const effective = effectivePluginSettings(installed.manifest, workspace);
   const credentialKeys = (installed.manifest.configuration ?? []).filter((field) => field.source === "credential").map((field) => field.key);
   const credentials = readPluginCredentials(installed.manifest.id, workspace, credentialKeys);
@@ -153,7 +153,7 @@ export function pluginRuntimeContext(id: string, workspace = process.cwd()): Plu
 }
 
 export interface LoadedPluginServerProvider {
-  manifest: VisualReviewPluginManifest;
+  manifest: VrevPluginManifest;
   pluginDirectory: string;
   contract: PluginBridgeContractV1;
   provider: PluginServerProviderV1;
@@ -224,7 +224,7 @@ function validateAnnotationFlowPolicy(provider: PluginAnnotationFlowProviderV1, 
   return structuredClone(policy);
 }
 
-async function loadedAnnotationFlow(installed: { directory: string; manifest: VisualReviewPluginManifest }, id: string): Promise<LoadedPluginAnnotationFlowProvider> {
+async function loadedAnnotationFlow(installed: { directory: string; manifest: VrevPluginManifest }, id: string): Promise<LoadedPluginAnnotationFlowProvider> {
   if (!installed.manifest.annotation_flow_provider) throw new Error(`plugin does not declare an annotation flow provider: ${id}`);
   const provider = await loadExport(installed.directory, installed.manifest.annotation_flow_provider);
   if (typeof provider !== "object" || provider === null || (provider as { apiVersion?: unknown }).apiVersion !== 1 || typeof (provider as { policy?: unknown }).policy !== "function") {

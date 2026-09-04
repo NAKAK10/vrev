@@ -8,7 +8,7 @@ import { ensureDefaultPlugins } from "../src/cli.js";
 import { installPlugin, loadPluginUiSurface, parsePluginUiDocument, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-renderer-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-renderer-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -23,7 +23,7 @@ test("normalizes enabled JSON contributions without evaluating plugin server mod
   writeFileSync(path.join(source, "server/index.js"), "import {writeFileSync} from 'node:fs'; writeFileSync(new URL('./evaluated', import.meta.url),'yes'); export default {};\n");
   writeFileSync(path.join(source, "ui/main.json"), JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } }));
   writeFileSync(path.join(source, "ui/runtime.js"), "export function mount(){ return () => {}; }\n");
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4, id: "fixture", version: "1.0.0",
     display: { title: "Fixture", summary: "Static UI fixture", readme: "./README.md" }, configuration: [],
     server: { api_version: 1, bridge_api_version: 1, module: "./server/index.js", contract: "./server/contract.json" },
@@ -44,7 +44,7 @@ test("review.main is deprecated and dropped with an UNAVAILABLE diagnostic even 
   mkdirSync(path.join(source, "ui"), { recursive: true });
   writeFileSync(path.join(source, "README.md"), "# Fixture\n");
   writeFileSync(path.join(source, "ui/main.json"), JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } }));
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4, id: "fixture", version: "1.0.0",
     display: { title: "Fixture", summary: "Static UI fixture", readme: "./README.md" }, configuration: [],
     ui: { renderer_api_version: 1, bridge_api_version: 1, contributions: [{ id: "main", slot: "review.main", document: "./ui/main.json", order: 0 }] },
@@ -244,7 +244,7 @@ test("bundled review and independent Issue documents bind selection, lists, and 
   const reviewRuntime = readFileSync(path.join(process.cwd(), "plugins/review/ui/review.js"), "utf8");
   const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8").replace(/\s+/g, " ");
   const workflowRuntime = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.js"), "utf8");
-  const workflowManifest = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { ui: { contributions: Array<{ id: string; browser_module?: string }> } };
+  const workflowManifest = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/vrev.plugin.json"), "utf8")) as { ui: { contributions: Array<{ id: string; browser_module?: string }> } };
   const issueHeader = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/header.ui.json"), "utf8")) as unknown;
   const issueSidebar = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/sidebar.ui.json"), "utf8")) as unknown;
   const issueText = JSON.stringify({ issueHeader, issueSidebar });
@@ -334,7 +334,7 @@ test("Base marks unseen updates on the owning sidebar disclosure instead of addi
   const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
   const workflow = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
-  assert.match(source, /visual-review\.disclosure-seen\/v1/);
+  assert.match(source, /vrev\.disclosure-seen\/v1/);
   assert.match(source, /has-unread-attention/);
   assert.match(source, /if \(node\.open\) markDisclosureSeen\(node\)/);
   assert.match(source, /node\.__committedOpen = node\.open/);
@@ -360,8 +360,8 @@ test("base shell owns the review header/stage/sidebar layout and plugin-scoped l
   const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
   // C2: root local state is namespaced per plugin (shared across that plugin's root
   // contributions) under a new storage key, migrating values out of the old per-contribution key.
-  assert.match(source, /visual-review:renderer:2:\$\{pluginId\}/);
-  assert.match(source, /visual-review:renderer:1:\$\{pluginId\}:\$\{contribution\.id\}/);
+  assert.match(source, /vrev:renderer:2:\$\{pluginId\}/);
+  assert.match(source, /vrev:renderer:1:\$\{pluginId\}:\$\{contribution\.id\}/);
   assert.match(source, /function pluginLocalStateDeclarations\(pluginId\)/);
   assert.match(source, /function runtimeFor\(contribution, parentInstanceKey = ""\)/);
   assert.match(source, /function declarationsFor\(scope\)/);
@@ -412,8 +412,8 @@ test("storage-transfer section renders for storage-capable plugins with a two-st
   assert.match(source, /\(plugin\.capabilities \|\| \[\]\)\.includes\("storage"\)/);
   assert.match(source, /function renderStorageTransferSection\(plugin\)/);
   // Direction options are built dynamically from plugin.title.
-  assert.match(source, /`ローカル（\.vreview） → \$\{plugin\.title\}`/);
-  assert.match(source, /`\$\{plugin\.title\} → ローカル（\.vreview）`/);
+  assert.match(source, /`ローカル（\.vrev） → \$\{plugin\.title\}`/);
+  assert.match(source, /`\$\{plugin\.title\} → ローカル（\.vrev）`/);
   // Correct API contract.
   assert.match(source, /`\/api\/settings\/plugins\/\$\{encodeURIComponent\(plugin\.id\)\}\/storage-transfer`/);
   assert.match(source, /direction: directionSelect\.value, dry_run: dryRun/);
@@ -438,9 +438,9 @@ test("storage-transfer section renders for storage-capable plugins with a two-st
 test("bundled plugin UI documents stay JSON while declared browser modules are explicit local assets", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
-  const pluginsRoot = path.join(root, ".vreview/plugins");
+  const pluginsRoot = path.join(root, ".vrev/plugins");
   for (const id of ["review", "annotation-workflow", "github-issue", "ai"]) {
-    const manifest = JSON.parse(readFileSync(path.join(pluginsRoot, id, "visual-review.plugin.json"), "utf8")) as { ui?: { contributions: Array<{ document: string; browser_module?: string }> } };
+    const manifest = JSON.parse(readFileSync(path.join(pluginsRoot, id, "vrev.plugin.json"), "utf8")) as { ui?: { contributions: Array<{ document: string; browser_module?: string }> } };
     for (const contribution of manifest.ui?.contributions ?? []) {
       assert.match(contribution.document, /^\.\/ui\/.*\.json$/);
       assert.equal(existsSync(path.join(pluginsRoot, id, contribution.document.slice(2))), true);

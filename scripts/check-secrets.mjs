@@ -14,7 +14,7 @@ const checks = [
   ["machine-specific home path", /\/Users\/[^/\s]+\//],
 ];
 
-const skippedPathPrefixes = [[".vreview", "credentials"]];
+const skippedPathPrefixes = [[".vrev", "credentials"]];
 
 function isSkippedPath(directory, name) {
   const relative = path.relative(root, path.join(directory, name)).split(path.sep);

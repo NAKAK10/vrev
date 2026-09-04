@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { atomicWriteJson, readJson, withFileLock } from "./file-utils.js";
-import type { PluginConfigurationField, VisualReviewPluginManifest } from "./plugin-manifest.js";
+import type { PluginConfigurationField, VrevPluginManifest } from "./plugin-manifest.js";
 import { findWorkspaceRoot } from "./paths.js";
 import { readPluginCredentialPresence } from "./plugin-credentials.js";
 
@@ -24,7 +24,7 @@ export interface EffectivePluginSettings {
 }
 
 function settingsPath(workspace = process.cwd()): string {
-  return path.join(findWorkspaceRoot(workspace), ".vreview", "plugin-settings.json");
+  return path.join(findWorkspaceRoot(workspace), ".vrev", "plugin-settings.json");
 }
 
 function emptySettings(): PluginSettingsFile {
@@ -70,7 +70,7 @@ function valueValid(field: PluginConfigurationField, value: unknown): boolean {
   return typeof value === "string" && Boolean(field.options?.some((option) => option.value === value));
 }
 
-function effectiveFrom(manifest: VisualReviewPluginManifest, stored: PluginSettingEntry | undefined, env: NodeJS.ProcessEnv, workspace: string): EffectivePluginSettings {
+function effectiveFrom(manifest: VrevPluginManifest, stored: PluginSettingEntry | undefined, env: NodeJS.ProcessEnv, workspace: string): EffectivePluginSettings {
   const configuration = { ...(stored?.configuration ?? {}) };
   const missing: string[] = [];
   const hasCredentialField = (manifest.configuration ?? []).some((field) => field.source === "credential");
@@ -91,11 +91,11 @@ function effectiveFrom(manifest: VisualReviewPluginManifest, stored: PluginSetti
   return { enabled: stored?.enabled ?? true, configuration, missing };
 }
 
-export function effectivePluginSettings(manifest: VisualReviewPluginManifest, workspace = process.cwd(), env: NodeJS.ProcessEnv = process.env): EffectivePluginSettings {
+export function effectivePluginSettings(manifest: VrevPluginManifest, workspace = process.cwd(), env: NodeJS.ProcessEnv = process.env): EffectivePluginSettings {
   return effectiveFrom(manifest, readPluginSettings(workspace).plugins[manifest.id], env, workspace);
 }
 
-export function assertPluginEnabled(manifest: VisualReviewPluginManifest, workspace = process.cwd()): EffectivePluginSettings {
+export function assertPluginEnabled(manifest: VrevPluginManifest, workspace = process.cwd()): EffectivePluginSettings {
   const effective = effectivePluginSettings(manifest, workspace);
   if (!effective.enabled) throw new Error(`plugin is disabled: ${manifest.id}`);
   if (effective.missing.length > 0) throw new Error(`plugin configuration is incomplete: ${manifest.id} (${effective.missing.join(", ")})`);
@@ -104,7 +104,7 @@ export function assertPluginEnabled(manifest: VisualReviewPluginManifest, worksp
 
 export function updatePluginSettings(
   id: string,
-  manifest: VisualReviewPluginManifest,
+  manifest: VrevPluginManifest,
   input: { revision: string; enabled: boolean; configuration: Record<string, unknown> },
   workspace = process.cwd(),
 ): { settings: PluginSettingsFile; revision: string; effective: EffectivePluginSettings } {

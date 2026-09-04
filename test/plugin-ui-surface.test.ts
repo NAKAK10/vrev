@@ -8,7 +8,7 @@ import { ensureDefaultPlugins } from "../src/cli.js";
 import { installPlugin, layoutSettingsPath, loadPluginUiSurface, updateLayoutSettings, type LayoutSettingsUpdateInput } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-ui-surface-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-ui-surface-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -45,7 +45,7 @@ async function installFixturePlugin(root: string, id: string, contributions: Fix
     writeFileSync(path.join(source, `ui/${contribution.id}.json`), contribution.document === undefined ? MINIMAL_DOCUMENT : JSON.stringify(contribution.document));
     if (contribution.browserModule) writeFileSync(path.join(source, `ui/${contribution.id}.js`), "export function mount(){ return () => {}; }\n");
   }
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4,
     id,
     version: "1.0.0",

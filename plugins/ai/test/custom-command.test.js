@@ -7,7 +7,7 @@ import test from "node:test";
 import { addCommand, customCommandProvider, parseCommandTemplate, readConfig, removeCommand } from "../server/custom-command.js";
 import { createCustomCommandRunnerProvider } from "../server/custom-command-runner.js";
 
-function workspace() { return mkdtempSync(path.join(os.tmpdir(), "visual-review-ai-command-")); }
+function workspace() { return mkdtempSync(path.join(os.tmpdir(), "vrev-ai-command-")); }
 
 test("AI owns shell-free external command parsing", () => {
   assert.deepEqual(parseCommandTemplate('agent --message "{prompt}"', "hello world"), { command: "agent", args: ["--message", "hello world"] });
@@ -20,7 +20,7 @@ test("AI stores external commands privately and resolves only verified entries",
   const id = addCommand(root, "local model", "agent {prompt}");
   assert.equal(readConfig(root).commands[id].verified, false);
   assert.deepEqual(customCommandProvider.list(root), []);
-  assert.equal(readFileSync(path.join(root, ".vreview/custom-commands.json"), "utf8").includes("agent {prompt}"), true);
+  assert.equal(readFileSync(path.join(root, ".vrev/custom-commands.json"), "utf8").includes("agent {prompt}"), true);
   removeCommand(root, id);
   assert.deepEqual(Object.keys(readConfig(root).commands), []);
 });

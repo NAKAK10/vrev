@@ -1,7 +1,7 @@
 {
-  "name": "@visual-review/github-issue",
+  "name": "@vrev/github-issue",
   "version": "1.3.2",
-  "description": "AI-assisted GitHub Issue workflow for Visual Review",
+  "description": "AI-assisted GitHub Issue workflow for Vrev",
   "type": "module",
   "license": "UNLICENSED",
   "files": [
@@ -10,7 +10,7 @@
     "README.md",
     "server.contract.json",
     "ui",
-    "visual-review.plugin.json"
+    "vrev.plugin.json"
   ],
   "engines": {
     "node": ">=20"
@@ -19,8 +19,8 @@
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
-  "visualReview": {
+  "vrev": {
     "apiVersion": 1,
-    "manifest": "./visual-review.plugin.json"
+    "manifest": "./vrev.plugin.json"
   }
 }

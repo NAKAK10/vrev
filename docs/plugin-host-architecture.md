@@ -1,17 +1,17 @@
 # Plugin Host Architecture v4
 
 Status: Accepted
-Scope: Visual Reviewを最小Core hostと独立npm packagesへ分割するarchitecture
-Implementation status: npm package API v1への移行中（legacy `.vreview/plugins`はone-beta互換）
+Scope: Vrevを最小Core hostと独立npm packagesへ分割するarchitecture
+Implementation status: npm package API v1への移行中（legacy `.vrev/plugins`はone-beta互換）
 
 ## 1. Decision summary
 
-Visual Review Coreはreview productそのものではなく、pluginを安全に導入・起動・描画・接続するhostとする。
+Vrev Coreはreview productそのものではなく、pluginを安全に導入・起動・描画・接続するhostとする。
 
 - `review` default pluginがReviewStore、review schema、annotation validation、status transition、archive/history dataを所有する。
 - first-party feature packageは`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`の6つだけとする。
 - `annotation-workflow` default pluginが右sidebar（AI一括修正・注釈・履歴）のUI compositionとjob orchestrationを所有する。
-- `@visual-review/ai`がCLI選択、外部AIコマンドの登録・検証・実行、`ai/v1`、`ai.integration-registry/v1`を所有する。AIを使うfeature packageは必要modeだけを指定し、利用者へAIを選ばせない。
+- `@vrev/ai`がCLI選択、外部AIコマンドの登録・検証・実行、`ai/v1`、`ai.integration-registry/v1`を所有する。AIを使うfeature packageは必要modeだけを指定し、利用者へAIを選ばせない。
 - `firestore`がremote storage、`page-map`が静的画面遷移解析、`github-issue`がannotation workflowとは別の選択tool、modal、sidebar、Issue作成providerを所有する。
 - Core browserはmanifestで明示されたtrusted browser moduleを除きplugin JavaScriptを実行しない。plugin UIは宣言的documentとして読み込み、Core rendererがallowlist componentだけを描画する。
 - validation、business rule、mutation、permission判定はserver pluginが最終責任を持つ。
@@ -266,7 +266,7 @@ Rules:
   "version": "1.0.1",
   "display": {
     "title": "標準レビュー",
-    "summary": "Visual Reviewの標準レビュー機能を提供します。",
+    "summary": "Vrevの標準レビュー機能を提供します。",
     "readme": "./README.md"
   },
   "configuration": [],
@@ -469,7 +469,7 @@ interface IssueTaskRegistryV1 {
 }
 ```
 
-Coreはinstall・remove・enable/disable・configuration/credential変更後にgeneric package hostをreconcileし、停止時はdependencyの逆順でcapabilityを解除する。Core exposes scoped handles declared in`requires`。`host.storage` always resolves to the selected workspace storage provider（defaultはexisting local provider）。`@visual-review/ai`はCoreのgeneric process supervisorを利用し、CLI選択と外部AIコマンドを内包した`ai/v1`を提供する。`annotation-workflow`と`github-issue`は`ai/v1`へ用途のmodeだけを指定し、AI methodを選択しない。`github-issue`はpersisted projectionのため`review`も要求する。Capability calls carry Core-assigned principal、workspace/target scope、AbortSignal、request/idempotency metadata and preserve typed error/revision semantics. Capability implementation imports across plugins are forbidden.
+Coreはinstall・remove・enable/disable・configuration/credential変更後にgeneric package hostをreconcileし、停止時はdependencyの逆順でcapabilityを解除する。Core exposes scoped handles declared in`requires`。`host.storage` always resolves to the selected workspace storage provider（defaultはexisting local provider）。`@vrev/ai`はCoreのgeneric process supervisorを利用し、CLI選択と外部AIコマンドを内包した`ai/v1`を提供する。`annotation-workflow`と`github-issue`は`ai/v1`へ用途のmodeだけを指定し、AI methodを選択しない。`github-issue`はpersisted projectionのため`review`も要求する。Capability calls carry Core-assigned principal、workspace/target scope、AbortSignal、request/idempotency metadata and preserve typed error/revision semantics. Capability implementation imports across plugins are forbidden.
 
 Cross-plugin invalidation uses capability subscription, not plugin-private SSE coupling. `annotation-workflow` subscribes to`ReviewCapabilityV1`; review invalidation triggers its own resource invalidation event to mounted sidebar clients. Core tears down the subscription when either plugin stops. Direct review UI/CLI mutations therefore refresh annotation/history sidebar state.
 
@@ -489,7 +489,7 @@ Browserが`actor: "ai"`等を含めた場合はexact-key validationで拒否す�
 Migration MUST preserve:
 
 ```text
-.vreview/reviews/<target-id>/
+.vrev/reviews/<target-id>/
   review.json
   resolved.json
   context.json

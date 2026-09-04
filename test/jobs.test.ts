@@ -23,7 +23,7 @@ import {
 import { installShutdownHandlers, parseAnnotationArguments, type SignalSource } from "../src/cli.js";
 
 function repository(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-jobs-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-jobs-"));
   mkdirSync(path.join(root, ".code/htmls/pages"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/pages/a.html"), "<h1>A</h1>");
   writeFileSync(path.join(root, ".code/htmls/pages/b.html"), "<h1>B</h1>");
@@ -459,7 +459,7 @@ test("POSIX executor starts a detached process group and terminates the whole gr
 });
 
 test("POSIX executor cancellation terminates a real parent and grandchild process tree", { skip: process.platform === "win32", timeout: 10_000 }, async () => {
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-process-tree-"));
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "vrev-process-tree-"));
   const pidPath = path.join(fixtureRoot, "pids.json");
   const script = `
     const { spawn } = require("node:child_process");
@@ -520,11 +520,11 @@ test("annotation CLI works for external projects and requires the canonical revi
   const issueId = issueReview.annotations.at(-1)!.id;
   await store.setStatus(issueId, { actor: "ai", status: "in_progress" });
   await assert.rejects(
-    store.setIssueDraftReady(issueId, "Internal reference", `Visual Review注釈: ${issueId}`),
+    store.setIssueDraftReady(issueId, "Internal reference", `Vrev注釈: ${issueId}`),
     /understandable without internal review references/,
   );
   await assert.rejects(
-    store.setIssueDraftReady(issueId, "Internal path", "See .vreview/reviews/page/review.json"),
+    store.setIssueDraftReady(issueId, "Internal path", "See .vrev/reviews/page/review.json"),
     /understandable without internal review references/,
   );
   await runAnnotationCli(

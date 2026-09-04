@@ -25,12 +25,12 @@ const env = { FIREBASE_PROJECT_ID: "sample-project", FIREBASE_ACCESS_TOKEN: "tes
 
 function workspace() {
   const root = mkdtempSync(path.join(tmpdir(), "vreview-firestore-"));
-  mkdirSync(path.join(root, ".vreview", "reviews", "home"), { recursive: true });
-  writeFileSync(path.join(root, ".vreview", "settings.json"), JSON.stringify({ schema_version: 1, projects: [] }));
-  writeFileSync(path.join(root, ".vreview", "reviews", "home", "review.json"), JSON.stringify({ revision: 2, annotations: [] }));
-  writeFileSync(path.join(root, ".vreview", "reviews", "home", "job-state.json"), JSON.stringify({ secretRuntime: true }));
-  writeFileSync(path.join(root, ".vreview", "reviews", "home", "secrets.json"), JSON.stringify({ token: "must-not-leave" }));
-  writeFileSync(path.join(root, ".vreview", "reviews", "home", "review.json.lock"), "lock");
+  mkdirSync(path.join(root, ".vrev", "reviews", "home"), { recursive: true });
+  writeFileSync(path.join(root, ".vrev", "settings.json"), JSON.stringify({ schema_version: 1, projects: [] }));
+  writeFileSync(path.join(root, ".vrev", "reviews", "home", "review.json"), JSON.stringify({ revision: 2, annotations: [] }));
+  writeFileSync(path.join(root, ".vrev", "reviews", "home", "job-state.json"), JSON.stringify({ secretRuntime: true }));
+  writeFileSync(path.join(root, ".vrev", "reviews", "home", "secrets.json"), JSON.stringify({ token: "must-not-leave" }));
+  writeFileSync(path.join(root, ".vrev", "reviews", "home", "review.json.lock"), "lock");
   return root;
 }
 
@@ -109,7 +109,7 @@ function firestoreMemory(expectedToken = "test-token") {
 }
 
 test("manifest and package expose the three commands and the WorkspaceStorageProviderV1 export", () => {
-  const manifest = JSON.parse(readFileSync(new URL("./visual-review.plugin.json", import.meta.url), "utf8"));
+  const manifest = JSON.parse(readFileSync(new URL("./vrev.plugin.json", import.meta.url), "utf8"));
   const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
   assert.equal(manifest.id, "firestore");
   assert.deepEqual(manifest.commands.map(({ name }) => name), ["push", "pull", "status"]);
@@ -148,15 +148,15 @@ test("document ID encoding round-trips, rejects unsafe keys, and never matches F
     assert.throws(() => validateStorageKey(key));
   }
   assert.throws(() => encodeStorageKeyToDocumentId("x".repeat(2000)), /exceeds \d+ bytes/);
-  assert.throws(() => decodeStorageKeyFromDocumentId("not-one-of-ours"), /not a Visual Review storage document ID/);
+  assert.throws(() => decodeStorageKeyFromDocumentId("not-one-of-ours"), /not a Vrev storage document ID/);
 });
 
 test("local path <-> storage key mapping is defined once and is reversible", () => {
-  assert.equal(localPathToStorageKey(".vreview/settings.json"), "settings.json");
-  assert.equal(localPathToStorageKey(".vreview/reviews/home/review.json"), "reviews/home/review.json");
-  assert.equal(storageKeyToLocalPath("settings.json"), ".vreview/settings.json");
-  assert.equal(storageKeyToLocalPath("reviews/home/review.json"), ".vreview/reviews/home/review.json");
-  for (const localPath of [".vreview/settings.json", ".vreview/reviews/home/review.json"]) {
+  assert.equal(localPathToStorageKey(".vrev/settings.json"), "settings.json");
+  assert.equal(localPathToStorageKey(".vrev/reviews/home/review.json"), "reviews/home/review.json");
+  assert.equal(storageKeyToLocalPath("settings.json"), ".vrev/settings.json");
+  assert.equal(storageKeyToLocalPath("reviews/home/review.json"), ".vrev/reviews/home/review.json");
+  for (const localPath of [".vrev/settings.json", ".vrev/reviews/home/review.json"]) {
     assert.equal(storageKeyToLocalPath(localPathToStorageKey(localPath)), localPath);
   }
 });
@@ -393,11 +393,11 @@ test("pull writes remote documents atomically and dry-run leaves local data unch
 
   await withEnvAndFetch(memory.fetch, async () => {
     await pullCommand({ workspaceRoot: root, pluginDirectory: "", args: ["--dry-run"], configuration: {}, credentials: {} });
-    assert.equal(JSON.parse(readFileSync(path.join(root, ".vreview", "reviews", "home", "review.json"))).revision, 2);
+    assert.equal(JSON.parse(readFileSync(path.join(root, ".vrev", "reviews", "home", "review.json"))).revision, 2);
 
     await pullCommand({ workspaceRoot: root, pluginDirectory: "", args: [], configuration: {}, credentials: {} });
-    assert.equal(JSON.parse(readFileSync(path.join(root, ".vreview", "reviews", "home", "review.json"))).revision, 99);
-    assert.deepEqual(JSON.parse(readFileSync(path.join(root, ".vreview", "reviews", "new", "context.json"))), { schema_version: 1 });
+    assert.equal(JSON.parse(readFileSync(path.join(root, ".vrev", "reviews", "home", "review.json"))).revision, 99);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(root, ".vrev", "reviews", "new", "context.json"))), { schema_version: 1 });
   });
 });
 
@@ -649,7 +649,7 @@ test("command context delivers configuration and credentials without routing the
     configuration: { auth_mode: "service_account", project_id: "sample-project" },
     credentials: { service_account_key: JSON.stringify(serviceAccountKey) },
   };
-  mkdirSync(path.join(context.workspaceRoot, ".vreview", "reviews"), { recursive: true });
+  mkdirSync(path.join(context.workspaceRoot, ".vrev", "reviews"), { recursive: true });
   assert.doesNotMatch(JSON.stringify(context.args), new RegExp(secretMarker));
   const logs = [];
   const originalLog = console.log;

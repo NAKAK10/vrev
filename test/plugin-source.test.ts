@@ -7,7 +7,7 @@ import test from "node:test";
 import { parsePluginSource, validateSourceSyntax } from "../src/index.js";
 
 function workspace(): string {
-  return mkdtempSync(path.join(os.tmpdir(), "visual-review-plugin-source-"));
+  return mkdtempSync(path.join(os.tmpdir(), "vrev-plugin-source-"));
 }
 
 test("classifies an existing local directory by relative and absolute prefixes", () => {
@@ -21,10 +21,10 @@ test("classifies an existing local directory by relative and absolute prefixes",
 
 test("classifies a home-relative source and expands it against the home directory", () => {
   const home = os.homedir();
-  const candidate = path.join(home, ".visual-review-plugin-source-test-fixture");
+  const candidate = path.join(home, ".vrev-plugin-source-test-fixture");
   mkdirSync(candidate, { recursive: true });
   try {
-    const parsed = parsePluginSource("~/.visual-review-plugin-source-test-fixture", workspace());
+    const parsed = parsePluginSource("~/.vrev-plugin-source-test-fixture", workspace());
     assert.deepEqual(parsed, { kind: "local", path: candidate });
   } finally {
     rmSync(candidate, { recursive: true, force: true });

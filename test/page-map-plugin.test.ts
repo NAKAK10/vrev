@@ -11,12 +11,12 @@ import { loadPluginUiSurface, parsePluginBridgeContract, parsePluginManifest, pa
 const pluginRoot = fileURLToPath(new URL("../../plugins/page-map", import.meta.url));
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-page-map-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-page-map-"));
   return root;
 }
 
 test("page-map manifest parses as a valid schema-v4 manifest", () => {
-  const manifest = JSON.parse(readFileSync(path.join(pluginRoot, "visual-review.plugin.json"), "utf8")) as unknown;
+  const manifest = JSON.parse(readFileSync(path.join(pluginRoot, "vrev.plugin.json"), "utf8")) as unknown;
   const parsed = parsePluginManifest(manifest);
   assert.equal(parsed.id, "page-map");
   assert.equal(parsed.schema_version, 4);

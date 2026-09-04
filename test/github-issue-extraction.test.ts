@@ -28,7 +28,7 @@ import { createProcessSupervisor } from "../src/process-supervisor.js";
 import { createRunnerRegistry } from "../src/runner-registry.js";
 
 function repository(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-issue-extraction-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-issue-extraction-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Issue</h1>");
@@ -61,7 +61,7 @@ test("Issue task accepts only allowed annotation IDs and rejects internal refere
 
 test("a gh rejection before the mutation is a definite failure, not an indeterminate one", async () => {
   const root = repository();
-  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "visual-review-gh-stub-"));
+  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "vrev-gh-stub-"));
   const writeStub = (stderr: string): void => {
     const stub = path.join(stubDirectory, "gh");
     writeFileSync(stub, `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' ${JSON.stringify(stderr)} >&2\nexit 1\n`);
@@ -91,7 +91,7 @@ test("a gh rejection before the mutation is a definite failure, not an indetermi
 
 test("resolveTarget reads the repo and account gh would use, and returns null on failure or garbage", async () => {
   const root = repository();
-  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "visual-review-gh-target-stub-"));
+  const stubDirectory = mkdtempSync(path.join(os.tmpdir(), "vrev-gh-target-stub-"));
   const stubPath = path.join(stubDirectory, "gh");
   const writeStub = (script: string): void => { writeFileSync(stubPath, script); chmodSync(stubPath, 0o755); };
   const originalPath = process.env.PATH;
@@ -195,16 +195,16 @@ test("github-issue schema-v4 capability follows lifecycle and disabled code is n
 test("Issue implementation has plugin boundaries and legacy Core files are adapters", () => {
   const packageText = (paths: string[]) => paths.map((file) => readFileSync(path.join(process.cwd(), file), "utf8")).join("\n");
   const workflow = packageText([
-    "plugins/annotation-workflow/visual-review.plugin.json", "plugins/annotation-workflow/server/index.ts",
+    "plugins/annotation-workflow/vrev.plugin.json", "plugins/annotation-workflow/server/index.ts",
     "plugins/annotation-workflow/server/job-manager.ts", "plugins/annotation-workflow/server/workflow-types.ts",
     "plugins/annotation-workflow/ui/sidebar.ui.json",
   ]);
   const issuePackage = packageText([
-    "plugins/github-issue/visual-review.plugin.json", "plugins/github-issue/server.contract.json", "plugins/github-issue/server/index.js",
+    "plugins/github-issue/vrev.plugin.json", "plugins/github-issue/server.contract.json", "plugins/github-issue/server/index.js",
     "plugins/github-issue/README.md", "plugins/github-issue/ui/header.ui.json", "plugins/github-issue/ui/sidebar.ui.json",
   ]);
   const aiPackage = packageText([
-    "plugins/ai/visual-review.plugin.json", "plugins/ai/server/index.js", "plugins/ai/server/settings.js", "plugins/ai/ui/settings.ui.json",
+    "plugins/ai/vrev.plugin.json", "plugins/ai/server/index.js", "plugins/ai/server/settings.js", "plugins/ai/ui/settings.ui.json",
   ]);
   const issue = readFileSync(new URL("../../plugins/github-issue/server/index.js", import.meta.url), "utf8");
   const facade = readFileSync(new URL("../../src/github-issue.ts", import.meta.url), "utf8");

@@ -1,4 +1,4 @@
-# Visual Review GitHub Issue plugin
+# Vrev GitHub Issue plugin
 
 レビュー対象のノードまたは範囲を選び、AIで独立したGitHub Issue案を生成し、人間が編集・確認してから GitHub CLI (`gh`) でIssueを作成するpluginです。headerのセグメント化された「Issueノード」「Issue範囲」、2段階の専用dialog、作成済みIssueのsidebar一覧をこのpackageが所有します。
 
@@ -7,13 +7,13 @@
 認証済みの`gh`と、`text-only` modeに対応するAI連携が利用できることを確認し、対象workspaceでinstallします。
 
 ```sh
-npm install --save-dev @visual-review/github-issue
+npm install --save-dev @vrev/github-issue
 ```
 
 source checkoutから試す場合:
 
 ```sh
-visual-review plugin install ./plugins/github-issue
+vrev plugin install ./plugins/github-issue
 ```
 
 本pluginは`review/v1`と`ai/v1`だけを利用し、CLI、外部コマンド、ほかのworkflow pluginには直接依存しません。利用するAIはAI packageのworkspace設定が解決するため、本pluginはAI選択UIを持ちません。

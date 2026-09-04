@@ -13,7 +13,7 @@ import {
 } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-package-discovery-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-package-discovery-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -26,9 +26,9 @@ function writePackage(root: string, name: string, options: { id?: string; metada
   writeFileSync(path.join(directory, "package.json"), JSON.stringify({
     name,
     version: "1.0.0",
-    visualReview: options.metadata ?? { apiVersion: 1, manifest: "./plugin/visual-review.plugin.json" },
+    vrev: options.metadata ?? { apiVersion: 1, manifest: "./plugin/vrev.plugin.json" },
   }));
-  writeFileSync(path.join(pluginDirectory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(pluginDirectory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 1,
     id,
     version: "1.0.0",
@@ -65,13 +65,13 @@ test("discovers direct dependency sections with Node resolution, including third
   assert.equal(existsSync(marker), true);
 });
 
-test("validates package visualReview API and manifest paths", () => {
+test("validates package vrev API and manifest paths", () => {
   const root = workspace();
-  writePackage(root, "bad-api", { metadata: { apiVersion: 2, manifest: "./plugin/visual-review.plugin.json" } });
+  writePackage(root, "bad-api", { metadata: { apiVersion: 2, manifest: "./plugin/vrev.plugin.json" } });
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: { "bad-api": "1.0.0" } }));
   assert.throws(() => discoverPackagePlugins(root), /apiVersion must be 1/);
 
-  writePackage(root, "bad-path", { metadata: { apiVersion: 1, manifest: "../visual-review.plugin.json" } });
+  writePackage(root, "bad-path", { metadata: { apiVersion: 1, manifest: "../vrev.plugin.json" } });
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: { "bad-path": "1.0.0" } }));
   assert.throws(() => discoverPackagePlugins(root), /manifest path is invalid/);
 });
@@ -80,7 +80,7 @@ test("listPlugins explicitly rejects duplicate ids across package discovery and 
   const root = workspace();
   const legacy = path.join(root, "legacy");
   mkdirSync(legacy);
-  writeFileSync(path.join(legacy, "visual-review.plugin.json"), JSON.stringify({ schema_version: 1, id: "duplicate", version: "1.0.0" }));
+  writeFileSync(path.join(legacy, "vrev.plugin.json"), JSON.stringify({ schema_version: 1, id: "duplicate", version: "1.0.0" }));
   await installPlugin(legacy, root);
 
   writePackage(root, "package-plugin", { id: "duplicate" });

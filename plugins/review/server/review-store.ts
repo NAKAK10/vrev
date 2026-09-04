@@ -519,7 +519,7 @@ class ReviewStore {
       const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
       if (annotation.issue_state === "ready" && annotation.status === "addressed" && annotation.issue_title === issueTitle && annotation.issue_body === issueBody) return review;
-      const internalReferences = [annotationId, ".vreview/", "Visual Review注釈", "Visual Review annotation"];
+      const internalReferences = [annotationId, ".vrev/", "Vrev注釈", "Vrev annotation"];
       if (internalReferences.some((reference) => issueTitle.includes(reference) || issueBody.includes(reference))) {
         throw new Error("Issue draft must be understandable without internal review references");
       }

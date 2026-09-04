@@ -70,8 +70,8 @@ let annotationWorkflowEnabled = false;
 const pendingAnnotationFlowEvents = new Set<"annotation-created" | "annotation-reopened">();
 let destroyed = false;
 
-const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
-const PARALLEL_STORAGE_KEY = "visual-review:max-parallel";
+const AUTO_RUN_STORAGE_KEY = "vrev:auto-run";
+const PARALLEL_STORAGE_KEY = "vrev:max-parallel";
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
 autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
@@ -140,7 +140,7 @@ async function refreshSession(reportError = false): Promise<void> {
     const payload = await requestJson("/api/session");
     openCount = sessionOpenCount(payload);
     aiJobsEnabled = sessionAllowsAiJobs(payload);
-    window.dispatchEvent(new CustomEvent("visual-review:session-refreshed", { detail: payload }));
+    window.dispatchEvent(new CustomEvent("vrev:session-refreshed", { detail: payload }));
     openCountElement.textContent = String(openCount);
     if (!aiJobsEnabled) setStatus("対象スクリプト有効時のAI修正には、server起動時の明示許可が必要です。", true);
     updateSubmitState();
@@ -355,8 +355,8 @@ autoRunCheckbox.addEventListener("change", () => {
   form.hidden = autoRunCheckbox.checked;
   setStatus(autoRunCheckbox.checked ? "自動実行を有効にしました。次に保存した注釈からAI修正を開始します。" : "自動実行を無効にしました。");
 });
-window.addEventListener("visual-review:annotation-created", () => scheduleAutoRun("annotation-created"));
-window.addEventListener("visual-review:annotation-reopened", () => scheduleAutoRun("annotation-reopened"));
+window.addEventListener("vrev:annotation-created", () => scheduleAutoRun("annotation-created"));
+window.addEventListener("vrev:annotation-reopened", () => scheduleAutoRun("annotation-reopened"));
 window.addEventListener("focus", () => void Promise.all([refreshSession(), refreshJobs(), loadAnnotationFlowPolicy()]));
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) void Promise.all([refreshSession(), refreshJobs(), loadAnnotationFlowPolicy()]);

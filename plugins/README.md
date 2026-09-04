@@ -1,6 +1,6 @@
-# Visual Review plugins
+# Vrev plugins
 
-このdirectoryには、Visual Reviewのfirst-party feature packageをプラグインごとに一段ネストして収録しています。対象は **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。beta.7の既定はschema v4 Plugin HostとCore-owned declarative rendererで、各packageはserver contract、capability、検証済みJSON UI contributionを分担します。browserで任意HTMLは実行しません。
+このdirectoryには、Vrevのfirst-party feature packageをプラグインごとに一段ネストして収録しています。対象は **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。beta.7の既定はschema v4 Plugin HostとCore-owned declarative rendererで、各packageはserver contract、capability、検証済みJSON UI contributionを分担します。browserで任意HTMLは実行しません。
 
 ```text
 plugins/
@@ -19,38 +19,38 @@ plugins/
 scaffold commandで、manifest、ESM command、package、README、testを含む最小構成を`plugins/<id>/`へ生成できます。
 
 ```sh
-visual-review plugin create my-plugin
+vrev plugin create my-plugin
 cd plugins/my-plugin
 npm test
 cd ../..
-visual-review plugin install ./plugins/my-plugin
-visual-review plugin run my-plugin hello world
+vrev plugin install ./plugins/my-plugin
+vrev plugin run my-plugin hello world
 ```
 
 作成とworkspaceへのinstallを一度に行う場合:
 
 ```sh
-visual-review plugin create my-plugin --install
+vrev plugin create my-plugin --install
 ```
 
-生成後は`visual-review.plugin.json`へcommandやproviderを追加し、`index.js`を実装します。scaffoldはcommand/provider向けのschema v3互換baseです。server capabilityや宣言的UIを提供する場合はschema v4へ更新し、`server`/`ui`/`requires`/`provides`を宣言してください。既存directoryを上書きせず、不正なplugin IDやsymlinkされた`plugins/` directoryは拒否します。
+生成後は`vrev.plugin.json`へcommandやproviderを追加し、`index.js`を実装します。scaffoldはcommand/provider向けのschema v3互換baseです。server capabilityや宣言的UIを提供する場合はschema v4へ更新し、`server`/`ui`/`requires`/`provides`を宣言してください。既存directoryを上書きせず、不正なplugin IDやsymlinkされた`plugins/` directoryは拒否します。
 
 ## 第三者が公開したプラグインをinstallする
 
-Visual Review対応packageを対象workspaceの直接依存として追加する方法が標準です。Coreは`package.json`の`visualReview.apiVersion`とmanifest pathを検証して検出し、package codeはこの段階で評価しません。
+Vrev対応packageを対象workspaceの直接依存として追加する方法が標準です。Coreは`package.json`の`vrev.apiVersion`とmanifest pathを検証して検出し、package codeはこの段階で評価しません。
 
 ### npm registryから
 
 公開npm packageはversionを固定してinstallすることを推奨します。
 
 ```sh
-npm install --save-dev visual-review-plugin-example@1.2.3
-npm install --save-dev @community/visual-review-plugin-example@1.2.3
+npm install --save-dev vrev-plugin-example@1.2.3
+npm install --save-dev @community/vrev-plugin-example@1.2.3
 ```
 
-package本体はpackage managerが`node_modules`で管理し、`.vreview`へcopyしません。検出対象は`dependencies`、`devDependencies`、`optionalDependencies`の直接依存だけで、推移依存や`node_modules`全体は走査しません。
+package本体はpackage managerが`node_modules`で管理し、`.vrev`へcopyしません。検出対象は`dependencies`、`devDependencies`、`optionalDependencies`の直接依存だけで、推移依存や`node_modules`全体は走査しません。
 
-従来の`visual-review plugin install <npm-spec>`はone-beta compatibilityとして残ります。
+従来の`vrev plugin install <npm-spec>`はone-beta compatibilityとして残ります。
 
 GitHub Packagesなどscopeごとにregistryが異なる場合は、通常のnpm設定を使用します。tokenをinstall URLへ埋め込まないでください。
 
@@ -62,7 +62,7 @@ GitHub Packagesなどscopeごとにregistryが異なる場合は、通常のnpm�
 
 ```sh
 export NODE_AUTH_TOKEN='YOUR_READ_PACKAGES_TOKEN'
-visual-review plugin install @community/visual-review-plugin-example@1.2.3
+vrev plugin install @community/vrev-plugin-example@1.2.3
 ```
 
 ### GitHub repositoryから
@@ -70,18 +70,18 @@ visual-review plugin install @community/visual-review-plugin-example@1.2.3
 pluginがrepository rootにある場合は、npmが解決できるGitHub specを使用できます。tagまたはcommit SHAを固定してください。
 
 ```sh
-visual-review plugin install github:owner/visual-review-plugin-example#v1.2.3
-visual-review plugin install git+https://github.com/owner/visual-review-plugin-example.git#COMMIT_SHA
+vrev plugin install github:owner/vrev-plugin-example#v1.2.3
+vrev plugin install git+https://github.com/owner/vrev-plugin-example.git#COMMIT_SHA
 ```
 
 pluginが公開repositoryの`plugins/example/`のようなサブdirectoryにある場合は、repositoryをcloneして、その一段下のplugin directoryを指定します。
 
 ```sh
-git clone https://github.com/owner/visual-review-plugins.git
-visual-review plugin install ./visual-review-plugins/plugins/example
+git clone https://github.com/owner/vrev-plugins.git
+vrev plugin install ./vrev-plugins/plugins/example
 ```
 
-install元の直下には`visual-review.plugin.json`が必要です。repository全体や親の`plugins/` directoryをまとめてinstallすることはできません。
+install元の直下には`vrev.plugin.json`が必要です。repository全体や親の`plugins/` directoryをまとめてinstallすることはできません。
 
 ## 設定画面からinstallする
 
@@ -92,26 +92,26 @@ installに成功したプラグインのsource種別と解決情報（npmのvers
 ## 確認・実行・削除
 
 ```sh
-visual-review plugin list
-visual-review plugin run <plugin-id> <command> [args...]
-visual-review plugin remove <plugin-id>
+vrev plugin list
+vrev plugin run <plugin-id> <command> [args...]
+vrev plugin remove <plugin-id>
 ```
 
 手動導入した同じplugin IDは自動で上書きされません。更新するときは既存pluginを削除してから、新しいversionをinstallします。例外はCLI packageから自動導入されたfirst-party bundled copyだけです。registry manifestとinstall先manifestが一致してprovenanceを確認でき、同梱schemaまたはSemVerが新しい場合に限りatomic upgradeします。local/third-partyのsame-IDや改変済みcopyは上書きも自動実行もしません。
 
 ```sh
-visual-review plugin remove example
-visual-review plugin install @community/visual-review-plugin-example@1.3.0
+vrev plugin remove example
+vrev plugin install @community/vrev-plugin-example@1.3.0
 ```
 
 ## 第三者プラグインの安全性
 
-plugin install時はmanifestとfileを検証・copyするだけで、plugin moduleは実行しません。ただし、`plugin run`を実行したときや、storage/Issue providerが利用されたときは、そのpluginのJavaScriptがVisual Reviewと同じユーザー権限で動作します。
+plugin install時はmanifestとfileを検証・copyするだけで、plugin moduleは実行しません。ただし、`plugin run`を実行したときや、storage/Issue providerが利用されたときは、そのpluginのJavaScriptがVrevと同じユーザー権限で動作します。
 
 install前に次を確認してください。
 
 - 公開元、license、source code、release tagまたはcommit SHA
-- `visual-review.plugin.json`で宣言されているmoduleと権限相当の処理
+- `vrev.plugin.json`で宣言されているmoduleと権限相当の処理
 - network送信先、file操作範囲、利用する環境変数
 - packageが依存物をbundle済み、またはNode.js標準APIだけで自己完結していること
 

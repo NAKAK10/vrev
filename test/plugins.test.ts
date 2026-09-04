@@ -26,7 +26,7 @@ import {
 } from "../src/index.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-plugins-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-plugins-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -36,10 +36,10 @@ const bundledVersion = (JSON.parse(readFileSync(path.join(process.cwd(), "packag
 const bundledPluginVersion = (id: string) => (JSON.parse(readFileSync(path.join(process.cwd(), "plugins", id, "package.json"), "utf8")) as { version: string }).version;
 
 function bundledFixture(idsToDowngrade: string[] = []): string {
-  const fixture = mkdtempSync(path.join(os.tmpdir(), "visual-review-bundled-"));
+  const fixture = mkdtempSync(path.join(os.tmpdir(), "vrev-bundled-"));
   cpSync(trustedBundledRoot, fixture, { recursive: true });
   for (const id of idsToDowngrade) {
-    const manifestPath = path.join(fixture, id, "visual-review.plugin.json");
+    const manifestPath = path.join(fixture, id, "vrev.plugin.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
     manifest.schema_version = 3;
     delete manifest.server;
@@ -60,7 +60,7 @@ function restoreBundledPlugin(fixture: string, id: string): void {
 function localPlugin(root: string, id = "example-plugin"): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(path.join(directory, "dist"), { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 1,
     id,
     version: "1.2.3",
@@ -82,13 +82,13 @@ test("creates a one-level plugin base that can be installed and executed", async
   const root = workspace();
   const scaffold = createPluginScaffold("example-base", root);
   assert.match(scaffold.directory, /\/plugins\/example-base$/);
-  assert.equal(existsSync(path.join(scaffold.directory, "visual-review.plugin.json")), true);
+  assert.equal(existsSync(path.join(scaffold.directory, "vrev.plugin.json")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "package.json")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "server/index.js")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "server.contract.json")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "ui/annotation-action.ui.json")), true);
   assert.equal(existsSync(path.join(scaffold.directory, "types.d.ts")), true);
-  const manifest = parsePluginManifest(JSON.parse(readFileSync(path.join(scaffold.directory, "visual-review.plugin.json"), "utf8")));
+  const manifest = parsePluginManifest(JSON.parse(readFileSync(path.join(scaffold.directory, "vrev.plugin.json"), "utf8")));
   assert.equal(manifest.schema_version, 4);
   assert.equal(manifest.display?.title, "example-base");
   assert.equal(manifest.display?.readme, "./README.md");
@@ -98,7 +98,7 @@ test("creates a one-level plugin base that can be installed and executed", async
   assert.deepEqual(manifest.ui?.contributions, [{ id: "sidebar-tool", slot: "review.sidebar", document: "./ui/annotation-action.ui.json", order: 100 }]);
   assert.deepEqual(manifest.requires, []);
   const packageJson = JSON.parse(readFileSync(path.join(scaffold.directory, "package.json"), "utf8")) as Record<string, unknown>;
-  assert.deepEqual(packageJson.visualReview, { apiVersion: 1, manifest: "./visual-review.plugin.json" });
+  assert.deepEqual(packageJson.vrev, { apiVersion: 1, manifest: "./vrev.plugin.json" });
   assert.deepEqual(manifest.provides, []);
   const contract = parsePluginBridgeContract(JSON.parse(readFileSync(path.join(scaffold.directory, "server.contract.json"), "utf8")));
   assert.deepEqual(contract, { schema_version: 1, queries: [], commands: [] });
@@ -123,9 +123,9 @@ test("installs a one-level nested local plugin without evaluating it, then loads
   assert.equal(result.plugin.id, "example-plugin");
   assert.equal(existsSync(path.join(installedModuleDirectory, "evaluated")), false);
   assert.deepEqual(listPlugins(root).map(({ id, version }) => ({ id, version })), [{ id: "example-plugin", version: "1.2.3" }]);
-  const registry = JSON.parse(readFileSync(path.join(root, ".vreview/plugins.json"), "utf8")) as { schema_version: number };
+  const registry = JSON.parse(readFileSync(path.join(root, ".vrev/plugins.json"), "utf8")) as { schema_version: number };
   assert.equal(registry.schema_version, 1);
-  const ignores = readFileSync(path.join(root, ".vreview/.gitignore"), "utf8");
+  const ignores = readFileSync(path.join(root, ".vrev/.gitignore"), "utf8");
   assert.match(ignores, /^plugins\/$/m);
   assert.match(ignores, /^plugins\.json$/m);
   assert.match(ignores, /^plugin-settings\.json$/m);
@@ -154,7 +154,7 @@ test("parses schema-v4 server and independent UI contributions without evaluatin
   writeFileSync(path.join(source, "server.contract.json"), JSON.stringify({ schema_version: 1, queries: [], commands: [] }));
   writeFileSync(path.join(source, "ui/main.json"), JSON.stringify({ schema_version: 1, root: { type: "app-shell", children: [] } }));
   writeFileSync(path.join(source, "dist/server.js"), "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./evaluated', import.meta.url), 'yes'); export default {};\n");
-  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(source, "vrev.plugin.json"), JSON.stringify({
     schema_version: 4,
     id: "v4-plugin",
     version: "1.0.0",
@@ -167,7 +167,7 @@ test("parses schema-v4 server and independent UI contributions without evaluatin
   }));
 
   await installPlugin(source, root);
-  assert.equal(existsSync(path.join(root, ".vreview/plugins/v4-plugin/dist/evaluated")), false);
+  assert.equal(existsSync(path.join(root, ".vrev/plugins/v4-plugin/dist/evaluated")), false);
   const manifest = listPlugins(root)[0]!.manifest;
   assert.equal(manifest.schema_version, 4);
   assert.equal(manifest.server?.contract, "./server.contract.json");
@@ -241,7 +241,7 @@ test("rejects malformed manifests, escaping module paths, and symlinks", async (
   const root = workspace();
   const malformed = path.join(root, "plugins/malformed");
   mkdirSync(malformed, { recursive: true });
-  writeFileSync(path.join(malformed, "visual-review.plugin.json"), JSON.stringify({ schema_version: 1, id: "malformed", version: "1.0.0", commands: [{ name: "bad", module: "../outside.js" }] }));
+  writeFileSync(path.join(malformed, "vrev.plugin.json"), JSON.stringify({ schema_version: 1, id: "malformed", version: "1.0.0", commands: [{ name: "bad", module: "../outside.js" }] }));
   await assert.rejects(installPlugin(malformed, root), /module/);
 
   const linked = localPlugin(root, "linked-plugin");
@@ -254,8 +254,8 @@ test("installs an npm package spec through npm pack", async () => {
   const root = workspace();
   const packageDirectory = path.join(root, "npm-source");
   mkdirSync(packageDirectory);
-  writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: "visual-review-test-plugin", version: "1.0.0", type: "module", files: ["visual-review.plugin.json", "index.js"] }));
-  writeFileSync(path.join(packageDirectory, "visual-review.plugin.json"), JSON.stringify({ schema_version: 1, id: "packed-plugin", version: "1.0.0", commands: [{ name: "run", module: "./index.js" }] }));
+  writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: "vrev-test-plugin", version: "1.0.0", type: "module", files: ["vrev.plugin.json", "index.js"] }));
+  writeFileSync(path.join(packageDirectory, "vrev.plugin.json"), JSON.stringify({ schema_version: 1, id: "packed-plugin", version: "1.0.0", commands: [{ name: "run", module: "./index.js" }] }));
   writeFileSync(path.join(packageDirectory, "index.js"), "export default () => undefined;\n");
 
   const result = await installPlugin(`file:${packageDirectory}`, root);
@@ -330,7 +330,7 @@ test("CLI creates and immediately installs a plugin base", () => {
   assert.match(created.stdout, /Created created-plugin/);
   assert.match(created.stdout, /Installed created-plugin@0\.1\.0/);
   assert.equal(existsSync(path.join(root, "plugins/created-plugin/README.md")), true);
-  const manifest = JSON.parse(readFileSync(path.join(root, "plugins/created-plugin/visual-review.plugin.json"), "utf8")) as { display: { title: string; summary: string } };
+  const manifest = JSON.parse(readFileSync(path.join(root, "plugins/created-plugin/vrev.plugin.json"), "utf8")) as { display: { title: string; summary: string } };
   assert.deepEqual(manifest.display, { title: "Created Plugin", summary: "Generated for tests", readme: "./README.md" });
   const run = spawnSync(process.execPath, [cli.pathname, "plugin", "run", "created-plugin", "hello", "world"], { cwd: root, encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
@@ -345,7 +345,7 @@ test("automatically installs the six bundled feature plugins once per workspace"
   assert.deepEqual(defaults.map(({ id }) => id), defaultIds);
   const expectedVersions = new Map(defaultIds.map((id) => [id, bundledPluginVersion(id)]));
   for (const plugin of defaults) {
-    const packageJson = JSON.parse(readFileSync(path.join(root, ".vreview/plugins", plugin.id, "package.json"), "utf8")) as { version: string };
+    const packageJson = JSON.parse(readFileSync(path.join(root, ".vrev/plugins", plugin.id, "package.json"), "utf8")) as { version: string };
     assert.equal(plugin.version, expectedVersions.get(plugin.id));
     assert.equal(packageJson.version, plugin.version);
   }
@@ -361,8 +361,8 @@ test("automatically installs the six bundled feature plugins once per workspace"
   assert.equal(flow.policy.debounceMs, 300);
   assert.equal(flow.policy.settings.maxParallel.max, 10);
   assert.match(flow.policy.settings.autoRun.label, /自動/);
-  assert.equal(existsSync(path.join(root, ".vreview/plugins/annotation-workflow/package.json")), true);
-  assert.equal(existsSync(path.join(root, ".vreview/plugins/review/server/review-store.js")), true);
+  assert.equal(existsSync(path.join(root, ".vrev/plugins/annotation-workflow/package.json")), true);
+  assert.equal(existsSync(path.join(root, ".vrev/plugins/review/server/review-store.js")), true);
   const review = defaults.find(({ id }) => id === "review")!;
   assert.equal(review.manifest.schema_version, 4);
   assert.deepEqual(review.manifest.provides, [{ capability: "review", api_version: 1 }]);
@@ -381,22 +381,22 @@ test("upgrades proven schema-v3 bundled defaults while preserving workspace data
     enabled: false,
     configuration: {},
   }, root);
-  const settingsBefore = readFileSync(path.join(root, ".vreview/plugin-settings.json"), "utf8");
+  const settingsBefore = readFileSync(path.join(root, ".vrev/plugin-settings.json"), "utf8");
   const commandsBefore = `${JSON.stringify({ schema_version: 1, runners: [{ runner_id: "kept", command: "agent" }] }, null, 2)}\n`;
-  writeFileSync(path.join(root, ".vreview/custom-commands.json"), commandsBefore);
+  writeFileSync(path.join(root, ".vrev/custom-commands.json"), commandsBefore);
 
   for (const id of downgradedIds) restoreBundledPlugin(bundledRoot, id);
   assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), downgradedIds.map((id) => `${id}@${bundledPluginVersion(id)}`));
   assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [4, 4, 4, 4, 4]);
-  assert.equal(readFileSync(path.join(root, ".vreview/plugin-settings.json"), "utf8"), settingsBefore);
-  assert.equal(readFileSync(path.join(root, ".vreview/custom-commands.json"), "utf8"), commandsBefore);
+  assert.equal(readFileSync(path.join(root, ".vrev/plugin-settings.json"), "utf8"), settingsBefore);
+  assert.equal(readFileSync(path.join(root, ".vrev/custom-commands.json"), "utf8"), commandsBefore);
 });
 
 test("upgrades same-schema trusted bundled UI when its SemVer is older", async () => {
   const root = workspace();
   const bundledRoot = bundledFixture();
   const reviewRoot = path.join(bundledRoot, "review");
-  const manifestPath = path.join(reviewRoot, "visual-review.plugin.json");
+  const manifestPath = path.join(reviewRoot, "vrev.plugin.json");
   const packagePath = path.join(reviewRoot, "package.json");
   const uiPath = path.join(reviewRoot, "ui/stage.ui.json");
   const oldManifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { schema_version: number; version: string };
@@ -408,12 +408,12 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   writeFileSync(uiPath, `${JSON.stringify({ schema_version: 1, root: { type: "text", props: { text: { literal: "stale bundled UI" } } } }, null, 2)}\n`);
 
   assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", ...["ai", "firestore", "annotation-workflow", "page-map", "github-issue"].map((id) => `${id}@${bundledPluginVersion(id)}`)]);
-  assert.match(readFileSync(path.join(root, ".vreview/plugins/review/ui/stage.ui.json"), "utf8"), /stale bundled UI/);
+  assert.match(readFileSync(path.join(root, ".vrev/plugins/review/ui/stage.ui.json"), "utf8"), /stale bundled UI/);
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 
   restoreBundledPlugin(bundledRoot, "review");
   assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), [`review@${bundledVersion}`]);
-  assert.equal(readFileSync(path.join(root, ".vreview/plugins/review/ui/stage.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/stage.ui.json"), "utf8"));
+  assert.equal(readFileSync(path.join(root, ".vrev/plugins/review/ui/stage.ui.json"), "utf8"), readFileSync(path.join(trustedBundledRoot, "review/ui/stage.ui.json"), "utf8"));
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.version, bundledVersion);
 });
 
@@ -427,7 +427,7 @@ test("preserves a local same-ID install instead of treating it as a bundled defa
   const installed = listPlugins(root).find(({ id }) => id === "github-issue")!;
   assert.equal(installed.source, source);
   assert.equal(installed.version, "1.2.3");
-  assert.match(readFileSync(path.join(root, ".vreview/plugins/github-issue/dist/plugin.js"), "utf8"), /handled/);
+  assert.match(readFileSync(path.join(root, ".vrev/plugins/github-issue/dist/plugin.js"), "utf8"), /handled/);
 });
 
 test("fails closed for a tampered installed manifest and never evaluates a tampered module", async () => {
@@ -435,7 +435,7 @@ test("fails closed for a tampered installed manifest and never evaluates a tampe
   const manifestBundle = bundledFixture(["github-issue"]);
   await ensureDefaultPlugins(manifestRoot, manifestBundle);
   restoreBundledPlugin(manifestBundle, "github-issue");
-  const installedManifestPath = path.join(manifestRoot, ".vreview/plugins/github-issue/visual-review.plugin.json");
+  const installedManifestPath = path.join(manifestRoot, ".vrev/plugins/github-issue/vrev.plugin.json");
   const tampered = JSON.parse(readFileSync(installedManifestPath, "utf8")) as { display: { summary: string } };
   tampered.display.summary = "locally changed";
   writeFileSync(installedManifestPath, JSON.stringify(tampered));
@@ -447,11 +447,11 @@ test("fails closed for a tampered installed manifest and never evaluates a tampe
   await ensureDefaultPlugins(moduleRoot, moduleBundle);
   restoreBundledPlugin(moduleBundle, "annotation-workflow");
   const marker = path.join(moduleRoot, "tampered-module-evaluated");
-  const modulePath = path.join(moduleRoot, ".vreview/plugins/annotation-workflow/index.js");
+  const modulePath = path.join(moduleRoot, ".vrev/plugins/annotation-workflow/index.js");
   writeFileSync(modulePath, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "bad");\nexport default {};\n`);
   assert.deepEqual(await ensureDefaultPlugins(moduleRoot, moduleBundle), [`annotation-workflow@${bundledPluginVersion("annotation-workflow")}`]);
   assert.equal(existsSync(marker), false);
-  assert.equal((JSON.parse(readFileSync(path.join(moduleRoot, ".vreview/plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { schema_version: number }).schema_version, 4);
+  assert.equal((JSON.parse(readFileSync(path.join(moduleRoot, ".vrev/plugins/annotation-workflow/vrev.plugin.json"), "utf8")) as { schema_version: number }).schema_version, 4);
 });
 
 test("serializes concurrent bundled upgrades and leaves same-version installs untouched", async () => {
@@ -488,7 +488,7 @@ test("automatic annotation workflow rejects a tampered workspace copy before eva
   const root = workspace();
   await ensureDefaultPlugins(root);
   const marker = path.join(root, "plugin-evaluated");
-  writeFileSync(path.join(root, ".vreview/plugins/annotation-workflow/index.js"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "bad");\nexport default { apiVersion: 1, policy() { return { events: ["annotation-created"], debounceMs: 0 }; } };\n`);
+  writeFileSync(path.join(root, ".vrev/plugins/annotation-workflow/index.js"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "bad");\nexport default { apiVersion: 1, policy() { return { events: ["annotation-created"], debounceMs: 0 }; } };\n`);
   const trusted = new URL("../src/bundled-plugins/annotation-workflow", import.meta.url).pathname;
   await assert.rejects(loadTrustedPluginAnnotationFlowProvider("annotation-workflow", trusted, root), /does not match the bundled module/);
   assert.equal(existsSync(marker), false);

@@ -1,5 +1,5 @@
 // Local filesystem implementation of `WorkspaceStorageProviderV1` (see `src/storage-provider.ts`).
-// Storage keys are canonical relative POSIX paths under `.vreview/reviews/`, e.g.
+// Storage keys are canonical relative POSIX paths under `.vrev/reviews/`, e.g.
 // `reviews/home/review.json`. This is the reference implementation other storage backends
 // (Firestore, etc.) are copied into place against when transferring workspace data.
 import { createHash } from "node:crypto";
@@ -93,7 +93,7 @@ function list(vreviewRoot: string, prefix: string): string[] {
 
 export function createLocalWorkspaceStorageProvider(projectRoot: string): WorkspaceStorageProviderV1 {
   const root = path.resolve(projectRoot);
-  const vreviewRoot = path.join(root, ".vreview");
+  const vreviewRoot = path.join(root, ".vrev");
 
   return {
     apiVersion: 1,

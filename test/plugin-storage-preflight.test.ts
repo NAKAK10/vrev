@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 
-import { createVisualReviewServer, type VisualReviewServer } from "../src/index.js";
+import { createVrevServer, type VrevServer } from "../src/index.js";
 import { installPlugin } from "../src/plugin-registry.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-preflight-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-preflight-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -16,7 +16,7 @@ function workspace(): string {
 function storagePlugin(root: string, id: string, providerBody: string): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 3,
     id,
     version: "1.0.0",
@@ -32,7 +32,7 @@ function storagePlugin(root: string, id: string, providerBody: string): string {
 function noStoragePlugin(root: string, id: string): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 1,
     id,
     version: "1.0.0",
@@ -79,7 +79,7 @@ const hangingProviderBody = `
 `;
 
 let httpRoot: string;
-let server: VisualReviewServer;
+let server: VrevServer;
 let baseUrl: string;
 
 async function pluginPayload(): Promise<{ revision: string; plugins: Array<{ id: string; enabled: boolean }> }> {
@@ -97,7 +97,7 @@ before(async () => {
   await installPlugin(storagePlugin(httpRoot, "hanging-storage", hangingProviderBody), httpRoot);
   await installPlugin(noStoragePlugin(httpRoot, "no-storage"), httpRoot);
 
-  server = createVisualReviewServer({
+  server = createVrevServer({
     projectRoot: httpRoot,
     target: ".code/htmls/index.html",
     storagePreflightTimeoutMs: 200,

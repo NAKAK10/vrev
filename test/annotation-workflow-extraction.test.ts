@@ -10,7 +10,7 @@ import {
   createPluginHostRuntime,
   createProcessSupervisor,
   createRunnerRegistry,
-  createVisualReviewServer,
+  createVrevServer,
   listPlugins,
   pluginSettingsRevision,
   readPluginSettings,
@@ -25,7 +25,7 @@ import {
 } from "../plugins/annotation-workflow/server/index.js";
 
 function repository(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-workflow-extraction-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-workflow-extraction-"));
   mkdirSync(path.join(root, ".git"));
   mkdirSync(path.join(root, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(root, ".code/htmls/index.html"), "<h1>Workflow</h1>");
@@ -174,7 +174,7 @@ test("disabling annotation-workflow rejects legacy job APIs while review stays a
   updatePluginSettings(plugin.id, plugin.manifest, {
     revision: pluginSettingsRevision(readPluginSettings(root)), enabled: false, configuration: {},
   }, root);
-  const visual = createVisualReviewServer({ projectRoot: root, target: ".code/htmls/index.html" });
+  const visual = createVrevServer({ projectRoot: root, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => visual.server.listen(0, "127.0.0.1", resolve));
   const address = visual.server.address();
   assert.ok(address && typeof address !== "string");

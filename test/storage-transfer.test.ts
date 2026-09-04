@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 
-import { createVisualReviewServer, type VisualReviewServer } from "../src/index.js";
+import { createVrevServer, type VrevServer } from "../src/index.js";
 import { installPlugin } from "../src/plugin-registry.js";
 import { pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "../src/plugin-settings.js";
 import { createLocalWorkspaceStorageProvider } from "../src/local-storage-provider.js";
@@ -12,7 +12,7 @@ import { StorageConflictError, type StorageJson, type WorkspaceStorageProviderV1
 import { transferWorkspaceStorage } from "../src/storage-transfer.js";
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-storage-transfer-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-storage-transfer-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -77,9 +77,9 @@ test("local provider excludes runtime files and rejects non-canonical or non-rev
   await assert.rejects(provider.compareAndSwap("settings.json", null, {}), /must be under reviews\//);
 
   // Runtime/lock files that already exist on disk (written outside the provider) never surface via list().
-  mkdirSync(path.join(root, ".vreview", "reviews", "y"), { recursive: true });
-  writeFileSync(path.join(root, ".vreview", "reviews", "y", "job-state.json"), "{}");
-  writeFileSync(path.join(root, ".vreview", "reviews", "y", "stray.lock"), "{}");
+  mkdirSync(path.join(root, ".vrev", "reviews", "y"), { recursive: true });
+  writeFileSync(path.join(root, ".vrev", "reviews", "y", "job-state.json"), "{}");
+  writeFileSync(path.join(root, ".vrev", "reviews", "y", "stray.lock"), "{}");
   await provider.compareAndSwap("reviews/y/review.json", null, { ok: true });
   assert.deepEqual(await provider.list("reviews/y/"), ["reviews/y/review.json"]);
 });
@@ -221,7 +221,7 @@ test("transferWorkspaceStorage retries once on a destination conflict and then a
 function memoryStoragePlugin(root: string, id: string): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 3,
     id,
     version: "1.0.0",
@@ -271,7 +271,7 @@ function memoryStoragePlugin(root: string, id: string): string {
 function noStoragePlugin(root: string, id: string): string {
   const directory = path.join(root, "plugins", id);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "visual-review.plugin.json"), JSON.stringify({
+  writeFileSync(path.join(directory, "vrev.plugin.json"), JSON.stringify({
     schema_version: 1,
     id,
     version: "1.0.0",
@@ -282,7 +282,7 @@ function noStoragePlugin(root: string, id: string): string {
 }
 
 let httpRoot: string;
-let server: VisualReviewServer;
+let server: VrevServer;
 let baseUrl: string;
 
 before(async () => {
@@ -293,7 +293,7 @@ before(async () => {
   await installPlugin(memoryStoragePlugin(httpRoot, "disabled-storage"), httpRoot);
   await installPlugin(noStoragePlugin(httpRoot, "no-storage"), httpRoot);
 
-  server = createVisualReviewServer({ projectRoot: httpRoot, target: ".code/htmls/index.html" });
+  server = createVrevServer({ projectRoot: httpRoot, target: ".code/htmls/index.html" });
   await new Promise<void>((resolve) => server.server.listen(0, "127.0.0.1", resolve));
   const address = server.server.address();
   assert.ok(address && typeof address !== "string");

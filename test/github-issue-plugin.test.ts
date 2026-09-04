@@ -103,7 +103,7 @@ function aiFixture(
 }
 
 function workspace(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-github-issue-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "vrev-github-issue-"));
   mkdirSync(path.join(root, ".git"));
   return root;
 }
@@ -303,7 +303,7 @@ test("standalone draft parser requires nonce framing and an exact safe object", 
   const framed = `${start}\n{"title":"T","body":"B"}\n${end}`;
   assert.deepEqual(extractStandaloneIssueDraft(JSON.stringify({ result: framed }), nonce), { title: "T", body: "B" });
   assert.throws(() => extractStandaloneIssueDraft(`${framed}\n${framed}`, nonce), /exactly one valid framed/);
-  assert.throws(() => extractStandaloneIssueDraft(`${start}\n{"title":"T","body":"mentions .vreview"}\n${end}`, nonce), /internal review/);
+  assert.throws(() => extractStandaloneIssueDraft(`${start}\n{"title":"T","body":"mentions .vrev"}\n${end}`, nonce), /internal review/);
   assert.throws(() => extractStandaloneIssueDraft("x".repeat(128 * 1024 + 1), nonce), /128 KiB/);
 });
 
