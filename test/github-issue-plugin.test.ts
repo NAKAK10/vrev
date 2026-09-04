@@ -383,6 +383,7 @@ test("issue.resolve force-resolves an Issue annotation and keeps it in the resol
   const annotation: IssueProjectionAnnotationV1 = {
     id: "annotation-1", status: "in_progress", comment: "見出しを改善", page_path: "/", anchor: { selector: "h1" },
     created_at: "2026-01-01T00:00:00.000Z", issue_state: "requested",
+    issue_url: "https://github.com.attacker.example/o/r/issues/7",
   };
   const statusCalls: Array<{ id: string; actor: string; status: string }> = [];
   const review: IssueReviewCapabilityV1 = {
@@ -408,7 +409,7 @@ test("issue.resolve force-resolves an Issue annotation and keeps it in the resol
   });
   assert.deepEqual(statusCalls, [{ id: "annotation-1", actor: "human", status: "resolved" }]);
   const listed = await adapter.query("issues.list", { request_id: "list", input: {} }) as { data: { items: Array<{ filter_id: string; url: string }> } };
-  assert.deepEqual(listed.data.items.map(({ filter_id, url }) => ({ filter_id, url })), [{ filter_id: "resolved", url: "" }]);
+  assert.deepEqual(listed.data.items.map(({ filter_id, url }) => ({ filter_id, url })), [{ filter_id: "resolved", url: "" }], "non-GitHub Issue URLs are never projected to the UI");
 });
 
 test("issue.create validates manual title, body, and anchor", async () => {
@@ -433,6 +434,32 @@ test("GitHub Issue exposes no AI selector or ai_method_id payload", async () => 
   const result = await adapter.command("issue.draft", { request_id: "draft", input: {} }) as BridgeCommandResult;
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error.message, /disabled/);
+});
+
+test("Issue cards show a safe external Issue link before target focus only when a URL exists", () => {
+  const sidebar = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/sidebar.ui.json"), "utf8"));
+  const nodes: any[] = [];
+  const visit = (node: any): void => {
+    if (!node || typeof node !== "object") return;
+    nodes.push(node);
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(sidebar.root);
+  const actions = nodes.find((node) => node.type === "row" && node.props?.variant?.literal === "issue-card-actions");
+  assert.ok(actions);
+  assert.equal(actions.children[0]?.type, "link");
+  assert.deepEqual(actions.children[0]?.when, { ne: [{ item: "/url" }, { literal: "" }] });
+  assert.deepEqual(actions.children[0]?.props, {
+    label: { literal: "Issueを開く" },
+    href: { item: "/url" },
+    external: { literal: true },
+  });
+  assert.equal(actions.children[1]?.props?.label?.literal, "対象を表示");
+  assert.equal(actions.children.some((node: any) => node.props?.label?.literal === "強制的に解決"), true);
+
+  const renderer = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  assert.match(renderer, /const href = safeExternalHttpUrl\(values\.href\)/);
+  assert.match(renderer, /if \(href\) \{ node\.href = href; node\.target = "_blank"; node\.rel = "noopener noreferrer"; \}/);
 });
 
 test("undeclared bridge commands are rejected as NOT_FOUND", async () => {

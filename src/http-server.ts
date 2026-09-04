@@ -35,6 +35,8 @@ import { loadWorkspaceSettings } from "./workspace-settings.js";
 export const MAX_REQUEST_BODY = 1024 * 1024;
 export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 export const DEFAULT_STORAGE_PREFLIGHT_TIMEOUT_MS = 10_000;
+export const DEFAULT_RELOAD_TOKEN_REPLAY_TTL_MS = 10 * 60 * 1000;
+export const DEFAULT_RELOAD_TOKEN_REPLAY_MAX_ENTRIES = 10_000;
 
 const SECURITY_POLICY = [
   "default-src 'none'",
@@ -124,6 +126,10 @@ export interface VrevServerOptions {
   legacyUi?: boolean;
   /** Timeout for the storage-backend connectivity preflight run when enabling a storage provider plugin. Defaults to 10s; tests may override it. */
   storagePreflightTimeoutMs?: number;
+  /** How long consumed one-time reload tokens remain blocked. Defaults to 10 minutes. */
+  reloadTokenReplayTtlMs?: number;
+  /** Maximum number of consumed reload tokens retained for replay protection. Defaults to 10,000. */
+  reloadTokenReplayMaxEntries?: number;
 }
 
 export interface VrevServer {
@@ -228,6 +234,36 @@ async function resolvePublicAddress(hostname: string): Promise<{ address: string
   return { address: selected.address, family: selected.family === 6 ? 6 : 4 };
 }
 
+function isVrevReservedRoute(pathname: string): boolean {
+  return pathname === "/" || pathname === "/legacy" || pathname === "/settings" || pathname.startsWith("/settings/")
+    || pathname === "/api" || pathname.startsWith("/api/") || pathname === "/_vrev" || pathname.startsWith("/_vrev/")
+    || pathname === "/assets" || pathname.startsWith("/assets/")
+    || ["/renderer.css", "/renderer.js", "/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname);
+}
+
+function reloadRedirectTarget(requestUrl: URL, liveUrl: string | undefined, publicTarget: boolean): string {
+  const values = requestUrl.searchParams.getAll("url");
+  if (values.length !== 1 || !values[0] || values[0].length > 16_384) throw new HttpError(400, "reload target is invalid");
+  const target = values[0];
+  if (!target.startsWith("/") || target.startsWith("//") || target.includes("\\") || /[\u0000-\u001f\u007f]/.test(target)) {
+    throw new HttpError(400, "reload target is invalid");
+  }
+  const resolved = new URL(target, "http://localhost");
+  const standardTarget = resolved.pathname === "/live" || resolved.pathname.startsWith("/live/")
+    || resolved.pathname === "/target" || resolved.pathname.startsWith("/target/");
+  const privateLiveFallback = Boolean(liveUrl) && !publicTarget && !isVrevReservedRoute(resolved.pathname);
+  if (resolved.origin !== "http://localhost" || resolved.username || resolved.password || (!standardTarget && !privateLiveFallback)) {
+    throw new HttpError(400, "reload target is invalid");
+  }
+  return target;
+}
+
+function sendReloadRedirect(response: ServerResponse, target: string): void {
+  setSecurityHeaders(response);
+  response.writeHead(302, { Location: target, "Content-Length": "0" });
+  response.end();
+}
+
 async function proxyLiveRequest(request: IncomingMessage, response: ServerResponse, liveUrl: string, requestUrl: URL, publicTarget: boolean): Promise<void> {
   if (requestUrl.pathname !== "/live" && !requestUrl.pathname.startsWith("/live/")) throw new HttpError(404, "file not found");
   if (publicTarget && request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "public targets are read-only");
@@ -259,6 +295,7 @@ async function proxyLiveRequest(request: IncomingMessage, response: ServerRespon
       const textual = /text\/|javascript|json|xml|svg/i.test(contentTypeValue);
       const responseHeaders = { ...incoming.headers };
       for (const name of ["content-length", "content-encoding", "transfer-encoding", "content-security-policy", "x-frame-options", "set-cookie", "set-cookie2", "refresh"]) delete responseHeaders[name];
+      responseHeaders["cache-control"] = "no-store";
       const location = incoming.headers.location;
       if (location) {
         const resolved = new URL(location, upstream);
@@ -623,6 +660,10 @@ export function assertLoopbackHost(host: string): void {
 }
 
 export function createVrevServer(options: VrevServerOptions): VrevServer {
+  const reloadTokenReplayTtlMs = options.reloadTokenReplayTtlMs ?? DEFAULT_RELOAD_TOKEN_REPLAY_TTL_MS;
+  const reloadTokenReplayMaxEntries = options.reloadTokenReplayMaxEntries ?? DEFAULT_RELOAD_TOKEN_REPLAY_MAX_ENTRIES;
+  if (!Number.isFinite(reloadTokenReplayTtlMs) || reloadTokenReplayTtlMs <= 0) throw new Error("reload token replay TTL must be positive");
+  if (!Number.isSafeInteger(reloadTokenReplayMaxEntries) || reloadTokenReplayMaxEntries <= 0) throw new Error("reload token replay entry limit must be a positive integer");
   // Deprecated HTTP routes are transport adapters over the review plugin capability.
   const reviewCapability = createReviewCapability(options.target, {
     projectRoot: options.projectRoot,
@@ -759,6 +800,7 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
     lease.release();
     throw error;
   }
+  const usedReloadTokens = new Map<string, number>();
   const server = createServer((request, response) => {
     void (async () => {
       try {
@@ -768,6 +810,25 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
           throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
         const legacyUi = options.legacyUi === true || process.env.VREV_LEGACY_UI === "1";
+        if (pathname.startsWith("/_vrev/reload/")) {
+          if (request.method !== "GET") throw new HttpError(405, "reload endpoint requires GET");
+          const reloadMatch = /^\/_vrev\/reload\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(pathname);
+          if (!reloadMatch?.[1]) throw new HttpError(404, "reload endpoint not found");
+          const token = reloadMatch[1].toLowerCase();
+          const target = reloadRedirectTarget(url, store.target.liveUrl, publicTarget);
+          const now = Date.now();
+          const expiresAt = now - reloadTokenReplayTtlMs;
+          for (const [recordedToken, usedAt] of usedReloadTokens) {
+            if (usedAt > expiresAt) break;
+            usedReloadTokens.delete(recordedToken);
+          }
+          if (usedReloadTokens.has(token)) throw new HttpError(410, "reload endpoint has already been used");
+          usedReloadTokens.set(token, now);
+          while (usedReloadTokens.size > reloadTokenReplayMaxEntries) {
+            usedReloadTokens.delete(usedReloadTokens.keys().next().value as string);
+          }
+          return sendReloadRedirect(response, target);
+        }
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, legacyUi ? "index.html" : "renderer.html"));
         if (request.method === "GET" && pathname === "/legacy") return serveFile(response, path.join(uiRoot, "index.html"));
         if (request.method === "GET" && pathname === "/api/plugin-host/v1/surfaces/review") {

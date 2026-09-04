@@ -13,6 +13,7 @@ let initialPagePath = null;
 let settingsRenderPromise = null;
 let activeToast = null;
 let deferredReviewRender = false;
+let layoutReorderSaving = false;
 const reviewSelection = { annotation_id: null, page_path: null, anchor: null };
 let activeSelection = null;
 const DISCLOSURE_SEEN_KEY = "vrev.disclosure-seen/v1";
@@ -347,7 +348,13 @@ function renderSingle(definition, scope) {
   if (type === "panel" && values.aria_label) node.setAttribute("aria-label", String(values.aria_label));
   if (type === "button" || type === "load-more") { node.textContent = String(values.label || ""); if (values.type) node.type = String(values.type); }
   if (type === "button" && (definition.on?.click || []).some((instruction) => instruction.type === "selection.activate")) node.setAttribute("aria-pressed", "false");
-  if (type === "link") { node.textContent = String(values.label || ""); if (typeof values.href === "string") node.href = values.href; if (values.external) { node.target = "_blank"; node.rel = "noopener noreferrer"; } }
+  if (type === "link") {
+    node.textContent = String(values.label || "");
+    if (values.external) {
+      const href = safeExternalHttpUrl(values.href);
+      if (href) { node.href = href; node.target = "_blank"; node.rel = "noopener noreferrer"; }
+    } else if (typeof values.href === "string") node.href = values.href;
+  }
   if (["input", "textarea"].includes(type)) { if (type === "input" && values.type) node.type = String(values.type); control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
   if (["select", "viewport-selector"].includes(type)) {
     control(node, values, { ...scope, valuePath: definition.props?.value?.local });
@@ -478,12 +485,138 @@ async function refreshLocalDependencies(scope, path) {
     .map((resource) => loadResource(contribution, resource.id, scope, false)));
   await Promise.all(loads);
 }
+function safeExternalHttpUrl(value) {
+  if (typeof value !== "string" || !/^https?:\/\//i.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+}
 function targetUrlForPage(target, pagePath) {
   if (!pagePath) return target.url;
   if (target.live_url) { try { const value = new URL(pagePath, target.live_url); return `/live${value.pathname}${value.search}${value.hash}`; } catch {} }
   return `/target/${String(pagePath).replace(/^\/+/, "").split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
 }
 function waitForFrame(frame) { return new Promise((resolve, reject) => { const timer = setTimeout(() => { cleanup(); reject(new Error("対象ページの読み込みがタイムアウトしました")); }, 8000); const cleanup = () => { clearTimeout(timer); frame.removeEventListener("load", loaded); frame.removeEventListener("error", failed); }; const loaded = () => { cleanup(); resolve(); }; const failed = () => { cleanup(); reject(new Error("対象ページを読み込めませんでした")); }; frame.addEventListener("load", loaded, { once: true }); frame.addEventListener("error", failed, { once: true }); }); }
+function clearPendingReload(frame, pending = frame.__pendingReloadScroll) {
+  if (!pending || frame.__pendingReloadScroll !== pending) return;
+  delete frame.__pendingReloadScroll;
+}
+function beginTargetNavigation(frame) {
+  clearPendingReload(frame);
+  frame.__targetNavigationGeneration = (frame.__targetNavigationGeneration || 0) + 1;
+  return frame.__targetNavigationGeneration;
+}
+function currentFrameUrl(frame) {
+  try { return frame.contentWindow.location.href; } catch { return ""; }
+}
+function sameTargetUrl(left, right) {
+  try { return new URL(left, location.href).href === new URL(right, location.href).href; }
+  catch { return left === right; }
+}
+function isAllowedTargetRefreshPath(pathname, target) {
+  if (pathname === "/live" || pathname.startsWith("/live/") || pathname === "/target" || pathname.startsWith("/target/")) return true;
+  const privateLiveTarget = target?.live_url && target.url_mode !== "public";
+  const reserved = pathname === "/" || pathname === "/legacy" || pathname === "/settings" || pathname.startsWith("/settings/")
+    || pathname === "/api" || pathname.startsWith("/api/") || pathname === "/_vrev" || pathname.startsWith("/_vrev/")
+    || pathname === "/assets" || pathname.startsWith("/assets/")
+    || ["/renderer.css", "/renderer.js", "/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname);
+  return Boolean(privateLiveTarget) && !reserved;
+}
+function validatedTargetRefreshSource(frame, fallbackUrl, target) {
+  const candidates = [currentFrameUrl(frame), frame.getAttribute?.("src"), frame.src, fallbackUrl];
+  for (const candidate of candidates) {
+    if (!candidate || candidate === "about:blank") continue;
+    try {
+      const resolved = new URL(candidate, location.href);
+      if (resolved.origin === location.origin && ["http:", "https:"].includes(resolved.protocol) && !resolved.username && !resolved.password
+        && isAllowedTargetRefreshPath(resolved.pathname, target)) return resolved.href;
+    } catch {}
+  }
+  throw new Error("対象ページのURLを安全に更新できません");
+}
+function targetRefreshNavigationUrl(logicalUrl, token, target) {
+  const resolved = new URL(logicalUrl, location.href);
+  if (resolved.origin !== location.origin || resolved.username || resolved.password || !isAllowedTargetRefreshPath(resolved.pathname, target)) {
+    throw new Error("対象ページのURLを安全に更新できません");
+  }
+  return new URL(`/_vrev/reload/${token}?url=${encodeURIComponent(resolved.href.slice(resolved.origin.length))}`, location.href).href;
+}
+function isTargetReloadEndpoint(value) {
+  try { return new URL(value, location.href).origin === location.origin && /^\/_vrev\/reload\/[0-9a-f-]+$/i.test(new URL(value, location.href).pathname); }
+  catch { return false; }
+}
+function finishTargetRefresh(frame, pending) {
+  if (!pending || frame.__pendingReloadScroll !== pending || pending.generation !== frame.__targetNavigationGeneration) return null;
+  const loadedUrl = currentFrameUrl(frame);
+  if (isTargetReloadEndpoint(loadedUrl)) return null;
+  clearPendingReload(frame, pending);
+  return sameTargetUrl(loadedUrl, pending.logicalUrl) ? pending : null;
+}
+function watchTargetLayout(frame, doc, redraw) {
+  frame.__targetLayoutCleanup?.();
+  const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(redraw) : null;
+  if (doc?.documentElement) resizeObserver?.observe(doc.documentElement);
+  if (doc?.body) resizeObserver?.observe(doc.body);
+  const mutationObserver = typeof MutationObserver === "function" && doc ? new MutationObserver(redraw) : null;
+  if (doc?.documentElement) mutationObserver?.observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "hidden", "src", "style"] });
+  doc?.addEventListener("load", redraw, true);
+  let cleanupTimer;
+  const cleanup = () => {
+    clearTimeout(cleanupTimer);
+    resizeObserver?.disconnect();
+    mutationObserver?.disconnect();
+    doc?.removeEventListener("load", redraw, true);
+    if (frame.__targetLayoutCleanup === cleanup) delete frame.__targetLayoutCleanup;
+  };
+  frame.__targetLayoutCleanup = cleanup;
+  cleanupTimer = setTimeout(cleanup, 5000);
+}
+function redrawTargetAfterLoad(frame) {
+  const doc = frame.contentDocument;
+  const candidate = frame.__pendingReloadScroll;
+  const completedRefresh = finishTargetRefresh(frame, candidate);
+  const pendingScroll = completedRefresh;
+  const redraw = () => {
+    if (!frame.isConnected || frame.contentDocument !== doc) return;
+    redrawMarks();
+  };
+  redraw();
+  requestAnimationFrame(() => {
+    if (pendingScroll && frame.isConnected && frame.contentDocument === doc) frame.contentWindow?.scrollTo(pendingScroll.x, pendingScroll.y);
+    redraw();
+    requestAnimationFrame(redraw);
+  });
+  doc?.fonts?.ready.then(redraw).catch(() => {});
+  watchTargetLayout(frame, doc, redraw);
+}
+function reloadTarget() {
+  const stage = document.querySelector(".vr-target-stage");
+  const frame = stage?.querySelector("iframe");
+  if (frame) {
+    const superseded = frame.__pendingReloadScroll;
+    const currentUrl = currentFrameUrl(frame);
+    const continuesNavigation = superseded && (!currentUrl || currentUrl === "about:blank" || sameTargetUrl(currentUrl, superseded.navigationUrl));
+    let pending;
+    try {
+      const logicalUrl = continuesNavigation ? superseded.logicalUrl : validatedTargetRefreshSource(frame, stage?.__target?.url, stage?.__target);
+      const generation = beginTargetNavigation(frame);
+      pending = { logicalUrl, observedUrl: currentUrl, generation, x: frame.contentWindow?.scrollX ?? 0, y: frame.contentWindow?.scrollY ?? 0 };
+      frame.__pendingReloadScroll = pending;
+      const latestUrl = currentFrameUrl(frame);
+      if (latestUrl && latestUrl !== "about:blank" && !sameTargetUrl(latestUrl, pending.observedUrl) && !sameTargetUrl(latestUrl, pending.logicalUrl)) {
+        throw new Error("対象ページが移動したため更新を取り消しました");
+      }
+      pending.navigationUrl = targetRefreshNavigationUrl(logicalUrl, crypto.randomUUID(), stage?.__target);
+      frame.contentWindow.location.replace(pending.navigationUrl);
+    } catch { clearPendingReload(frame, pending); }
+    return;
+  }
+  const image = stage?.querySelector("img");
+  if (image && stage?.__target?.url) {
+    image.src = targetRefreshNavigationUrl(stage.__target.url, crypto.randomUUID(), stage.__target);
+  }
+}
 function showTargetDiagnostic(container, message, detail = "", options = {}) {
   if (options.dismissKey && container.__dismissedTargetDiagnostics?.has(options.dismissKey)) return;
   let diagnostic = container.querySelector(":scope > .vr-target-diagnostic");
@@ -517,6 +650,7 @@ function installTargetDiagnostics(container, frame) {
 }
 async function focusTarget(pagePath, anchor, restoreContext) {
   const stage = document.querySelector(".vr-target-stage"); const frame = stage?.querySelector("iframe"); let focused = false;
+  if (frame) beginTargetNavigation(frame);
   try {
     if (!stage) throw new Error("レビュー対象がありません");
     if (frame && pagePath && stage.__target) { const next = targetUrlForPage(stage.__target, pagePath); const current = new URL(frame.src, location.href).pathname; if (new URL(next, location.href).pathname !== current) { const waiting = waitForFrame(frame); frame.src = next; await waiting; installHtmlSelection(stage, frame, stage.__mode); } }
@@ -598,7 +732,7 @@ async function execute(instructions, scope, strictRefresh = false) {
       }
     }
     else if (instruction.type === "selection.activate") activateSelection(instruction, scope);
-    else if (instruction.type === "target.reload") document.querySelector(".vr-target-stage iframe")?.contentWindow?.location.reload();
+    else if (instruction.type === "target.reload") reloadTarget();
     else if (instruction.type === "target.focus") { reviewSelection.annotation_id = binding(instruction.annotation_id, scope) ?? null; const layer = document.querySelector(".vr-annotation-mark-layer"); if (layer) layer.__selectedId = reviewSelection.annotation_id; await focusTarget(binding(instruction.target, scope), binding(instruction.anchor, scope), instruction.restore_context); }
     else if (instruction.type === "navigate.internal") location.assign(String(binding(instruction.path, scope)));
     else if (instruction.type === "navigate.external") { const url = String(binding(instruction.url, scope)); if ((!instruction.confirmation || confirm(String(instruction.confirmation))) && /^https?:\/\//.test(url)) open(url, "_blank", "noopener"); }
@@ -691,7 +825,36 @@ function toast(message, variant = "info") {
 }
 function safeMarkdown(markdown) {
   const container = element("div", "vr-safe-markdown");
-  for (const line of markdown.split(/\r?\n/)) { const match = /^(#{1,6})\s+(.*)$/.exec(line); const node = match ? element(`h${match[1].length}`) : element(line ? "p" : "br"); if (line) node.textContent = match?.[2] ?? line; container.append(node); }
+  const lines = markdown.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fence = /^( {0,3})(?:(`{3,})([^`]*)|(~{3,})(.*))$/.exec(line);
+    if (fence) {
+      const codeLines = [];
+      const indentation = fence[1].length;
+      const marker = fence[2] || fence[4];
+      for (index += 1; index < lines.length; index += 1) {
+        const closingFence = /^ {0,3}(`+|~+)[ \t]*$/.exec(lines[index]);
+        if (closingFence && closingFence[1][0] === marker[0] && closingFence[1].length >= marker.length) break;
+        codeLines.push(lines[index].replace(new RegExp(`^ {0,${indentation}}`), ""));
+      }
+      const requestedLanguage = (fence[3] ?? fence[5]).trim().split(/\s+/, 1)[0] || "";
+      const language = /^[a-z0-9_+#.-]{1,32}$/i.test(requestedLanguage) ? requestedLanguage : "";
+      const figure = element("figure", "vr-markdown-code-block");
+      if (language) { const caption = element("figcaption", "vr-markdown-code-language"); caption.textContent = language; figure.append(caption); }
+      const pre = element("pre", "vr-markdown-code");
+      pre.tabIndex = 0;
+      pre.setAttribute("role", "region");
+      pre.setAttribute("aria-label", language ? `${language} のコード` : "コードブロック");
+      const code = element("code"); code.textContent = codeLines.join("\n");
+      pre.append(code); figure.append(pre); container.append(figure);
+      continue;
+    }
+    const match = /^(#{1,6})\s+(.*)$/.exec(line);
+    const node = match ? element(`h${match[1].length}`) : element(line ? "p" : "br");
+    if (line) node.textContent = match?.[2] ?? line;
+    container.append(node);
+  }
   return container;
 }
 function documentSize(doc) { const root = doc.documentElement; const body = doc.body; return { width: Math.max(1, root?.scrollWidth || 0, body?.scrollWidth || 0), height: Math.max(1, root?.scrollHeight || 0, body?.scrollHeight || 0) }; }
@@ -806,7 +969,7 @@ function targetStage(definition, scope) {
     frame.src = requestedInitialPage ? targetUrlForPage(target, requestedInitialPage) : target.url;
     if (requestedInitialPage) { initialPagePath = null; history.replaceState(null, "", location.pathname); }
     if (!target.allow_scripts) frame.setAttribute("sandbox", "allow-same-origin allow-forms");
-    container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, container.__mode ?? mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
+    container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, container.__mode ?? mode); redrawTargetAfterLoad(frame); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
   applyTargetViewport(container, container.querySelector("iframe")); container.dataset.mode = mode;
   container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); cancelStageSelection(container); } });
@@ -1386,6 +1549,11 @@ async function synchronizeResources(resources, announce = false) {
 function layoutOrderSection(title, items, layoutPayload, kind) {
   const section = element("section", "vr-settings-card");
   const heading = element("h2", "vr-section-title"); heading.textContent = title; section.append(heading);
+  const isHorizontal = kind === "header";
+  const description = element("p"); description.textContent = isHorizontal
+    ? "一覧の上から順に、ヘッダーの左から右へ表示されます。"
+    : "一覧の上から順に、サイドバーの上から下へ表示されます。";
+  section.append(description);
   if (!items.length) {
     const empty = element("p", "vr-empty-state"); empty.textContent = "並び替えできる項目はありません。"; section.append(empty);
     return section;
@@ -1395,11 +1563,12 @@ function layoutOrderSection(title, items, layoutPayload, kind) {
     const row = element("li", "vr-layout-order-row");
     const copy = element("div"); const name = element("span"); name.textContent = item.title; const pluginId = element("span", "vr-field-description"); pluginId.textContent = item.plugin_id; copy.append(name, pluginId);
     const controls = element("div", "vr-row");
-    const up = element("button", "vr-button"); up.type = "button"; up.textContent = "上へ"; up.disabled = index === 0;
-    const down = element("button", "vr-button"); down.type = "button"; down.textContent = "下へ"; down.disabled = index === items.length - 1;
-    up.addEventListener("click", () => void moveLayoutItem(kind, items, index, -1, layoutPayload));
-    down.addEventListener("click", () => void moveLayoutItem(kind, items, index, 1, layoutPayload));
-    controls.append(up, down);
+    const previous = element("button", "vr-button"); previous.type = "button"; previous.textContent = isHorizontal ? "左へ" : "上へ"; previous.disabled = index === 0; previous.setAttribute("aria-label", `${item.title}を${previous.textContent}移動`); previous.dataset.layoutAction = "previous";
+    const next = element("button", "vr-button"); next.type = "button"; next.textContent = isHorizontal ? "右へ" : "下へ"; next.disabled = index === items.length - 1; next.setAttribute("aria-label", `${item.title}を${next.textContent}移動`); next.dataset.layoutAction = "next";
+    previous.addEventListener("click", () => void moveLayoutItem(kind, items, index, -1, layoutPayload));
+    next.addEventListener("click", () => void moveLayoutItem(kind, items, index, 1, layoutPayload));
+    controls.append(previous, next);
+    row.dataset.layoutKind = kind; row.dataset.layoutItemKey = item.key;
     row.append(copy, controls); list.append(row);
   });
   section.append(list);
@@ -1409,8 +1578,10 @@ async function moveLayoutItem(kind, items, index, delta, layoutPayload) {
   const keys = items.map((item) => item.key);
   const target = index + delta;
   if (target < 0 || target >= keys.length) return;
+  const item = items[index];
+  const direction = kind === "header" ? (delta < 0 ? "左" : "右") : (delta < 0 ? "上" : "下");
   [keys[index], keys[target]] = [keys[target], keys[index]];
-  await saveLayoutSettings({ [kind]: { order: keys } }, layoutPayload);
+  await saveLayoutSettings({ [kind]: { order: keys } }, layoutPayload, { kind, key: item.key, title: item.title, delta, message: `${item.title}を${direction}へ移動しました。` });
 }
 function stageSettingsSection(layoutPayload) {
   const section = element("section", "vr-settings-card");
@@ -1435,24 +1606,39 @@ function stageSettingsSection(layoutPayload) {
   section.append(positionField);
   return section;
 }
-async function saveLayoutSettings(patch, layoutPayload) {
+async function saveLayoutSettings(patch, layoutPayload, reorderResult = null) {
+  if (reorderResult && layoutReorderSaving) return;
+  const settingsPage = reorderResult ? root.querySelector(".vr-settings-page") : null;
+  const controls = settingsPage ? [...settingsPage.querySelectorAll("[data-layout-action]")] : [];
+  const disabledBefore = controls.map((control) => control.disabled);
+  if (reorderResult) {
+    layoutReorderSaving = true;
+    settingsPage?.setAttribute("aria-busy", "true");
+    for (const control of controls) control.disabled = true;
+  }
   try {
     const response = await fetch("/api/settings/layout", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: layoutPayload.revision, ...patch }) });
     if (response.status === 409) {
       toast("設定が別の画面で更新されました。再読み込みしました。", "error");
-      await renderGeneralSettings();
+      await renderGeneralSettings(reorderResult ? { ...reorderResult, message: "" } : null);
       return;
     }
     if (!response.ok) throw new Error("設定を保存できませんでした。");
     const nextPayload = await response.json();
     surface = await (await fetch("/api/plugin-host/v1/surfaces/review")).json();
     applyTheme(surface.theme);
-    paintGeneralSettings(nextPayload);
+    paintGeneralSettings(nextPayload, reorderResult);
   } catch (error) {
     toast(error instanceof Error ? error.message : "設定を保存できませんでした。", "error");
+  } finally {
+    if (reorderResult) {
+      layoutReorderSaving = false;
+      settingsPage?.setAttribute("aria-busy", "false");
+      controls.forEach((control, index) => { control.disabled = disabledBefore[index]; });
+    }
   }
 }
-function paintGeneralSettings(layoutPayload) {
+function paintGeneralSettings(layoutPayload, reorderResult = null) {
   const shell = element("div", "vr-app-shell vr-settings-shell");
   const header = element("header", "vr-header vr-settings-header");
   const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VREV"; const heading = element("h1"); heading.textContent = "設定"; brand.append(eyebrow, heading);
@@ -1470,17 +1656,27 @@ function paintGeneralSettings(layoutPayload) {
   page.append(layoutOrderSection("ヘッダーの表示順", surface.layout.header_items, layoutPayload, "header"));
   page.append(layoutOrderSection("サイドバーの表示順", surface.layout.sidebar_items, layoutPayload, "sidebar"));
   page.append(stageSettingsSection(layoutPayload));
+  const reorderStatus = element("p", "vr-live-status"); reorderStatus.setAttribute("role", "status"); reorderStatus.setAttribute("aria-live", "polite"); reorderStatus.setAttribute("aria-atomic", "true"); page.append(reorderStatus);
   shell.append(page, element("div", "toast-region"));
   root.replaceChildren(shell); root.setAttribute("aria-busy", "false");
+  if (reorderResult) queueMicrotask(() => {
+    const rows = [...root.querySelectorAll(".vr-layout-order-row")];
+    const row = rows.find((candidate) => candidate.dataset.layoutKind === reorderResult.kind && candidate.dataset.layoutItemKey === reorderResult.key);
+    const orderedItems = reorderResult.kind === "header" ? surface.layout.header_items : surface.layout.sidebar_items;
+    const movedIndex = orderedItems.findIndex((item) => item.key === reorderResult.key);
+    const action = movedIndex === 0 ? "next" : movedIndex === orderedItems.length - 1 ? "previous" : reorderResult.delta < 0 ? "previous" : "next";
+    row?.querySelector(`[data-layout-action="${action}"]`)?.focus();
+    reorderStatus.textContent = reorderResult.message;
+  });
   queueMicrotask(paintToast); requestAnimationFrame(paintToast);
 }
-async function renderGeneralSettings() {
+async function renderGeneralSettings(reorderResult = null) {
   root.dataset.page = "settings";
   const [layoutResponse, surfaceResponse] = await Promise.all([fetch("/api/settings/layout"), fetch("/api/plugin-host/v1/surfaces/review")]);
   if (!layoutResponse.ok || !surfaceResponse.ok) throw new Error("設定を読み込めませんでした。");
   const layoutPayload = await layoutResponse.json();
   surface = await surfaceResponse.json(); applyTheme(surface.theme);
-  paintGeneralSettings(layoutPayload);
+  paintGeneralSettings(layoutPayload, reorderResult);
 }
 async function start() {
   if (location.pathname === "/settings/plugins") return renderSettings();

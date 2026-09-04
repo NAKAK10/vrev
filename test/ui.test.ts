@@ -262,10 +262,151 @@ test("static HTML refreshes automatically when an AI fix becomes addressed", () 
   assert.match(reviewerSource, /function newlyAddressedPages\(previousReview, nextReview\)/);
   assert.match(reviewerSource, /annotation\.status === "addressed" && previous\.get\(annotationId\(annotation\)\) !== "addressed"/);
   assert.match(reviewerSource, /targetKind\(\) !== "html" \|\| state\.session\?\.target\?\.live_url/);
-  assert.match(reviewerSource, /state\.pendingTargetRefresh = \{ pagePath, x: win\.scrollX, y: win\.scrollY \}/);
-  assert.match(reviewerSource, /win\.location\.reload\(\)/);
+  assert.match(reviewerSource, /pending = beginPendingTargetRefresh\(\)/);
+  assert.match(reviewerSource, /navigateTargetRefresh\(elements\.frame, pending\)/);
+  assert.doesNotMatch(reviewerSource, /contentWindow\.location\.reload\(\)|win\.location\.reload\(\)/);
   assert.match(reviewerSource, /elements\.frame\.contentWindow\.scrollTo\(pending\.x, pending\.y\)/);
   assert.match(reviewerSource, /AI修正を反映するため、対象ページを自動更新しました/);
+});
+
+test("manual target reload preserves the current page and watches late layout changes without restoring scroll twice", () => {
+  assert.match(reviewerSource, /if \(reloadTarget && state\.session && targetKind\(\) === "html"\)/);
+  assert.match(reviewerSource, /targetRefreshNavigationUrl\(logicalUrl, crypto\.randomUUID\(\)\)/);
+  assert.match(reviewerSource, /const ownsRefresh = pendingRefresh && state\.pendingTargetRefresh === pendingRefresh/);
+  assert.match(reviewerSource, /const forceReload = targetChanged \|\| \(reloadTarget && \(targetKind\(\) === "image" \|\| ownsRefresh\)\)/);
+  assert.match(reviewerSource, /configureTarget\(forceReload, reloadTarget && !targetChanged && ownsRefresh \? pendingRefresh : null\)/);
+  assert.match(reviewerSource, /if \(currentPageRefresh && !sandboxChanged\)[^]*navigateTargetRefresh\(elements\.frame, currentPageRefresh\)/);
+  assert.doesNotMatch(reviewerSource, /location\.assign\(|__vrev_reload__|history\.replaceState/);
+  const frameLoad = reviewerSource.slice(reviewerSource.indexOf("function handleFrameLoad()"), reviewerSource.indexOf("async function refreshCurrentFileState"));
+  assert.equal(frameLoad.match(/scrollTo\(pending\.x, pending\.y\)/g)?.length, 1);
+  assert.match(frameLoad, /loadedDocument\?\.fonts\?\.ready\.then\(redraw\)/);
+  assert.match(reviewerSource, /function watchFrameLayout\(loadedDocument, redraw\)[^]*new ResizeObserver\(redraw\)[^]*new MutationObserver\(redraw\)[^]*addEventListener\("load", redraw, true\)[^]*window\.setTimeout\(cleanup, 5000\)/);
+});
+
+test("legacy images honor reload requests from the first request and on every subsequent request", () => {
+  const helperStart = reviewerSource.indexOf("function isAllowedTargetRefreshPath");
+  const helperEnd = reviewerSource.indexOf("function isTargetReloadEndpoint", helperStart);
+  const configureStart = reviewerSource.indexOf("function configureTarget(");
+  const configureEnd = reviewerSource.indexOf("function setViewport", configureStart);
+  let uuid = 0;
+  const navigations: string[] = [];
+  const logicalUrl = "http://vrev.test/target/image.png?variant=original#preview";
+  const image: any = {
+    get src() { return navigations.at(-1) || ""; },
+    set src(value: string) { navigations.push(value); },
+    getAttribute: (name: string) => name === "src" ? navigations.at(-1) || null : null,
+  };
+  const elements: any = {
+    targetPath: {}, trustIndicator: { classList: { toggle() {} } },
+    modeButtons: [{ dataset: { mode: "node" }, disabled: false }], viewportButtons: [],
+    frame: { hidden: false }, imageWrap: { hidden: true }, stageEmpty: { hidden: false }, image,
+  };
+  const state = { session: { target: { kind: "image", url: logicalUrl, entry_path: "image.png" } }, mode: "browse" };
+  const { configureTarget } = new Function(
+    "state", "elements", "targetKind", "targetUrl", "setMode", "installFrameListeners", "refreshCurrentFileState", "window", "crypto",
+    `${reviewerSource.slice(helperStart, helperEnd)}\n${reviewerSource.slice(configureStart, configureEnd)}; return { configureTarget };`,
+  )(
+    state, elements, () => "image", () => logicalUrl, () => {}, () => {}, () => {},
+    { location: { href: "http://vrev.test/", origin: "http://vrev.test" } },
+    { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+  );
+
+  configureTarget(true);
+  configureTarget(true);
+  configureTarget(true);
+
+  assert.equal(navigations.length, 3);
+  assert.equal(new Set(navigations).size, 3);
+  for (const navigation of navigations) {
+    assert.equal(new URL(navigation).searchParams.get("url"), "/target/image.png?variant=original#preview");
+  }
+});
+
+test("target reload uses a one-time redirect while preserving raw URL bytes across slow and consecutive loads", () => {
+  const start = reviewerSource.indexOf("function clearPendingTargetRefresh");
+  const end = reviewerSource.indexOf("async function request", start);
+  let uuid = 0;
+  const state = { pendingTargetRefresh: null as any, targetRefreshGeneration: 0 };
+  const logicalUrl = "http://vrev.test/live/fallback?a=%2f+b&empty=#h%2f";
+  const frame: any = {
+    src: logicalUrl,
+    getAttribute: () => frame.src,
+    contentWindow: {
+      location: { href: "about:blank", replace(value: string) { this.href = value; } },
+      scrollX: 12, scrollY: 34,
+    },
+  };
+  const helpers = new Function("state", "elements", "currentPagePath", "targetUrl", "window", "crypto", `${reviewerSource.slice(start, end)}; return { beginPendingTargetRefresh, navigateTargetRefresh, finishTargetRefresh };`)(
+    state, { frame }, () => "nested/page.html", () => frame.src,
+    { location: { href: "http://vrev.test/", origin: "http://vrev.test" } },
+    { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+  );
+
+  const first = helpers.beginPendingTargetRefresh();
+  helpers.navigateTargetRefresh(frame, first);
+  const firstNavigation = frame.contentWindow.location.href;
+  const endpoint = new URL(firstNavigation);
+  assert.match(endpoint.pathname, /^\/_vrev\/reload\/[0-9a-f-]+$/);
+  assert.equal(endpoint.searchParams.get("url"), "/live/fallback?a=%2f+b&empty=#h%2f");
+  assert.doesNotMatch(firstNavigation, /__vrev_reload__/);
+  assert.equal(state.pendingTargetRefresh, first, "a slow response does not expire pending state before its load event");
+
+  const second = helpers.beginPendingTargetRefresh();
+  helpers.navigateTargetRefresh(frame, second);
+  assert.equal(second.logicalUrl, logicalUrl, "a reload started during the redirect keeps the logical URL");
+  assert.notEqual(frame.contentWindow.location.href, firstNavigation, "each reload forces a distinct iframe navigation");
+  frame.contentWindow.location.href = logicalUrl;
+  assert.equal(helpers.finishTargetRefresh(frame, second), second);
+  assert.equal(state.pendingTargetRefresh, null);
+});
+
+test("legacy reload validation allows only private live SPA fallback paths", () => {
+  const start = reviewerSource.indexOf("function clearPendingTargetRefresh");
+  const end = reviewerSource.indexOf("async function request", start);
+  const state: any = { session: { target: { live_url: "http://127.0.0.1:5173/", url_mode: "loopback" } } };
+  const { targetRefreshNavigationUrl } = new Function("state", "window", `${reviewerSource.slice(start, end)}; return { targetRefreshNavigationUrl };`)(
+    state, { location: { href: "http://vrev.test/", origin: "http://vrev.test" } },
+  );
+  const token = "00000000-0000-4000-8000-000000000001";
+  assert.equal(new URL(targetRefreshNavigationUrl("http://vrev.test/foo?tab=1", token)).searchParams.get("url"), "/foo?tab=1");
+  for (const reserved of ["/", "/api/session", "/settings", "/assets/app.js", "/_vrev/other"]) {
+    assert.throws(() => targetRefreshNavigationUrl(`http://vrev.test${reserved}`, token), /安全に更新/);
+  }
+  state.session.target.url_mode = "public";
+  assert.throws(() => targetRefreshNavigationUrl("http://vrev.test/foo", token), /安全に更新/);
+  state.session.target = { live_url: null, url_mode: null };
+  assert.throws(() => targetRefreshNavigationUrl("http://vrev.test/foo", token), /安全に更新/);
+  assert.throws(() => targetRefreshNavigationUrl("https://outside.test/foo", token), /安全に更新/);
+});
+
+test("redirect or normal-navigation mismatches discard stale scroll state and the next reload uses the current URL", () => {
+  const start = reviewerSource.indexOf("function clearPendingTargetRefresh");
+  const end = reviewerSource.indexOf("async function request", start);
+  let uuid = 0;
+  const state = { pendingTargetRefresh: null as any, targetRefreshGeneration: 0 };
+  const frame: any = {
+    src: "http://vrev.test/target/first.html",
+    getAttribute: () => frame.src,
+    contentWindow: { location: { href: "http://vrev.test/target/first.html", replace(value: string) { this.href = value; } }, scrollX: 1, scrollY: 2 },
+  };
+  const helpers = new Function("state", "elements", "currentPagePath", "targetUrl", "window", "crypto", `${reviewerSource.slice(start, end)}; return { beginPendingTargetRefresh, navigateTargetRefresh, finishTargetRefresh };`)(
+    state, { frame }, () => frame.contentWindow.location.href, () => frame.src,
+    { location: { href: "http://vrev.test/", origin: "http://vrev.test" } },
+    { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+  );
+
+  const stale = helpers.beginPendingTargetRefresh();
+  helpers.navigateTargetRefresh(frame, stale);
+  frame.contentWindow.location.href = "http://vrev.test/target/redirected.html?route=%2f#new";
+  assert.equal(helpers.finishTargetRefresh(frame, stale), null);
+  assert.equal(state.pendingTargetRefresh, null);
+  const current = helpers.beginPendingTargetRefresh();
+  assert.equal(current.logicalUrl, frame.contentWindow.location.href);
+
+  frame.contentWindow.location.href = "http://vrev.test/target/user-navigation.html";
+  assert.throws(() => helpers.navigateTargetRefresh(frame, current), /移動した/);
+  assert.equal(state.pendingTargetRefresh, null);
+  assert.equal(helpers.beginPendingTargetRefresh().logicalUrl, frame.contentWindow.location.href);
 });
 
 test("sidebar polling skips unchanged reviews and reconciles annotation cards by key", () => {

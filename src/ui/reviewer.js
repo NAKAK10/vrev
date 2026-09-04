@@ -26,6 +26,8 @@ const state = {
   archiveRequestId: 0,
   historyLoading: false,
   pendingTargetRefresh: null,
+  targetRefreshGeneration: 0,
+  targetLayoutCleanup: null,
   issueDraftQueue: [],
   currentIssueDraft: null,
   issueCreateInFlight: false,
@@ -257,6 +259,92 @@ function pathsMatch(left, right) {
   return repositoryPath(left) === repositoryPath(right);
 }
 
+function clearPendingTargetRefresh(pending) {
+  const candidate = pending === undefined ? state.pendingTargetRefresh : pending;
+  if (!candidate || state.pendingTargetRefresh !== candidate) return;
+  state.pendingTargetRefresh = null;
+}
+
+function currentTargetRefreshUrl(frame) {
+  try { return frame.contentWindow.location.href; } catch (_error) { return ""; }
+}
+
+function sameTargetUrl(left, right) {
+  try { return new URL(left, window.location.href).href === new URL(right, window.location.href).href; }
+  catch (_error) { return left === right; }
+}
+
+function isAllowedTargetRefreshPath(pathname) {
+  if (pathname === "/live" || pathname.startsWith("/live/") || pathname === "/target" || pathname.startsWith("/target/")) return true;
+  const privateLiveTarget = state.session?.target?.live_url && state.session.target.url_mode !== "public";
+  const reserved = pathname === "/" || pathname === "/legacy" || pathname === "/settings" || pathname.startsWith("/settings/")
+    || pathname === "/api" || pathname.startsWith("/api/") || pathname === "/_vrev" || pathname.startsWith("/_vrev/")
+    || pathname === "/assets" || pathname.startsWith("/assets/")
+    || ["/renderer.css", "/renderer.js", "/reviewer.css", "/reviewer.js", "/jobs.js"].includes(pathname);
+  return Boolean(privateLiveTarget) && !reserved;
+}
+
+function validatedTargetRefreshSource(frame, fallbackUrl) {
+  const current = currentTargetRefreshUrl(frame);
+  const candidates = [current, frame.getAttribute?.("src"), frame.src, fallbackUrl];
+  for (const candidate of candidates) {
+    if (!candidate || candidate === "about:blank") continue;
+    try {
+      const resolved = new URL(candidate, window.location.href);
+      if (resolved.origin === window.location.origin && ["http:", "https:"].includes(resolved.protocol) && !resolved.username && !resolved.password
+        && isAllowedTargetRefreshPath(resolved.pathname)) return resolved.href;
+    } catch (_error) {}
+  }
+  throw new Error("対象ページのURLを安全に更新できません");
+}
+
+function targetRefreshNavigationUrl(logicalUrl, token) {
+  const resolved = new URL(logicalUrl, window.location.href);
+  if (resolved.origin !== window.location.origin || resolved.username || resolved.password || !isAllowedTargetRefreshPath(resolved.pathname)) {
+    throw new Error("対象ページのURLを安全に更新できません");
+  }
+  const destination = resolved.href.slice(resolved.origin.length);
+  return new URL(`/_vrev/reload/${token}?url=${encodeURIComponent(destination)}`, window.location.href).href;
+}
+
+function beginPendingTargetRefresh() {
+  const superseded = state.pendingTargetRefresh;
+  const currentUrl = currentTargetRefreshUrl(elements.frame);
+  const continuesNavigation = superseded && (!currentUrl || currentUrl === "about:blank" || sameTargetUrl(currentUrl, superseded.navigationUrl));
+  const logicalUrl = continuesNavigation ? superseded.logicalUrl : validatedTargetRefreshSource(elements.frame, targetUrl());
+  const pagePath = continuesNavigation ? superseded.pagePath : currentPagePath();
+  clearPendingTargetRefresh(superseded);
+  const win = elements.frame.contentWindow;
+  const pending = { generation: ++state.targetRefreshGeneration, logicalUrl, observedUrl: currentUrl, pagePath, x: win?.scrollX ?? 0, y: win?.scrollY ?? 0 };
+  state.pendingTargetRefresh = pending;
+  return pending;
+}
+
+function navigateTargetRefresh(frame, pending) {
+  if (!pending || state.pendingTargetRefresh !== pending) throw new Error("対象ページの更新は取り消されました");
+  const currentUrl = currentTargetRefreshUrl(frame);
+  if (currentUrl && currentUrl !== "about:blank" && !sameTargetUrl(currentUrl, pending.observedUrl) && !sameTargetUrl(currentUrl, pending.logicalUrl)) {
+    clearPendingTargetRefresh(pending);
+    throw new Error("対象ページが移動したため更新を取り消しました");
+  }
+  pending.token = crypto.randomUUID();
+  pending.navigationUrl = targetRefreshNavigationUrl(pending.logicalUrl, pending.token);
+  frame.contentWindow.location.replace(pending.navigationUrl);
+}
+
+function isTargetReloadEndpoint(value) {
+  try { return new URL(value, window.location.href).origin === window.location.origin && /^\/_vrev\/reload\/[0-9a-f-]+$/i.test(new URL(value, window.location.href).pathname); }
+  catch (_error) { return false; }
+}
+
+function finishTargetRefresh(frame, pending) {
+  if (!pending || state.pendingTargetRefresh !== pending || pending.generation !== state.targetRefreshGeneration) return null;
+  const loadedUrl = currentTargetRefreshUrl(frame);
+  if (isTargetReloadEndpoint(loadedUrl)) return null;
+  clearPendingTargetRefresh(pending);
+  return sameTargetUrl(loadedUrl, pending.logicalUrl) ? pending : null;
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -289,15 +377,15 @@ function refreshStaticTargetForPages(pagePaths) {
   if (pagePaths.size === 0 || targetKind() !== "html" || state.session?.target?.live_url) return;
   const pagePath = currentPagePath();
   if (![...pagePaths].some((candidate) => pathsMatch(candidate, pagePath))) return;
+  let pending = null;
   try {
-    const win = elements.frame.contentWindow;
-    state.pendingTargetRefresh = { pagePath, x: win.scrollX, y: win.scrollY };
+    pending = beginPendingTargetRefresh();
     state.currentFileState = null;
     state.fileStateRequestId += 1;
-    win.location.reload();
+    navigateTargetRefresh(elements.frame, pending);
     showToast("AI修正を反映するため、対象ページを自動更新しました。");
   } catch (error) {
-    state.pendingTargetRefresh = null;
+    clearPendingTargetRefresh(pending);
     showToast(`対象ページを自動更新できませんでした：${error.message}`, true);
   }
 }
@@ -346,6 +434,11 @@ async function loadArchivePage({ reset = false } = {}) {
 
 async function loadSession({ reloadTarget = false } = {}) {
   elements.refreshButton.disabled = true;
+  let pendingRefresh = null;
+  if (reloadTarget && state.session && targetKind() === "html") {
+    try { pendingRefresh = beginPendingTargetRefresh(); }
+    catch (_error) { clearPendingTargetRefresh(pendingRefresh); }
+  }
   state.currentFileState = null;
   state.fileStateRequestId += 1;
   renderHashWarning();
@@ -362,12 +455,17 @@ async function loadSession({ reloadTarget = false } = {}) {
         sha256: session.target.sha256 ?? null,
       };
     }
-    configureTarget(reloadTarget || previousUrl !== targetUrl());
+    const targetChanged = previousUrl !== targetUrl();
+    const ownsRefresh = pendingRefresh && state.pendingTargetRefresh === pendingRefresh;
+    if (targetChanged) clearPendingTargetRefresh(pendingRefresh);
+    const forceReload = targetChanged || (reloadTarget && (targetKind() === "image" || ownsRefresh));
+    configureTarget(forceReload, reloadTarget && !targetChanged && ownsRefresh ? pendingRefresh : null);
     renderSidebar();
     renderHashWarning();
     renderOverlay();
     await loadArchivePage({ reset: true });
   } catch (error) {
+    clearPendingTargetRefresh(pendingRefresh);
     showToast(`読み込みに失敗しました：${error.message}`, true);
     elements.stageEmpty.hidden = false;
     elements.stageEmpty.textContent = "対象を読み込めませんでした。";
@@ -376,7 +474,7 @@ async function loadSession({ reloadTarget = false } = {}) {
   }
 }
 
-function configureTarget(forceReload) {
+function configureTarget(forceReload, currentPageRefresh = null) {
   const target = state.session.target;
   elements.targetPath.textContent = target.entry_path || target.url || "名称不明の対象";
   const imageMode = targetKind() === "image";
@@ -394,14 +492,24 @@ function configureTarget(forceReload) {
 
   if (imageMode) {
     const url = targetUrl();
-    if (forceReload || elements.image.getAttribute("src") !== url) elements.image.src = url;
+    if (forceReload) {
+      const logicalUrl = new URL(url, window.location.href).href;
+      elements.image.src = targetRefreshNavigationUrl(logicalUrl, crypto.randomUUID());
+    } else if (elements.image.getAttribute("src") !== url) elements.image.src = url;
   } else {
     const url = targetUrl();
     const sandbox = scriptsAllowed ? null : "allow-same-origin allow-forms";
     const sandboxChanged = elements.frame.getAttribute("sandbox") !== sandbox;
+    const sourceChanged = !sameTargetUrl(elements.frame.getAttribute("src") || "", url);
     if (sandbox === null) elements.frame.removeAttribute("sandbox");
     else elements.frame.setAttribute("sandbox", sandbox);
-    if (forceReload || sandboxChanged || elements.frame.getAttribute("src") !== url) elements.frame.src = url;
+    if (currentPageRefresh && !sandboxChanged) {
+      try { navigateTargetRefresh(elements.frame, currentPageRefresh); }
+      catch (_error) { clearPendingTargetRefresh(currentPageRefresh); }
+    } else if (forceReload || sandboxChanged || sourceChanged) {
+      clearPendingTargetRefresh(currentPageRefresh);
+      elements.frame.src = url;
+    }
     else {
       installFrameListeners();
       refreshCurrentFileState();
@@ -830,16 +938,44 @@ function formatTime(value) {
   }).format(date);
 }
 
+function watchFrameLayout(loadedDocument, redraw) {
+  state.targetLayoutCleanup?.();
+  const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(redraw) : null;
+  if (loadedDocument?.documentElement) resizeObserver?.observe(loadedDocument.documentElement);
+  if (loadedDocument?.body) resizeObserver?.observe(loadedDocument.body);
+  const mutationObserver = typeof MutationObserver === "function" && loadedDocument ? new MutationObserver(redraw) : null;
+  if (loadedDocument?.documentElement) mutationObserver?.observe(loadedDocument.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "hidden", "src", "style"] });
+  loadedDocument?.addEventListener("load", redraw, true);
+  let cleanupTimer;
+  const cleanup = () => {
+    window.clearTimeout(cleanupTimer);
+    resizeObserver?.disconnect();
+    mutationObserver?.disconnect();
+    loadedDocument?.removeEventListener("load", redraw, true);
+    if (state.targetLayoutCleanup === cleanup) state.targetLayoutCleanup = null;
+  };
+  state.targetLayoutCleanup = cleanup;
+  cleanupTimer = window.setTimeout(cleanup, 5000);
+}
+
 function handleFrameLoad() {
   installFrameListeners();
-  const pending = state.pendingTargetRefresh;
-  if (pending && pathsMatch(pending.pagePath, currentPagePath())) {
-    state.pendingTargetRefresh = null;
-    requestAnimationFrame(() => {
-      elements.frame.contentWindow.scrollTo(pending.x, pending.y);
-      renderOverlay();
-    });
-  }
+  const loadedDocument = elements.frame.contentDocument;
+  const pendingRefresh = state.pendingTargetRefresh;
+  const completedRefresh = finishTargetRefresh(elements.frame, pendingRefresh);
+  const pending = completedRefresh && pathsMatch(completedRefresh.pagePath, currentPagePath()) ? completedRefresh : null;
+  const redraw = () => {
+    if (elements.frame.contentDocument !== loadedDocument) return;
+    renderOverlay();
+  };
+  redraw();
+  requestAnimationFrame(() => {
+    if (pending && elements.frame.contentDocument === loadedDocument) elements.frame.contentWindow.scrollTo(pending.x, pending.y);
+    redraw();
+    requestAnimationFrame(redraw);
+  });
+  loadedDocument?.fonts?.ready.then(redraw).catch(() => {});
+  watchFrameLayout(loadedDocument, redraw);
   refreshCurrentFileState();
 }
 

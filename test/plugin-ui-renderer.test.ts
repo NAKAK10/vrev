@@ -119,6 +119,75 @@ test("command start effects support validated dialog dismissal and declarative c
   assert.match(JSON.stringify(sidebar), /"type":"resource\.optimistic-patch"/);
 });
 
+test("safe-markdown renders fenced code with a bounded language label and accessible scroll region", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  const functionStart = source.indexOf("function safeMarkdown(markdown)");
+  const functionEnd = source.indexOf("function documentSize", functionStart);
+  assert.notEqual(functionStart, -1);
+  assert.notEqual(functionEnd, -1);
+
+  class TestNode {
+    className = "";
+    textContent = "";
+    tabIndex = -1;
+    children: TestNode[] = [];
+    attributes = new Map<string, string>();
+    constructor(readonly tagName: string) {}
+    append(...nodes: TestNode[]) { this.children.push(...nodes); }
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  }
+  const createElement = (name: string, className?: string) => {
+    const node = new TestNode(name);
+    if (className) node.className = className;
+    return node;
+  };
+  const render = new Function("element", `${source.slice(functionStart, functionEnd)}; return safeMarkdown;`)(createElement) as (markdown: string) => TestNode;
+  const child = (node: TestNode, index: number) => {
+    const value = node.children[index];
+    assert.ok(value);
+    return value;
+  };
+  const rendered = render("# Setup\n```sh\nprintf '<safe>'\n```\nafter");
+  const codeBlock = child(rendered, 1);
+  assert.equal(codeBlock.tagName, "figure");
+  assert.equal(codeBlock.className, "vr-markdown-code-block");
+  assert.equal(child(codeBlock, 0).tagName, "figcaption");
+  assert.equal(child(codeBlock, 0).textContent, "sh");
+  const pre = child(codeBlock, 1);
+  assert.equal(pre.tagName, "pre");
+  assert.equal(pre.tabIndex, 0);
+  assert.equal(pre.attributes.get("role"), "region");
+  assert.equal(pre.attributes.get("aria-label"), "sh のコード");
+  assert.equal(child(pre, 0).textContent, "printf '<safe>'");
+  assert.equal(child(rendered, 2).textContent, "after");
+
+  const unlabelled = child(render(`\`\`\`${"x".repeat(33)}\ncode\n\`\`\``), 0);
+  assert.equal(unlabelled.children.length, 1, "unbounded fence info must not become a visible label");
+  assert.equal(child(unlabelled, 0).attributes.get("role"), "region");
+  assert.equal(child(unlabelled, 0).attributes.get("aria-label"), "コードブロック");
+
+  const tildeBlock = child(render("~~~js\nconst value = '<safe>';\n~~~~"), 0);
+  assert.equal(child(tildeBlock, 0).textContent, "js");
+  assert.equal(child(child(tildeBlock, 1), 0).textContent, "const value = '<safe>';", "code remains text rather than HTML");
+
+  for (const indentation of [1, 2, 3]) {
+    const spaces = " ".repeat(indentation);
+    const indented = child(render(`${spaces}~~~\n${spaces}same\n half\nplain\n${spaces}~~~`), 0);
+    assert.equal(child(child(indented, 0), 0).textContent, "same\nhalf\nplain", `up to ${indentation} leading spaces are removed`);
+  }
+
+  const mismatched = render("````txt\none\n```\ntwo\n~~~~\nthree\n`````\nafter");
+  assert.equal(child(child(child(mismatched, 0), 1), 0).textContent, "one\n```\ntwo\n~~~~\nthree");
+  assert.equal(child(mismatched, 1).textContent, "after", "a longer fence of the same kind closes the block");
+
+  const unclosed = child(render("~~~\nunclosed\n```"), 0);
+  assert.equal(child(child(unclosed, 0), 0).textContent, "unclosed\n```", "a different fence kind does not close the block");
+  assert.match(css, /\.vr-markdown-code-block[^}]*overflow: hidden[^}]*border:[^}]*border-radius:/s);
+  assert.match(css, /\.vr-markdown-code[^}]*overflow: auto[^}]*tab-size:/s);
+  assert.match(css, /\.vr-markdown-code:focus-visible/);
+});
+
 test("browser runtime keeps declarative DOM Core-owned and mounts only declared plugin modules", () => {
   const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   assert.match(source, /document\.createElement/);
@@ -243,6 +312,14 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.doesNotMatch(source, /style\.cssText|insertRule|adoptedStyleSheets/);
 });
 
+test("AI runner registration keeps breathing room above and below its test control", () => {
+  const settings = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/ai/ui/settings.ui.json"), "utf8")) as unknown;
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  assert.doesNotThrow(() => parsePluginUiDocument(settings));
+  assert.match(JSON.stringify(settings), /"type":"form","props":\{"name":\{"literal":"runner"\},"submit_on_enter":\{"literal":true\},"variant":\{"literal":"ai-runner-registration"\}/);
+  assert.match(css, /\.vr-plugin-detail-content \.vr-form\[data-variant="ai-runner-registration"\] \{[^}]*margin-top: var\(--vr-space-4\);[^}]*margin-bottom: var\(--vr-space-4\);[^}]*\}/s);
+});
+
 test("bundled review and independent Issue documents bind selection, lists, and target focus", () => {
   const header = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/header.ui.json"), "utf8")) as unknown;
   const stage = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/stage.ui.json"), "utf8")) as unknown;
@@ -322,6 +399,25 @@ test("bundled review and independent Issue documents bind selection, lists, and 
   assert.doesNotMatch(rendererSource, /resourceStores\.get\("annotation-workflow:annotations"\)|issue_state/);
   assert.match(rendererSource, /anchor\?\.bounds \|\| anchor\?\.rect/);
   assert.match(rendererSource, /else if \(annotation\.anchor\?\.rect\)/);
+  assert.match(rendererSource, /function reloadTarget\(\)/);
+  assert.match(rendererSource, /frame\.__pendingReloadScroll = pending/);
+  assert.match(rendererSource, /const logicalUrl = continuesNavigation \? superseded\.logicalUrl : validatedTargetRefreshSource\(frame, stage\?\.__target\?\.url, stage\?\.__target\)/);
+  assert.match(rendererSource, /image\.src = targetRefreshNavigationUrl\(stage\.__target\.url, crypto\.randomUUID\(\), stage\.__target\)/);
+  assert.doesNotMatch(rendererSource, /new URL\(image\.currentSrc \|\| image\.src/);
+  assert.match(rendererSource, /pending = \{ logicalUrl, observedUrl: currentUrl, generation/);
+  assert.match(rendererSource, /pending\.navigationUrl = targetRefreshNavigationUrl\(logicalUrl, crypto\.randomUUID\(\), stage\?\.__target\)/);
+  assert.match(rendererSource, /frame\.contentWindow\.location\.replace\(pending\.navigationUrl\)/);
+  assert.doesNotMatch(rendererSource, /contentWindow\.location\.(?:reload|assign)\(|__vrev_reload__/);
+  const reloadImplementation = rendererSource.slice(rendererSource.indexOf("function clearPendingReload"), rendererSource.indexOf("function showTargetDiagnostic"));
+  assert.doesNotMatch(reloadImplementation, /pending\.cleanupTimer|history\.replaceState/);
+  assert.match(rendererSource, /function redrawTargetAfterLoad\(frame\)/);
+  const redrawSource = rendererSource.slice(rendererSource.indexOf("function redrawTargetAfterLoad"), rendererSource.indexOf("function reloadTarget"));
+  assert.equal(redrawSource.match(/scrollTo\(pendingScroll\.x, pendingScroll\.y\)/g)?.length, 1);
+  assert.match(redrawSource, /doc\?\.fonts\?\.ready\.then\(redraw\)/);
+  assert.match(rendererSource, /function watchTargetLayout\(frame, doc, redraw\)[^]*new ResizeObserver\(redraw\)[^]*new MutationObserver\(redraw\)[^]*addEventListener\("load", redraw, true\)[^]*setTimeout\(cleanup, 5000\)/);
+  assert.match(rendererSource, /async function focusTarget[^]*if \(frame\) beginTargetNavigation\(frame\);/);
+  assert.match(rendererSource, /const completedRefresh = finishTargetRefresh\(frame, candidate\)/);
+  assert.match(rendererSource, /pending\.generation !== frame\.__targetNavigationGeneration/);
   assert.match(rendererSource, /if \(status\) mark\.dataset\.status = status/);
   assert.match(rendererSource, /definition\.type === "panel" && eventName === "click"/);
   assert.match(JSON.stringify(stageDocument.root), /"plugin":"annotation-workflow","command":"jobs\.enqueue"/);
@@ -391,6 +487,161 @@ test("base shell owns the review header/stage/sidebar layout and plugin-scoped l
   assert.match(css, /\.vr-stage-switcher \{/);
   assert.match(css, /\[data-position="top-left"\]/);
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|DOMParser|document\.write|\beval\s*\(|new Function/);
+});
+
+test("external links accept only absolute credential-free HTTP URLs", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const start = source.indexOf("function safeExternalHttpUrl");
+  const end = source.indexOf("function targetUrlForPage", start);
+  const safeExternalHttpUrl = new Function(`${source.slice(start, end)}; return safeExternalHttpUrl;`)() as (value: unknown) => string | null;
+  assert.equal(safeExternalHttpUrl("https://example.com/issues/1"), "https://example.com/issues/1");
+  assert.equal(safeExternalHttpUrl("http://example.com/path"), "http://example.com/path");
+  const credentialedHost = "https://" + "user" + "@example.com/";
+  const credentialedSecret = "https://" + "user" + ":" + "secret" + "@example.com/";
+  for (const unsafe of ["/relative", "javascript:alert(1)", credentialedHost, credentialedSecret, "not a URL", " https://example.com/"]) {
+    assert.equal(safeExternalHttpUrl(unsafe), null);
+  }
+  assert.match(source, /if \(values\.external\) \{[^]*const href = safeExternalHttpUrl\(values\.href\);[^]*if \(href\) \{ node\.href = href; node\.target = "_blank";/);
+});
+
+test("rapid iframe reloads preserve raw URLs and stale loads cannot consume the latest pending state", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const start = source.indexOf("function clearPendingReload");
+  const end = source.indexOf("function showTargetDiagnostic", start);
+  let timerId = 0;
+  let uuid = 0;
+  const scrolls: Array<[number, number]> = [];
+  const navigations: string[] = [];
+  const loadedDocument = { documentElement: null, body: null, fonts: null, addEventListener() {}, removeEventListener() {} };
+  const logicalUrl = "https://host.test/live/current?a=%2f+b&empty=#h%2f";
+  const frame: any = {
+    isConnected: true,
+    src: logicalUrl,
+    getAttribute: () => logicalUrl,
+    contentDocument: loadedDocument,
+    contentWindow: {
+      location: {
+        href: "about:blank",
+        replace(value: string) { navigations.push(value); this.href = value; },
+      },
+      history: { state: null, replaceState(_state: unknown, _title: string, value: string) { frame.contentWindow.location.href = value; } },
+      scrollX: 12,
+      scrollY: 34,
+      scrollTo: (x: number, y: number) => scrolls.push([x, y]),
+    },
+  };
+  const stage = { __target: { url: logicalUrl }, querySelector: (selector: string) => selector === "iframe" ? frame : null };
+  const helpers = new Function("document", "location", "crypto", "setTimeout", "clearTimeout", "requestAnimationFrame", "redrawMarks", `${source.slice(start, end)}; return { reloadTarget, beginTargetNavigation, redrawTargetAfterLoad };`)(
+    { querySelector: () => stage },
+    { href: "https://host.test/", origin: "https://host.test" },
+    { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+    () => ++timerId,
+    () => {},
+    (callback: () => void) => callback(),
+    () => {},
+  );
+  helpers.reloadTarget();
+  const firstNavigation = navigations[0]!;
+  helpers.reloadTarget();
+  const secondNavigation = navigations[1]!;
+  assert.notEqual(secondNavigation, firstNavigation);
+  const endpoint = new URL(secondNavigation);
+  assert.match(endpoint.pathname, /^\/_vrev\/reload\/[0-9a-f-]+$/);
+  assert.equal(endpoint.searchParams.get("url"), "/live/current?a=%2f+b&empty=#h%2f");
+  assert.doesNotMatch(secondNavigation, /__vrev_reload__/);
+
+  frame.contentWindow.location.href = firstNavigation;
+  helpers.redrawTargetAfterLoad(frame);
+  assert.equal(frame.__pendingReloadScroll.navigationUrl, secondNavigation, "a stale load leaves the newest pending reload intact");
+  assert.deepEqual(scrolls, []);
+  frame.contentWindow.location.href = logicalUrl;
+  helpers.redrawTargetAfterLoad(frame);
+  assert.deepEqual(scrolls, [[12, 34]], "only the matching final logical URL restores scroll");
+  assert.equal(frame.__pendingReloadScroll, undefined);
+  assert.equal(frame.contentWindow.location.href, logicalUrl, "the target sees the exact original query bytes and hash without client cleanup");
+
+  helpers.reloadTarget();
+  helpers.beginTargetNavigation(frame); // target.focus invalidates scroll restoration.
+  helpers.redrawTargetAfterLoad(frame);
+  assert.deepEqual(scrolls, [[12, 34]]);
+});
+
+test("declarative reload validation allows only private live SPA fallback paths", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const start = source.indexOf("function clearPendingReload");
+  const end = source.indexOf("function showTargetDiagnostic", start);
+  const { targetRefreshNavigationUrl } = new Function("location", `${source.slice(start, end)}; return { targetRefreshNavigationUrl };`)(
+    { href: "https://host.test/", origin: "https://host.test" },
+  );
+  const token = "00000000-0000-4000-8000-000000000001";
+  const privateLive = { live_url: "http://127.0.0.1:5173/", url_mode: "loopback" };
+  assert.equal(new URL(targetRefreshNavigationUrl("https://host.test/foo?tab=1", token, privateLive)).searchParams.get("url"), "/foo?tab=1");
+  for (const reserved of ["/", "/api/session", "/settings", "/assets/app.js", "/_vrev/other"]) {
+    assert.throws(() => targetRefreshNavigationUrl(`https://host.test${reserved}`, token, privateLive), /安全に更新/);
+  }
+  assert.throws(() => targetRefreshNavigationUrl("https://host.test/foo", token, { ...privateLive, url_mode: "public" }), /安全に更新/);
+  assert.throws(() => targetRefreshNavigationUrl("https://host.test/foo", token, {}), /安全に更新/);
+  assert.throws(() => targetRefreshNavigationUrl("https://outside.test/foo", token, privateLive), /安全に更新/);
+});
+
+test("declarative images can be reloaded repeatedly from their logical target URL", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const start = source.indexOf("function clearPendingReload");
+  const end = source.indexOf("function showTargetDiagnostic", start);
+  let uuid = 0;
+  const navigations: string[] = [];
+  const logicalUrl = "https://host.test/target/image.png?variant=original#preview";
+  const image: any = {
+    currentSrc: "https://host.test/_vrev/reload/stale?url=%2Ftarget%2Fwrong.png",
+    get src() { return navigations.at(-1) || this.currentSrc; },
+    set src(value: string) { navigations.push(value); },
+  };
+  const stage = {
+    __target: { url: logicalUrl },
+    querySelector: (selector: string) => selector === "img" ? image : null,
+  };
+  const { reloadTarget } = new Function("document", "location", "crypto", `${source.slice(start, end)}; return { reloadTarget };`)(
+    { querySelector: () => stage },
+    { href: "https://host.test/", origin: "https://host.test" },
+    { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
+  );
+
+  reloadTarget();
+  reloadTarget();
+  reloadTarget();
+
+  assert.equal(navigations.length, 3);
+  assert.equal(new Set(navigations).size, 3, "every reload uses a fresh redirect endpoint");
+  for (const navigation of navigations) {
+    const endpoint = new URL(navigation);
+    assert.match(endpoint.pathname, /^\/_vrev\/reload\/[0-9a-f-]+$/);
+    assert.equal(endpoint.searchParams.get("url"), "/target/image.png?variant=original#preview");
+    assert.doesNotMatch(endpoint.searchParams.get("url")!, /_vrev\/reload/, "redirect URLs are never nested");
+  }
+});
+
+test("general settings describes and controls header and sidebar order in their rendered directions", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  assert.match(source, /const isHorizontal = kind === "header"/);
+  assert.match(source, /一覧の上から順に、ヘッダーの左から右へ表示されます。/);
+  assert.match(source, /一覧の上から順に、サイドバーの上から下へ表示されます。/);
+  assert.match(source, /previous\.textContent = isHorizontal \? "左へ" : "上へ"/);
+  assert.match(source, /next\.textContent = isHorizontal \? "右へ" : "下へ"/);
+  assert.match(source, /previous\.setAttribute\("aria-label", `\$\{item\.title\}を\$\{previous\.textContent\}移動`\)/);
+  assert.match(source, /next\.setAttribute\("aria-label", `\$\{item\.title\}を\$\{next\.textContent\}移動`\)/);
+  assert.match(source, /moveLayoutItem\(kind, items, index, -1, layoutPayload\)/);
+  assert.match(source, /moveLayoutItem\(kind, items, index, 1, layoutPayload\)/);
+  assert.match(source, /reorderStatus\.setAttribute\("aria-live", "polite"\)/);
+  assert.match(source, /message: `\$\{item\.title\}を\$\{direction\}へ移動しました。`/);
+  assert.match(source, /candidate\.dataset\.layoutKind === reorderResult\.kind && candidate\.dataset\.layoutItemKey === reorderResult\.key/);
+  assert.match(source, /movedIndex === 0 \? "next" : movedIndex === orderedItems\.length - 1 \? "previous"/);
+  assert.match(source, /row\?\.querySelector\(`\[data-layout-action="\$\{action\}"\]`\)\?\.focus\(\)/);
+  assert.match(source, /if \(reorderResult && layoutReorderSaving\) return/);
+  assert.match(source, /settingsPage\?\.setAttribute\("aria-busy", "true"\)/);
+  assert.match(source, /for \(const control of controls\) control\.disabled = true/);
+  assert.match(source, /renderGeneralSettings\(reorderResult \? \{ \.\.\.reorderResult, message: "" \} : null\)/);
+  assert.match(css, /\.vr-settings-card > \.vr-link\.vr-button \{ text-decoration: none; \}/);
 });
 
 test("renderer resolves plugin-hosted extension points, validates context/event schemas, and dispatches slot.emit to the host", () => {

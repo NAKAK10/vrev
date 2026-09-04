@@ -76,6 +76,8 @@ before(async () => {
       if (issueCreationGate) await issueCreationGate;
       return { url: "https://github.com/example/project/issues/42" };
     },
+    reloadTokenReplayTtlMs: 1_000,
+    reloadTokenReplayMaxEntries: 2,
   });
   await new Promise<void>((resolve) => vrev.server.listen(0, "127.0.0.1", resolve));
   const address = vrev.server.address();
@@ -328,6 +330,42 @@ test("/settings serves the renderer shell and /api/settings/layout round trips w
   assert.equal(surface.page.title, ".code/htmls/pages/index.html");
 });
 
+test("one-time reload redirects preserve logical URLs and reject unsafe targets", async () => {
+  const token = "12345678-1234-4234-8234-123456789abc";
+  const logical = "/target/.code/htmls/pages/index.html?encoded=%2f+%41&empty=#h%2f";
+  const endpoint = `${baseUrl}/_vrev/reload/${token}?url=${encodeURIComponent(logical)}`;
+  const redirect = await fetch(endpoint, { redirect: "manual" });
+  assert.equal(redirect.status, 302);
+  assert.equal(redirect.headers.get("location"), logical);
+  assert.equal(redirect.headers.get("cache-control"), "no-store");
+  assert.equal((await fetch(endpoint, { redirect: "manual" })).status, 410, "a reload URL is consumed once");
+
+  const secondEndpoint = `${baseUrl}/_vrev/reload/00000000-0000-4000-8000-000000000101?url=%2Flive%2F`;
+  const thirdEndpoint = `${baseUrl}/_vrev/reload/00000000-0000-4000-8000-000000000102?url=%2Ftarget%2Fx`;
+  assert.equal((await fetch(secondEndpoint, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(thirdEndpoint, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(endpoint, { redirect: "manual" })).status, 302, "the oldest replay entry is evicted at the size limit");
+  assert.equal((await fetch(endpoint, { redirect: "manual" })).status, 410, "an accepted token remains one-time after eviction and reuse");
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  assert.equal((await fetch(endpoint, { redirect: "manual" })).status, 302, "expired replay entries are removed");
+
+  const unsafe = [
+    "https://example.com/live/", "//example.com/live/", `http://${["user", "word"].join(":")}@localhost/live/`,
+    "/api/session", "/live/%2e%2e/api/session", "/target\\@example.com/secret", "/foo",
+  ];
+  for (let index = 0; index < unsafe.length; index += 1) {
+    const unsafeToken = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    const response = await fetch(`${baseUrl}/_vrev/reload/${unsafeToken}?url=${encodeURIComponent(unsafe[index]!)}`, { redirect: "manual" });
+    assert.equal(response.status, 400, unsafe[index]);
+    assert.equal(response.headers.get("location"), null);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  const duplicate = await fetch(`${baseUrl}/_vrev/reload/00000000-0000-4000-8000-000000000099?url=%2Flive%2F&url=%2Ftarget%2Fx`, { redirect: "manual" });
+  assert.equal(duplicate.status, 400);
+  assert.equal((await fetch(`${baseUrl}/_vrev/reload/not-a-token?url=%2Flive%2F`, { redirect: "manual" })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/_vrev/reload/00000000-0000-4000-8000-000000000098?url=%2Flive%2F`, { method: "POST", redirect: "manual" })).status, 405);
+});
+
 test("safe mode preserves source bytes and relies on the compatible iframe sandbox", async () => {
   const response = await fetch(`${baseUrl}/target/.code/htmls/pages/index.html`);
   const target = await response.text();
@@ -389,7 +427,7 @@ test("proxies loopback applications and persists URL annotations", async () => {
       response.end("<html><head></head><body>upstream failed</body></html>");
       return;
     }
-    response.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "upstream=blocked" });
+    response.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "upstream=blocked", "Cache-Control": "public, max-age=3600" });
     response.end(`<html><head></head><body><a href="/next">Next</a><a href="${alternateOrigin}/alias">Alias</a><script src="/app.js"></script><main id="app">Live app</main></body></html>`);
   });
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
@@ -414,11 +452,28 @@ test("proxies loopback applications and persists URL annotations", async () => {
     const liveResponse = await fetch(`${url}/live/`);
     assert.equal(liveResponse.headers.get("set-cookie"), null);
     assert.equal(liveResponse.headers.get("clear-site-data"), '"cache"');
+    assert.equal(liveResponse.headers.get("cache-control"), "no-store", "upstream caching cannot make live HTML stale");
     const html = await liveResponse.text();
     assert.match(html, /<base href="\/live\/">/);
     assert.match(html, /href="\/live\/next"/);
     assert.match(html, /src="\/live\/app\.js"/);
     assert.match(html, /href="\/live\/alias"/);
+    const token = "12345678-1234-4234-8234-123456789abc";
+    const logical = "/live/?encoded=%2f+%41&empty=#h%2f";
+    const reloaded = await fetch(`${url}/_vrev/reload/${token}?url=${encodeURIComponent(logical)}`);
+    assert.equal(reloaded.status, 200);
+    assert.equal(reloaded.headers.get("cache-control"), "no-store");
+    assert.equal(lastRequestUrl, "/?encoded=%2f+%41&empty=", "the target receives the unchanged logical query and no reload marker");
+    assert.doesNotMatch(lastRequestUrl, /vrev.*reload/i);
+    const fallbackToken = "00000000-0000-4000-8000-000000000201";
+    const fallbackLogical = "/foo?route=%2f+%41#section";
+    const fallbackReload = await fetch(`${url}/_vrev/reload/${fallbackToken}?url=${encodeURIComponent(fallbackLogical)}`);
+    assert.equal(fallbackReload.status, 200);
+    assert.equal(lastRequestUrl, "/foo?route=%2f+%41", "private live SPA fallback paths use the reload endpoint unchanged");
+    for (const [index, reserved] of ["/", "/api/session", "/settings", "/assets/app.js", "/_vrev/other"].entries()) {
+      const reservedToken = `00000000-0000-4000-8000-${String(300 + index).padStart(12, "0")}`;
+      assert.equal((await fetch(`${url}/_vrev/reload/${reservedToken}?url=${encodeURIComponent(reserved)}`, { redirect: "manual" })).status, 400, reserved);
+    }
     assert.equal(
       await (await fetch(`${url}/live/app.js`)).text(),
       `import "/live/src/main.js";\nconst escaped = value.replace(/\`/g, "\\\`").replace(/""/g, '"');\nconst quoted = /quote'/ && true;\nconst route = "/";\nconst path = window.location.pathname;\nwindow.location.replace(window.__vrevUrl(route));\nfetch('/live/api/data');`,
@@ -461,6 +516,8 @@ test("public targets stay script-free and reject private network resolution", as
     const session = await (await fetch(`${url}/api/session`)).json() as { target: { allow_scripts: boolean; url_mode: string } };
     assert.equal(session.target.allow_scripts, false);
     assert.equal(session.target.url_mode, "public");
+    const fallbackReload = await fetch(`${url}/_vrev/reload/00000000-0000-4000-8000-000000000401?url=%2Ffoo`, { redirect: "manual" });
+    assert.equal(fallbackReload.status, 400, "public live targets cannot reload arbitrary fallback paths");
     const blocked = await fetch(`${url}/live/`);
     assert.equal(blocked.status, 403);
     assert.match(await blocked.text(), /non-public address/);

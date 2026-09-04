@@ -9,6 +9,15 @@ export const AI_CAPABILITY_ID = "ai";
 export const AI_CAPABILITY_API_VERSION = 1;
 const DRAFT_TIMEOUT_MS = 120_000;
 
+function safeGitHubIssueUrl(value) {
+  if (typeof value !== "string" || !/^https:\/\//i.test(value)) return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== "github.com" || url.port || url.username || url.password) return "";
+    return /^\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9]\d*\/?$/.test(url.pathname) ? url.href : "";
+  } catch { return ""; }
+}
+
 /**
  * One table drives both the annotation card badge and the sidebar filter chip, so the two can
  * never drift: every category here is a chip, and an annotation resolved to it wears that label.
@@ -89,7 +98,7 @@ export function createIssueTaskCapability(review, options = {}) {
       const draft = validateStandaloneDraft(annotationId, rawDraft);
       const annotation = (await store.load()).annotations.find(({ id }) => id === annotationId);
       if (!annotation) throw new Error(`annotation not found: ${annotationId}`);
-      if (annotation.issue_state === "created" && annotation.issue_url) return { url: annotation.issue_url };
+      if (annotation.issue_state === "created" && annotation.issue_url) return { url: safeGitHubIssueUrl(annotation.issue_url) };
       if (annotation.issue_state !== "ready" || annotation.status !== "addressed") throw new Error("Issue draft is not ready for creation");
       const blocked = blockedCreations.get(annotationId);
       if (blocked) throw blocked;
@@ -207,7 +216,7 @@ export function createIssueBridgeAdapter(reviewOrOptions, legacyIssueTask, legac
             request: annotation.comment,
             title: annotation.issue_title || annotation.comment,
             body: annotation.issue_body || "",
-            url: annotation.issue_url || "",
+            url: safeGitHubIssueUrl(annotation.issue_url),
             page_path: annotation.page_path,
             anchor: annotation.anchor,
             created_at: annotation.created_at,
@@ -285,7 +294,7 @@ export function createIssueBridgeAdapter(reviewOrOptions, legacyIssueTask, legac
         const result = await issueTask.create(input.annotation_id, draft);
         return {
           ok: true,
-          data: { annotation_id: input.annotation_id, url: result.url },
+          data: { annotation_id: input.annotation_id, url: safeGitHubIssueUrl(result.url) },
           effects: [{ type: "resource.invalidate", resources: ["session", "issues", "history"] }],
         };
       } catch (error) {

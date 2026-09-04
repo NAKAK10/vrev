@@ -23,6 +23,7 @@
           ] },
           { "type": "text", "props": { "text": { "item": "/request" }, "variant": { "literal": "form-help" } } },
           { "type": "row", "props": { "variant": { "literal": "issue-card-actions" } }, "children": [
+            { "type": "link", "when": { "ne": [{ "item": "/url" }, { "literal": "" }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "item": "/url" }, "external": { "literal": true } } },
             { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
             { "type": "button", "when": { "not": { "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] } }, "props": { "label": { "literal": "強制的に解決" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "dialog.open", "dialog": "issue-force-resolve-dialog" }] } },
             { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "retry" }] }, "props": { "label": { "literal": "再作成" }, "variant": { "literal": "primary" } }, "on": { "click": [
@@ -45,8 +46,7 @@
             ] } },
             { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "drafted" }] }, "props": { "label": { "literal": "確認する" }, "variant": { "literal": "primary" } }, "on": { "click": [
               { "type": "dialog.open", "dialog": "issue-confirm-dialog" }
-            ] } },
-            { "type": "link", "when": { "and": [{ "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] }, { "ne": [{ "item": "/url" }, { "literal": "" }] }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "item": "/url" }, "external": { "literal": true } } }
+            ] } }
           ] },
           {
             "id": "issue-force-resolve-dialog",

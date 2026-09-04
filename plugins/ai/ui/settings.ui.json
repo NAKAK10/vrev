@@ -133,6 +133,9 @@
           },
           "submit_on_enter": {
             "literal": true
+          },
+          "variant": {
+            "literal": "ai-runner-registration"
           }
         },
         "on": {
