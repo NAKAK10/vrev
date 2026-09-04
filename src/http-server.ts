@@ -767,7 +767,7 @@ export function createVrevServer(options: VrevServerOptions): VrevServer {
         if (!aiJobsEnabled && (pathname === "/api/jobs" || pathname === "/api/jobs/batch" || pathname.startsWith("/api/jobs/custom-command") || pathname === "/api/issues/request" || pathname === "/api/issues" || /^\/api\/jobs\/[^/]+\/cancel$/.test(pathname))) {
           throw new HttpError(403, "AI jobs are disabled while target scripts are allowed");
         }
-        const legacyUi = options.legacyUi === true || process.env.VISUAL_REVIEW_LEGACY_UI === "1";
+        const legacyUi = options.legacyUi === true || process.env.VREV_LEGACY_UI === "1";
         if (request.method === "GET" && pathname === "/") return serveFile(response, path.join(uiRoot, legacyUi ? "index.html" : "renderer.html"));
         if (request.method === "GET" && pathname === "/legacy") return serveFile(response, path.join(uiRoot, "index.html"));
         if (request.method === "GET" && pathname === "/api/plugin-host/v1/surfaces/review") {

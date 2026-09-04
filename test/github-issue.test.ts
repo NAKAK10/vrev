@@ -19,17 +19,17 @@ test("the normal coordinator produces Issue drafts in the selected repository wi
   assert.match(prompt, /Issue単体を初めて読む実装者が背景と修正対象を理解/);
   assert.match(prompt, /annotation ID、review file path、\.vrev、Vrev注釈など内部review情報はtitle\/bodyへ書かず/);
   assert.match(prompt, /GitHub Issue自体は作成せず/);
-  assert.match(prompt, /VISUAL_REVIEW_ISSUE_DRAFT_START/);
-  assert.match(prompt, /VISUAL_REVIEW_ISSUE_DRAFT_END/);
+  assert.match(prompt, /VREV_ISSUE_DRAFT_START/);
+  assert.match(prompt, /VREV_ISSUE_DRAFT_END/);
   assert.match(prompt, /この出力をhostが保存/);
   assert.doesNotMatch(prompt, /set-issue-draft/);
 });
 
 test("extracts Issue drafts from plain custom CLI and JSON-wrapped CLI output", () => {
   const block = [
-    "VISUAL_REVIEW_ISSUE_DRAFT_START",
+    "VREV_ISSUE_DRAFT_START",
     JSON.stringify({ annotation_id: "annotation-id", title: "Standalone title", body: "## Background\\nStandalone body" }),
-    "VISUAL_REVIEW_ISSUE_DRAFT_END",
+    "VREV_ISSUE_DRAFT_END",
   ].join("\n");
   const expected = [{ annotationId: "annotation-id", title: "Standalone title", body: "## Background\\nStandalone body" }];
   assert.deepEqual(extractIssueDraftOutput(block), expected);

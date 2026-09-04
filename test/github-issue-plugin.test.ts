@@ -186,7 +186,7 @@ test("issue.draft persists a requested annotation immediately, marks it ready on
   };
   const processSupervisor = {
     run: () => {
-      const nonce = resolvedPrompt.match(/VISUAL_REVIEW_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
+      const nonce = resolvedPrompt.match(/VREV_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
       assert.ok(nonce);
       const markers = issueDraftMarkers(nonce);
       return { cancel() {}, result: Promise.resolve({ exitCode: 0, reason: "exit" as const, stdout: `${markers.start}\n${JSON.stringify({ title: "Generated", body: "Standalone body" })}\n${markers.end}` }) };
@@ -250,7 +250,7 @@ test("issue.draft.retry re-runs generation for a requested annotation and reject
     resolve: async (_runnerId: string, context: { prompt: string }) => { prompt = context.prompt; return { command: "ai", args: [] }; },
   };
   const processSupervisor = { run: () => {
-    const nonce = prompt.match(/VISUAL_REVIEW_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
+    const nonce = prompt.match(/VREV_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
     assert.ok(nonce);
     const markers = issueDraftMarkers(nonce);
     return { cancel() {}, result: Promise.resolve({ exitCode: 0, reason: "exit" as const, stdout: `${markers.start}\n${JSON.stringify({ title: "Retried title", body: "Retried body" })}\n${markers.end}` }) };
@@ -329,7 +329,7 @@ test("issue.create accepts only a generated draft, then persists and returns its
     resolve: async (_runnerId: string, context: { prompt: string }) => { prompt = context.prompt; return { command: "ai", args: [] }; },
   };
   const processSupervisor = { run: () => {
-    const nonce = prompt.match(/VISUAL_REVIEW_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
+    const nonce = prompt.match(/VREV_ISSUE_DRAFT_([a-f0-9-]+)_START/)?.[1];
     assert.ok(nonce);
     const markers = issueDraftMarkers(nonce);
     return { cancel() {}, result: Promise.resolve({ exitCode: 0, reason: "exit" as const, stdout: `${markers.start}\n${JSON.stringify({ title: "Title", body: "Body" })}\n${markers.end}` }) };

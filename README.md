@@ -168,7 +168,7 @@ vrev plugin run <plugin-id> <command> [args...]
 
 GitHub Issue作成は自動導入された`github-issue`プラグインを使います。`gh`認証は自動化せず、対象repositoryに合う利用者で事前に認証してください。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。
 
-beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`/settings/plugins`（install済みplugin）の既定です。one-beta rollback用に`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`と既存HTTP/CLI・manifest schema v1–v3互換を保持しています。新規integrationはschema v4を使用してください。desktop/tablet/mobileのbrowser acceptanceとlegacy route切替をrelease gateで確認済みです。
+beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`/settings/plugins`（install済みplugin）の既定です。one-beta rollback用に`/legacy`、`/settings/legacy`、`VREV_LEGACY_UI=1`と既存HTTP/CLI・manifest schema v1–v3互換を保持しています。新規integrationはschema v4を使用してください。desktop/tablet/mobileのbrowser acceptanceとlegacy route切替をrelease gateで確認済みです。
 
 ### 画面遷移マップ
 

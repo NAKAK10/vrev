@@ -223,7 +223,7 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     assert.equal(aiSettings.data.available, true);
     assert.equal(aiSettings.data.options.some(({ value }) => value === "claude"), true);
 
-    const probeScript = `require("node:fs").writeFileSync(".vrev-command-test","VISUAL_REVIEW_OK");process.stdout.write("VISUAL_REVIEW_OK")`;
+    const probeScript = `require("node:fs").writeFileSync(".vrev-command-test","VREV_OK");process.stdout.write("VREV_OK")`;
     const addedResponse = await fetch(`${url}/api/jobs/custom-commands`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Server runner", command: `${process.execPath} -e '${probeScript}' {prompt}` }),

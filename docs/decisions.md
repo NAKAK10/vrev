@@ -34,7 +34,7 @@ Plugin UIは引き続き任意CSS・selector・HTMLを提供しない。Coreの`
 
 ### beta.7 compatibility policy
 
-Compatibility is deliberate, not incomplete extraction. For this one-beta deprecation/rollback line, Core retains legacy HTTP/CLI routes as adapters, root `ReviewStore` / `JobStore` / `JobManager` exports as delegating façades, and the legacy browser/settings renderer through `/legacy`, `/settings/legacy`, or `VISUAL_REVIEW_LEGACY_UI=1`. Manifest schemas v1–v3 and their provider APIs continue to parse and load alongside the default schema v4 host. Adapters may translate transport and principal context but must not duplicate domain validation or business rules. beta.7 does not remove these surfaces.
+Compatibility is deliberate, not incomplete extraction. For this one-beta deprecation/rollback line, Core retains legacy HTTP/CLI routes as adapters, root `ReviewStore` / `JobStore` / `JobManager` exports as delegating façades, and the legacy browser/settings renderer through `/legacy`, `/settings/legacy`, or `VREV_LEGACY_UI=1`. Manifest schemas v1–v3 and their provider APIs continue to parse and load alongside the default schema v4 host. Adapters may translate transport and principal context but must not duplicate domain validation or business rules. beta.7 does not remove these surfaces.
 
 ## Loopback live application proxy
 

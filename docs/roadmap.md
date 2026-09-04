@@ -16,7 +16,7 @@
 - [x] Move declarative review/settings chrome to a shared Core-owned semantic token stylesheet so every plugin surface receives consistent CSS
 - [ ] Add a versioned theme-provider contract that can override only validated semantic tokens, never arbitrary plugin CSS or selectors
 
-The beta compatibility line intentionally retains rollback and deprecation surfaces: `/legacy`, `/settings/legacy`, and `VISUAL_REVIEW_LEGACY_UI=1`; legacy HTTP/CLI adapters; root `ReviewStore`, `JobStore`, and `JobManager` exports; and manifest/provider schemas v1–v3. These routes and exports delegate to the plugin-owned implementations and must not regain validation or business logic. They remain for this one-beta rollback line; do not remove them in beta.7.
+The beta compatibility line intentionally retains rollback and deprecation surfaces: `/legacy`, `/settings/legacy`, and `VREV_LEGACY_UI=1`; legacy HTTP/CLI adapters; root `ReviewStore`, `JobStore`, and `JobManager` exports; and manifest/provider schemas v1–v3. These routes and exports delegate to the plugin-owned implementations and must not regain validation or business logic. They remain for this one-beta rollback line; do not remove them in beta.7.
 
 Focused host, extraction, renderer, server, job, manifest, and plugin tests enforce lifecycle isolation, exact contracts, AI-package-owned method resolution, façade delegation, declarative JSON documents plus explicitly declared local browser modules, and the implemented import boundaries. Browser acceptance covers the default declarative review/settings surfaces at desktop, tablet, and mobile sizes and the legacy route/flag rollback. Automated framework-fixture E2E remains a future localhost-mode enhancement, not an unverified v4 release claim. The authoritative remote-storage atomicity model remains a post-v4 decision gate.
 
@@ -27,7 +27,7 @@ Focused host, extraction, renderer, server, job, manifest, and plugin tests enfo
 - [x] fresh workspaces bootstrap exactly six feature packages—`ai`, `firestore`, `review`, `annotation-workflow`, `page-map`, and `github-issue`—from bundled copies
 - [x] only provenance-verified bundled copies receive safe atomic automatic upgrades
 - [x] declarative `/` and `/settings/plugins` browser acceptance passes at desktop/tablet/mobile sizes
-- [x] `/legacy`, `/settings/legacy`, and `VISUAL_REVIEW_LEGACY_UI=1` rollback paths remain available
+- [x] `/legacy`, `/settings/legacy`, and `VREV_LEGACY_UI=1` rollback paths remain available
 - [x] `npm test`
 - [x] `npm pack --dry-run` (inspection only; no tarball artifact retained)
 - [x] `git diff --check`

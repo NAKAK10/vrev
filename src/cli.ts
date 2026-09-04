@@ -415,7 +415,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const address = vrev.server.address();
   if (address === null || typeof address === "string") throw new Error("server did not bind a TCP address");
   const url = `http://${args.host === "::1" ? "[::1]" : args.host}:${address.port}/`;
-  console.log(`Visual review: ${url}`);
+  console.log(`Vrev: ${url}`);
   console.log(`Target: ${vrev.store.entryPath}`);
   if (args.open) await openBrowser(url);
 }

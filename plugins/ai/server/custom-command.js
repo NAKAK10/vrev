@@ -27,7 +27,7 @@ const MAX_PROMPT_LENGTH = 256 * 1024;
 const NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/;
 const RUNNER_ID_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|legacy-[0-9a-f]{32})$/;
 const PROBE_MARKER = ".vrev-command-test";
-const PROBE_TOKEN = "VISUAL_REVIEW_OK";
+const PROBE_TOKEN = "VREV_OK";
 const SECRET_OPTION_PATTERN = /^(?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|secret)(?:=|$)/i;
 
 function usage() {

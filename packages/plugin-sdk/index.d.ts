@@ -1,4 +1,4 @@
-export declare const VISUAL_REVIEW_PACKAGE_API_VERSION = 1;
+export declare const VREV_PACKAGE_API_VERSION = 1;
 export declare const PLUGIN_BRIDGE_PROTOCOL_V1 = "plugin-bridge/1";
 export declare const RUNNER_REGISTRY_CAPABILITY_ID = "host.runner-registry";
 export declare const RUNNER_REGISTRY_CAPABILITY_API_VERSION = 1;

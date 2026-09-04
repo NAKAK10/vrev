@@ -398,7 +398,7 @@ Completed for `1.1.9`:
 - [x] `npm test`
 - [x] `npm pack --dry-run` without retaining a tarball artifact
 - [x] declarative renderer browser acceptance at desktop/tablet/mobile sizes
-- [x] `/legacy`, `/settings/legacy`, and `VISUAL_REVIEW_LEGACY_UI=1` rollback acceptance
+- [x] `/legacy`, `/settings/legacy`, and `VREV_LEGACY_UI=1` rollback acceptance
 - [x] `git diff --check`
 
 Publication remains non-atomic. If root publish succeeds and one of the six feature package publishes fails, retain the root release because it bundles compatible default copies, fix the package failure, and rerun the workflow; version-existence checks skip packages already published. Never overwrite an existing version.

@@ -1,5 +1,5 @@
-export const ISSUE_DRAFT_START = "VISUAL_REVIEW_ISSUE_DRAFT_START";
-export const ISSUE_DRAFT_END = "VISUAL_REVIEW_ISSUE_DRAFT_END";
+export const ISSUE_DRAFT_START = "VREV_ISSUE_DRAFT_START";
+export const ISSUE_DRAFT_END = "VREV_ISSUE_DRAFT_END";
 export const ISSUE_DRAFT_OUTPUT_LIMIT = 128 * 1024;
 
 function escapeRegExp(value) {
@@ -75,7 +75,7 @@ export function extractIssueDraftOutput(output, allowedAnnotationIds) {
 
 export function issueDraftMarkers(nonce) {
   if (typeof nonce !== "string" || !/^[a-f0-9-]{16,64}$/i.test(nonce)) throw new Error("issue draft nonce is invalid");
-  return Object.freeze({ start: `VISUAL_REVIEW_ISSUE_DRAFT_${nonce}_START`, end: `VISUAL_REVIEW_ISSUE_DRAFT_${nonce}_END` });
+  return Object.freeze({ start: `VREV_ISSUE_DRAFT_${nonce}_START`, end: `VREV_ISSUE_DRAFT_${nonce}_END` });
 }
 
 /** Parses exactly one nonce-bound {title, body} object from bounded, possibly JSON-wrapped CLI output. */

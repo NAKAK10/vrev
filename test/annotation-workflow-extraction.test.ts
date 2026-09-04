@@ -40,7 +40,7 @@ test("deprecated workflow modules are delegating facades and Core has no job pol
   const store = readFileSync(new URL("../../plugins/annotation-workflow/server/job-store.ts", import.meta.url), "utf8");
 
   assert.match(managerFacade, /plugins\/annotation-workflow\/server\/job-manager/);
-  assert.doesNotMatch(managerFacade, /VISUAL_REVIEW_ISSUE_DRAFT_START|recoverRunning|deferred_checkpoint/);
+  assert.doesNotMatch(managerFacade, /VREV_ISSUE_DRAFT_START|recoverRunning|deferred_checkpoint/);
   assert.match(storeFacade, /plugins\/annotation-workflow\/server\/job-store/);
   assert.doesNotMatch(storeFacade, /job-state\.json|recoverRunning|withFileLock/);
   assert.match(adapterFacade, /createProcessSupervisor/);

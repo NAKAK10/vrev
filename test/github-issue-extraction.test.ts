@@ -52,7 +52,7 @@ function taskFixture(provider: { createIssue(root: string, draft: { title: strin
 
 test("Issue task accepts only allowed annotation IDs and rejects internal references", async () => {
   const fixture = taskFixture({ createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }) });
-  const block = (id: string, body: string) => `VISUAL_REVIEW_ISSUE_DRAFT_START\n${JSON.stringify({ annotation_id: id, title: "Title", body })}\nVISUAL_REVIEW_ISSUE_DRAFT_END`;
+  const block = (id: string, body: string) => `VREV_ISSUE_DRAFT_START\n${JSON.stringify({ annotation_id: id, title: "Title", body })}\nVREV_ISSUE_DRAFT_END`;
   await fixture.task.acceptCoordinatorOutput(`${block("other-id", "Body")}\n${block("allowed-id", "mentions allowed-id")}`, new Set(["allowed-id"]));
   assert.deepEqual(fixture.drafts, []);
   await fixture.task.acceptCoordinatorOutput(block("allowed-id", "Standalone body"), new Set(["allowed-id"]));
@@ -209,7 +209,7 @@ test("Issue implementation has plugin boundaries and legacy Core files are adapt
   const issue = readFileSync(new URL("../../plugins/github-issue/server/index.js", import.meta.url), "utf8");
   const facade = readFileSync(new URL("../../src/github-issue.ts", import.meta.url), "utf8");
   const reviewStage = readFileSync(new URL("../../plugins/review/ui/stage.ui.json", import.meta.url), "utf8");
-  assert.doesNotMatch(workflow, /VISUAL_REVIEW_ISSUE_DRAFT_START|extractIssueDraftOutput|github-issue|issue-task|issue_state|taskCapability/);
+  assert.doesNotMatch(workflow, /VREV_ISSUE_DRAFT_START|extractIssueDraftOutput|github-issue|issue-task|issue_state|taskCapability/);
   assert.doesNotMatch(issuePackage, /annotation-workflow|ai_method_id|issue\.ai-methods/);
   assert.match(issue, /ai\.invoke\(\{\s*mode: "text-only"/);
   assert.doesNotMatch(issue, /ai\.list\(|ai\.invoke\(\{[^}]*method_id/s);

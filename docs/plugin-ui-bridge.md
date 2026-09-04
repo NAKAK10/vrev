@@ -1,7 +1,7 @@
 # Declarative Plugin UI and PluginBridge v1
 
 Status: Implemented for v4 beta  
-Implementation status: Phase 7–8 complete; legacy renderer remains available for one beta line via `VISUAL_REVIEW_LEGACY_UI=1` or `/legacy`.
+Implementation status: Phase 7–8 complete; legacy renderer remains available for one beta line via `VREV_LEGACY_UI=1` or `/legacy`.
 
 ## 1. Principles
 
