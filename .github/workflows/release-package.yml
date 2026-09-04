@@ -27,16 +27,12 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
 
-      - name: Set up Node.js
+      # Recover old tags using the supported minimum runtime they were tested on.
+      - name: Set up Node.js for build and tests
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
-
-      # No registry-url: avoid placeholder credentials masking OIDC failures.
-      # npm exchanges GitHub OIDC before checking configured registry credentials.
-      - name: Use an npm version with trusted publishing support
-        run: npm install --global npm@11.19.1
 
       - name: Apply release tag version to every package
         env:
@@ -134,6 +130,16 @@ jobs:
           for directory in dist/plugins/review dist/plugins/ai dist/plugins/firestore dist/plugins/annotation-workflow dist/plugins/page-map dist/plugins/github-issue; do
             npm pack --dry-run "./${directory}"
           done
+
+      - name: Set up Node.js for trusted publishing
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # No registry-url: avoid placeholder credentials masking OIDC failures.
+      # npm exchanges GitHub OIDC before checking configured registry credentials.
+      - name: Use an npm version with trusted publishing support
+        run: npm install --global npm@11.19.1
 
       - name: Configure first-publish authentication
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}

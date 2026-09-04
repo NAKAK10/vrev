@@ -190,7 +190,9 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
       invocation.running?.cancel();
       invocation.interrupt(timeoutResult());
     }, timeoutMs);
-    timer.unref?.();
+    // Keep the deadline alive even when a delegated integration leaves only a
+    // pending Promise. Otherwise Node can exit before the invocation settles.
+    // The result's finally handler clears this timer on success or cancellation.
 
     const execution = (async () => {
       try {
