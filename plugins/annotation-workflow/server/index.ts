@@ -79,7 +79,6 @@ export function createAnnotationWorkflowBridgeAdapter(review: ReviewCapabilityV1
         const active = primaryJob ? {
           job_id: primaryJob.id,
           started_at: activeJobs.map(({ started, created }) => started ?? created).sort()[0]!,
-          latest_info: `${activeJobs.length}件のAI修正を実行中です`,
         } : null;
         return { ok: true, data: { revision: data.revision, batches: data.batches.map(({ custom_command: _legacy, ...batch }) => batch), jobs: data.jobs.map(({ custom_name: _legacy, ...job }) => job), ...(active ? { active } : {}), announcement: activeJobs.length ? `${activeJobs.length}件のAI修正を処理中です` : "AI修正は待機中です" } };
       }

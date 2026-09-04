@@ -38,6 +38,7 @@ const ISSUE_LIST_FILTERS = Object.freeze([
   Object.freeze({ value: "drafted", label: "作成済み" }),
   Object.freeze({ value: "resolved", label: "解決済み" }),
 ]);
+const RESOLVED_ISSUE_LIST_GROUP = Object.freeze({ id: "resolved", label: "解決済み", tone: "done" });
 
 /** The category an annotation belongs to, or null when its workflow status applies instead. */
 function issueTaskCategory(annotation) {
@@ -197,7 +198,7 @@ export function createIssueBridgeAdapter(reviewOrOptions, legacyIssueTask, legac
         const items = reviewDocument.annotations
           .map((annotation) => {
             const category = issueTaskCategory(annotation);
-            const group = category ? ISSUE_LIST_GROUPS[category.id] : null;
+            const group = annotation.status === "resolved" ? RESOLVED_ISSUE_LIST_GROUP : category ? ISSUE_LIST_GROUPS[category.id] : null;
             return group ? { annotation, group } : null;
           })
           .filter((entry) => entry && !hidden.has(entry.group.id))
@@ -253,6 +254,26 @@ export function createIssueBridgeAdapter(reviewOrOptions, legacyIssueTask, legac
         } catch (error) {
           const message = error instanceof Error ? error.message : "Issue draft could not be generated";
           const validation = /must|nonblank|not found|not retryable/i.test(message);
+          return bridgeError(request, validation ? "VALIDATION_FAILED" : "CONFLICT", message);
+        }
+      }
+      if (name === "issue.resolve") {
+        const input = request.input;
+        try {
+          if (typeof input.annotation_id !== "string" || !input.annotation_id) throw new Error("annotation_id must be nonblank");
+          const annotation = (await store.load()).annotations.find(({ id }) => id === input.annotation_id);
+          if (!annotation || !annotation.issue_state) throw new Error("Issue annotation not found");
+          if (typeof store.setStatus !== "function") throw new Error("Issue resolution is unavailable");
+          const updated = await store.setStatus(input.annotation_id, { actor: "human", status: "resolved" });
+          return {
+            ok: true,
+            revision: typeof updated?.revision === "number" ? `review:${updated.revision}` : undefined,
+            data: { annotation_id: input.annotation_id, status: "resolved" },
+            effects: [{ type: "resource.invalidate", resources: ["session", "issues", "history"] }],
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Issue could not be resolved";
+          const validation = /must|not found/i.test(message);
           return bridgeError(request, validation ? "VALIDATION_FAILED" : "CONFLICT", message);
         }
       }

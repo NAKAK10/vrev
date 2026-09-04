@@ -379,6 +379,38 @@ test("issue.create accepts only a generated draft, then persists and returns its
   });
 });
 
+test("issue.resolve force-resolves an Issue annotation and keeps it in the resolved list", async () => {
+  const annotation: IssueProjectionAnnotationV1 = {
+    id: "annotation-1", status: "in_progress", comment: "見出しを改善", page_path: "/", anchor: { selector: "h1" },
+    created_at: "2026-01-01T00:00:00.000Z", issue_state: "requested",
+  };
+  const statusCalls: Array<{ id: string; actor: string; status: string }> = [];
+  const review: IssueReviewCapabilityV1 = {
+    apiVersion: 1,
+    store: {
+      target: { projectRoot: "/workspace" },
+      load: async () => ({ revision: 4, annotations: [annotation] }),
+      loadActive: async () => ({ annotations: [annotation] }),
+      setStatus: async (id, payload) => { statusCalls.push({ id, ...payload }); annotation.status = payload.status; return { revision: 5 }; },
+      setIssueDraftReady: async () => ({}),
+      failIssueDraft: async () => ({}),
+      completeIssueDraft: async () => ({}),
+    },
+    annotations: { create: async () => ({ review: {}, annotation }) },
+  };
+  const adapter = createIssueBridgeAdapter({ review, issueTask: createIssueTaskCapability(review) });
+  const resolved = await adapter.command("issue.resolve", { request_id: "resolve", input: { annotation_id: annotation.id } });
+  assert.deepEqual(resolved, {
+    ok: true,
+    revision: "review:5",
+    data: { annotation_id: "annotation-1", status: "resolved" },
+    effects: [{ type: "resource.invalidate", resources: ["session", "issues", "history"] }],
+  });
+  assert.deepEqual(statusCalls, [{ id: "annotation-1", actor: "human", status: "resolved" }]);
+  const listed = await adapter.query("issues.list", { request_id: "list", input: {} }) as { data: { items: Array<{ filter_id: string; url: string }> } };
+  assert.deepEqual(listed.data.items.map(({ filter_id, url }) => ({ filter_id, url })), [{ filter_id: "resolved", url: "" }]);
+});
+
 test("issue.create validates manual title, body, and anchor", async () => {
   const adapter = issueRequestFixture([]);
   for (const [input, requestId] of [

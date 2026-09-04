@@ -203,17 +203,11 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64
-              },
-              "latest_info": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 300
               }
             },
             "required": [
               "job_id",
-              "started_at",
-              "latest_info"
+              "started_at"
             ],
             "additionalProperties": false
           }
@@ -240,7 +234,18 @@
       },
       "output_schema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "schema_version": { "type": "integer", "minimum": 1, "maximum": 1 },
+          "max_parallel": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "auto_run": { "type": "boolean" },
+          "parallel_options": {
+            "type": "array",
+            "minItems": 10,
+            "maxItems": 10,
+            "items": { "type": "integer", "minimum": 1, "maximum": 10 }
+          }
+        },
+        "required": ["schema_version", "max_parallel", "auto_run", "parallel_options"],
         "additionalProperties": false
       },
       "resources": [
@@ -433,7 +438,12 @@
       },
       "output_schema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "schema_version": { "type": "integer", "minimum": 1, "maximum": 1 },
+          "max_parallel": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "auto_run": { "type": "boolean" }
+        },
+        "required": ["schema_version", "max_parallel", "auto_run"],
         "additionalProperties": false
       },
       "invalidates": [

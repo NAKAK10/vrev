@@ -825,7 +825,8 @@ function isActiveStageOrNonStage(contribution) {
   return contribution.slot !== "review.stage" || `${contribution.plugin_id}/${contribution.id}` === surface?.layout?.active_stage;
 }
 async function refreshResourceNamed(id, fallbackScope, strict = false) {
-  const owners = (surface?.contributions || []).filter((contribution) => isActiveStageOrNonStage(contribution) && (contribution.document.resources || []).some((resource) => resource.id === id));
+  const matchingOwners = (surface?.contributions || []).filter((contribution) => isActiveStageOrNonStage(contribution) && (contribution.document.resources || []).some((resource) => resource.id === id));
+  const owners = [...new Map(matchingOwners.map((contribution) => [`${contribution.plugin_id}:${id}`, contribution])).values()];
   const results = !owners.length
     ? [await loadResource(fallbackScope.contribution, id, fallbackScope, false)]
     : await Promise.all(owners.map((contribution) => { const runtime = runtimeFor(contribution, ""); const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} }; return loadResource(contribution, id, scope, false); }));

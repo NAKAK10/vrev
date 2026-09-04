@@ -215,15 +215,6 @@
                 ]
               },
               {
-                "type": "text",
-                "props": {
-                  "text": {
-                    "resource": "jobs",
-                    "path": "/active/latest_info"
-                  }
-                }
-              },
-              {
                 "id": "stop-ai-run",
                 "type": "button",
                 "props": {

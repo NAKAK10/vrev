@@ -12,6 +12,7 @@ export interface IssueProjectionStoreV1 {
   load(): Promise<{ revision?: number; annotations: IssueProjectionAnnotationV1[] }>;
   loadActive(): Promise<{ revision?: number; annotations: IssueProjectionAnnotationV1[] }>;
   setIssueDraftReady(annotationId: string, title: string, body: string): Promise<unknown>;
+  setStatus?(annotationId: string, payload: { actor: "human"; status: "resolved" }): Promise<{ revision?: number }>;
   failIssueDraft(annotationId: string, message: string): Promise<unknown>;
   completeIssueDraft(annotationId: string, title: string, url: string): Promise<unknown>;
 }

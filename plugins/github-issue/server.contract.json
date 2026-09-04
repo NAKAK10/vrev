@@ -539,6 +539,49 @@
       ]
     },
     {
+      "name": "issue.resolve",
+      "permission": "review.write",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "annotation_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "resolved"
+            ]
+          }
+        },
+        "required": [
+          "annotation_id",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "session",
+        "issues",
+        "history"
+      ]
+    },
+    {
       "name": "issue.create",
       "permission": "external.execute",
       "input_schema": {

@@ -518,6 +518,7 @@ class ReviewStore {
     return this.storage.withLock(async () => {
       const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
+      if (annotation.status === "resolved") return review;
       if (annotation.issue_state === "ready" && annotation.status === "addressed" && annotation.issue_title === issueTitle && annotation.issue_body === issueBody) return review;
       const internalReferences = [annotationId, ".vrev/", "Vrev注釈", "Vrev annotation"];
       if (internalReferences.some((reference) => issueTitle.includes(reference) || issueBody.includes(reference))) {
@@ -552,7 +553,7 @@ class ReviewStore {
     return this.storage.withLock(async () => {
       const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
-      if (annotation.issue_state !== "requested") return review;
+      if (annotation.issue_state !== "requested" || annotation.status === "resolved") return review;
       const previous = annotation.status;
       annotation.status = "failed";
       annotation.updated_at = timestamp;

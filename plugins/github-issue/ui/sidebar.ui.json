@@ -24,6 +24,7 @@
           { "type": "text", "props": { "text": { "item": "/request" }, "variant": { "literal": "form-help" } } },
           { "type": "row", "props": { "variant": { "literal": "issue-card-actions" } }, "children": [
             { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
+            { "type": "button", "when": { "not": { "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] } }, "props": { "label": { "literal": "強制的に解決" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "dialog.open", "dialog": "issue-force-resolve-dialog" }] } },
             { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "retry" }] }, "props": { "label": { "literal": "再作成" }, "variant": { "literal": "primary" } }, "on": { "click": [
               {
                 "type": "command.execute",
@@ -45,8 +46,39 @@
             { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "drafted" }] }, "props": { "label": { "literal": "確認する" }, "variant": { "literal": "primary" } }, "on": { "click": [
               { "type": "dialog.open", "dialog": "issue-confirm-dialog" }
             ] } },
-            { "type": "link", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "item": "/url" }, "external": { "literal": true } } }
+            { "type": "link", "when": { "and": [{ "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] }, { "ne": [{ "item": "/url" }, { "literal": "" }] }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "item": "/url" }, "external": { "literal": true } } }
           ] },
+          {
+            "id": "issue-force-resolve-dialog",
+            "type": "dialog",
+            "props": {
+              "title": { "literal": "このGitHub Issue項目を解決済みにしますか？" },
+              "description": { "literal": "Issue作成の状態にかかわらず、人間の判断で解決済みに変更します。" },
+              "dismissible": { "literal": true },
+              "mobile_presentation": { "literal": "fullscreen" }
+            },
+            "children": [
+              { "type": "row", "props": { "variant": { "literal": "dialog-actions" } }, "children": [
+                { "type": "button", "props": { "label": { "literal": "キャンセル" } }, "on": { "click": [{ "type": "dialog.close", "dialog": "issue-force-resolve-dialog" }] } },
+                { "id": "issue-force-resolve-submit", "type": "button", "props": { "label": { "literal": "強制的に解決する" }, "variant": { "literal": "danger" } }, "on": { "click": [
+                  {
+                    "type": "command.execute",
+                    "command": "issue.resolve",
+                    "input": { "annotation_id": { "item": "/id" } },
+                    "pending": { "deduplicate": true, "disable": "issue-force-resolve-submit" },
+                    "on_success": [
+                      { "type": "dialog.close", "dialog": "issue-force-resolve-dialog" },
+                      { "type": "resource.refresh", "resource": "issues" },
+                      { "type": "toast.show", "variant": "success", "message": { "literal": "GitHub Issue項目を解決済みにしました" } }
+                    ],
+                    "on_error": [
+                      { "type": "toast.show", "variant": "error", "message": { "error": "/message" } }
+                    ]
+                  }
+                ] } }
+              ] }
+            ]
+          },
           {
             "id": "issue-confirm-dialog",
             "type": "dialog",

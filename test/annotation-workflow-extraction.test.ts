@@ -119,7 +119,8 @@ test("workflow bridge persists workflow-only settings and sends no runner payloa
   assert.deepEqual(retryInput, { annotationId: "annotation-1", input: { max_parallel: 2 } });
   const jobs = await bridge.query("jobs.list", { request_id: "jobs", input: {} });
   assert.equal(jobs.ok, true);
-  assert.deepEqual((jobs as { data: { active: unknown } }).data.active, { job_id: "job-1", started_at: "2026-08-31T00:00:01.000Z", latest_info: "2件のAI修正を実行中です" });
+  assert.deepEqual((jobs as { data: { active: unknown } }).data.active, { job_id: "job-1", started_at: "2026-08-31T00:00:01.000Z" });
+  assert.doesNotMatch(JSON.stringify(jobs), /latest_info|AI修正を実行中です/);
   assert.equal((jobs as { data: { announcement: string } }).data.announcement, "2件のAI修正を処理中です");
   assert.doesNotMatch(JSON.stringify(jobs), /custom_command|do-not-expose/);
   await bridge.command("jobs.cancel", { request_id: "cancel", input: { job_id: "job-1" } });

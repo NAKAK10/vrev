@@ -153,6 +153,11 @@ test("checkbox-group supports an inverted binding where checked means excluded f
       },
     }),
   );
+
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  assert.match(css, /\.vr-checkbox-option input[^}]*clip-path: inset\(50%\)/s);
+  assert.match(css, /\.vr-checkbox-option:has\(input:checked\)[^{]*\{[^}]*border-color:[^}]*background:/s);
+  assert.match(css, /\.vr-checkbox-option:has\(input:focus-visible\)/);
 });
 
 test("renderer acceptance paths scope repeated annotation actions and implement target regions, focus, dialogs, and pending controls", () => {
@@ -163,6 +168,7 @@ test("renderer acceptance paths scope repeated annotation actions and implement 
   assert.match(source, /pending\?\.disable/);
   assert.match(source, /result\.error\?\.code === "CONFLICT"/);
   assert.match(source, /await refreshResourceNamed\(revisionResource, scope\)/);
+  assert.match(source, /new Map\(matchingOwners\.map\(\(contribution\) => \[`\$\{contribution\.plugin_id\}:\$\{id\}`/);
   assert.match(source, /result = await requestCommand\(\)/);
   assert.match(source, /for \(let attempt = 0; attempt < 2; attempt \+= 1\)/);
   assert.match(source, /body: JSON\.stringify\(envelope\)/);
@@ -295,6 +301,9 @@ test("bundled review and independent Issue documents bind selection, lists, and 
   assert.match(issueText, /"query":"issues.list"/);
   assert.match(issueText, /"type":"target.focus"/);
   assert.match(issueText, /"attention_key":\{"literal":"github-issues"\}/);
+  assert.match(issueText, /"id":"issue-force-resolve-dialog"/);
+  assert.match(issueText, /"command":"issue.resolve"/);
+  assert.match(issueText, /強制的に解決する/);
   assert.doesNotMatch(issueText, /ai_method_id|method_id|ai-method/);
   assert.doesNotMatch(sidebarText, /runner|method_id/);
   assert.match(aiSettingsText, /"type": "select"/);

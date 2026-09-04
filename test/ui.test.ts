@@ -203,10 +203,10 @@ test("review target renders before nonessential sidebar resources finish", () =>
   assert.match(rendererSource, /await Promise\.all\(activeStageLoads\);\s*rerender\(\);\s*if \(resourceLoads\.length\) void Promise\.all\(resourceLoads\)\.then\(\(\) => rerender\(\)\)/);
 });
 
-test("running AI shows only its start, latest status, and stop control", () => {
+test("running AI shows its start and stop control without a redundant running-count message", () => {
   assert.match(workflowSidebarSource, /"ai-run-status"/);
   assert.match(workflowSidebarSource, /"\/active\/started_at"/);
-  assert.match(workflowSidebarSource, /"\/active\/latest_info"/);
+  assert.doesNotMatch(workflowSidebarSource, /"\/active\/latest_info"|AI修正を実行中です/);
   assert.match(workflowSidebarSource, /"command": "jobs\.cancel"/);
   assert.match(workflowSidebarSource, /"AI修正を停止"/);
 });
