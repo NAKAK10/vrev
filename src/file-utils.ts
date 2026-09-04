@@ -55,49 +55,84 @@ export interface LockOptions {
   retryMs?: number;
 }
 
+function tryClaimLock(lockPath: string, token: string, staleMs: number): boolean {
+  try {
+    writeFileSync(lockPath, `${JSON.stringify({ token, pid: process.pid })}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    try {
+      if (Date.now() - statSync(lockPath).mtimeMs > staleMs) unlinkSync(lockPath);
+    } catch (inspectionError) {
+      if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw inspectionError;
+      }
+    }
+    return false;
+  }
+}
+
+function acquireFileLock(lockPath: string, token: string, timeoutMs: number, staleMs: number, retryMs: number): void {
+  const deadline = Date.now() + timeoutMs;
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+
+  while (!tryClaimLock(lockPath, token, staleMs)) {
+    if (Date.now() >= deadline) throw new Error(`timed out acquiring lock: ${lockPath}`);
+    Atomics.wait(new Int32Array(sleepBuffer), 0, 0, retryMs);
+  }
+}
+
+async function acquireFileLockAsync(lockPath: string, token: string, timeoutMs: number, staleMs: number, retryMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+
+  while (!tryClaimLock(lockPath, token, staleMs)) {
+    if (Date.now() >= deadline) throw new Error(`timed out acquiring lock: ${lockPath}`);
+    await new Promise<void>((resolve) => setTimeout(resolve, retryMs));
+  }
+}
+
+function releaseFileLock(lockPath: string, token: string): void {
+  try {
+    const current = readJson(lockPath) as { token?: unknown };
+    if (current.token === token) unlinkSync(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
 export function withFileLock<T>(
   protectedPath: string,
   operation: () => T,
   options: LockOptions = {},
 ): T {
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  const staleMs = options.staleMs ?? 30_000;
-  const retryMs = options.retryMs ?? 20;
   const lockPath = `${protectedPath}.lock`;
   const token = randomUUID();
-  const deadline = Date.now() + timeoutMs;
-  mkdirSync(path.dirname(lockPath), { recursive: true });
-
-  for (;;) {
-    try {
-      writeFileSync(lockPath, `${JSON.stringify({ token, pid: process.pid })}\n`, {
-        encoding: "utf8",
-        flag: "wx",
-        mode: 0o600,
-      });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) unlinkSync(lockPath);
-      } catch (inspectionError) {
-        if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw inspectionError;
-        }
-      }
-      if (Date.now() >= deadline) throw new Error(`timed out acquiring lock: ${lockPath}`);
-      Atomics.wait(new Int32Array(sleepBuffer), 0, 0, retryMs);
-    }
-  }
+  acquireFileLock(lockPath, token, options.timeoutMs ?? 10_000, options.staleMs ?? 30_000, options.retryMs ?? 20);
 
   try {
     return operation();
   } finally {
-    try {
-      const current = readJson(lockPath) as { token?: unknown };
-      if (current.token === token) unlinkSync(lockPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    releaseFileLock(lockPath, token);
+  }
+}
+
+/** Async counterpart of {@link withFileLock}: the same lock-file protocol, but retries via a non-blocking timer and accepts an async action. */
+export async function withFileLockAsync<T>(
+  protectedPath: string,
+  operation: () => Promise<T>,
+  options: LockOptions = {},
+): Promise<T> {
+  const lockPath = `${protectedPath}.lock`;
+  const token = randomUUID();
+  await acquireFileLockAsync(lockPath, token, options.timeoutMs ?? 10_000, options.staleMs ?? 30_000, options.retryMs ?? 20);
+  try {
+    return await operation();
+  } finally {
+    releaseFileLock(lockPath, token);
   }
 }

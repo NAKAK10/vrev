@@ -4,7 +4,9 @@ export const PAGE_MAP_CAPABILITY_ID = "page-map";
 export const PAGE_MAP_CAPABILITY_API_VERSION = 1;
 const REVIEW_CAPABILITY_ID = "review";
 
-const EMPTY_RESULT_TEMPLATE = Object.freeze({
+const UNSUPPORTED_RESULT_TEMPLATE = Object.freeze({
+  analysis_state: "unsupported",
+  analysis_reason: "unsupported_target",
   generated_at: "",
   scan_root: "",
   entry_path: "",
@@ -17,12 +19,12 @@ const EMPTY_RESULT_TEMPLATE = Object.freeze({
   externals: [],
 });
 
-function emptyResult(warning) {
+function unsupportedResult(warning) {
   return {
-    ...EMPTY_RESULT_TEMPLATE,
+    ...UNSUPPORTED_RESULT_TEMPLATE,
     generated_at: new Date().toISOString(),
     warnings: [warning],
-    stats: { ...EMPTY_RESULT_TEMPLATE.stats },
+    stats: { ...UNSUPPORTED_RESULT_TEMPLATE.stats },
   };
 }
 
@@ -40,7 +42,7 @@ export function createPageMapBridgeAdapter(targetDescriptor, options = {}) {
   const supported = targetDescriptor.kind === "html" && !targetDescriptor.liveUrl;
 
   const run = () => {
-    if (!supported) return emptyResult("静的HTML以外の対象は未対応です");
+    if (!supported) return unsupportedResult("静的HTML以外の対象は未対応です");
     return analyzeSite({
       projectRoot: targetDescriptor.projectRoot,
       entryPath: targetDescriptor.entryPath,

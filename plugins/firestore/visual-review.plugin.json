@@ -1,0 +1,109 @@
+{
+  "schema_version": 4,
+  "id": "firestore",
+  "version": "1.0.0",
+  "display": {
+    "title": "Firestore",
+    "summary": "Firestore を Visual Review の workspace storage backend として使います。",
+    "readme": "./README.md"
+  },
+  "configuration": [
+    {
+      "key": "auth_mode",
+      "title": "認証方式",
+      "description": "Firestoreへの認証方式を選びます。",
+      "type": "select",
+      "source": "workspace",
+      "required": true,
+      "default": "access_token",
+      "options": [
+        { "value": "access_token", "label": "環境変数のaccess token" },
+        { "value": "service_account", "label": "サービスアカウントkey" },
+        { "value": "gcloud", "label": "gcloud CLI" },
+        { "value": "firebase_web", "label": "firebaseConfig（Firebase Auth匿名ログイン）" }
+      ]
+    },
+    {
+      "key": "project_id",
+      "title": "Firebase project ID",
+      "description": "未設定時はFIREBASE_PROJECT_ID、サービスアカウントkeyのproject_id、firebaseConfigのprojectIdの順で補完します。",
+      "type": "string",
+      "source": "workspace",
+      "required": false
+    },
+    {
+      "key": "access_token",
+      "title": "Firebase access token",
+      "description": "値は画面や設定ファイルへ保存しません。",
+      "type": "string",
+      "source": "environment",
+      "environment": "FIREBASE_ACCESS_TOKEN",
+      "required": false
+    },
+    {
+      "key": "service_account_key",
+      "title": "サービスアカウントkey (JSON)",
+      "description": "Firestoreへアクセスできるサービスアカウントのkey fileの内容です。",
+      "type": "secret",
+      "source": "credential",
+      "required": false,
+      "format": "json"
+    },
+    {
+      "key": "firebase_web_config",
+      "title": "firebaseConfig (JSON)",
+      "description": "Firebase Authの匿名ログインで使うweb app用firebaseConfigです。",
+      "type": "secret",
+      "source": "credential",
+      "required": false,
+      "format": "json"
+    },
+    {
+      "key": "gcloud_account",
+      "title": "gcloud account",
+      "description": "gcloud CLIの--accountへ渡します。未指定時はgcloudの既定accountを使います。",
+      "type": "string",
+      "source": "workspace",
+      "required": false
+    },
+    {
+      "key": "collection_id",
+      "title": "Firestore collection ID",
+      "description": "workspaceのstorage keyごとに1 documentを保存するcollectionです。",
+      "type": "string",
+      "source": "workspace",
+      "required": false,
+      "default": "visual-review-storage"
+    },
+    {
+      "key": "database_id",
+      "title": "Firestore database ID",
+      "type": "string",
+      "source": "workspace",
+      "required": false,
+      "default": "(default)"
+    }
+  ],
+  "commands": [
+    {
+      "name": "push",
+      "module": "./index.mjs",
+      "export": "pushCommand"
+    },
+    {
+      "name": "pull",
+      "module": "./index.mjs",
+      "export": "pullCommand"
+    },
+    {
+      "name": "status",
+      "module": "./index.mjs",
+      "export": "statusCommand"
+    }
+  ],
+  "storage_provider": {
+    "api_version": 1,
+    "module": "./index.mjs",
+    "export": "createWorkspaceStorageProviderFromContext"
+  }
+}

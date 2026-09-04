@@ -1,14 +1,595 @@
 {
   "schema_version": 1,
   "queries": [
-    { "name": "issue.target", "permission": "issue.create", "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "repo": { "type": "string", "maxLength": 128 }, "account": { "type": "string", "maxLength": 64 } }, "additionalProperties": false }, "resources": ["session"] }
+    {
+      "name": "issue.target",
+      "permission": "issue.create",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "account": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "repo",
+          "account"
+        ],
+        "additionalProperties": false
+      },
+      "resources": [
+        "session"
+      ]
+    },
+    {
+      "name": "issues.list",
+      "permission": "issue.read",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "hidden": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "enum": [
+                "creating",
+                "retry",
+                "drafted",
+                "resolved"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 2000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "request": {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 6000
+                },
+                "url": {
+                  "type": "string",
+                  "maxLength": 2048
+                },
+                "page_path": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "created_at": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "status_label": {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "status_tone": {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "filter_id": {
+                  "type": "string",
+                  "enum": [
+                    "creating",
+                    "retry",
+                    "drafted",
+                    "resolved"
+                  ]
+                },
+                "anchor": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "dom",
+                        "region"
+                      ]
+                    },
+                    "page_path": {
+                      "type": "string",
+                      "maxLength": 4096
+                    },
+                    "selector": {
+                      "type": "string",
+                      "maxLength": 4096
+                    },
+                    "xpath": {
+                      "type": "string",
+                      "maxLength": 4096
+                    },
+                    "text_excerpt": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "space": {
+                      "type": "string",
+                      "enum": [
+                        "document",
+                        "image"
+                      ]
+                    },
+                    "rect": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "bounds": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "document": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "natural": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "viewport": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        },
+                        "scroll_x": {
+                          "type": "number"
+                        },
+                        "scroll_y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height",
+                        "scroll_x",
+                        "scroll_y"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "request",
+                "title",
+                "body",
+                "url",
+                "page_path",
+                "anchor",
+                "created_at",
+                "status_label",
+                "status_tone",
+                "filter_id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latest_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "filters": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "label": {
+                  "type": "string",
+                  "maxLength": 32
+                }
+              },
+              "required": [
+                "value",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "latest_id",
+          "filters"
+        ],
+        "additionalProperties": false
+      },
+      "resources": [
+        "issues"
+      ]
+    }
   ],
   "commands": [
-    { "name": "issue.draft", "permission": "issue.create", "input_schema": { "type": "object", "properties": { "annotation_id": { "type": "string", "minLength": 1, "maxLength": 128 } }, "required": ["annotation_id"], "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "title": { "type": "string", "maxLength": 256 }, "body": { "type": "string", "maxLength": 65536 } }, "required": ["title", "body"], "additionalProperties": false }, "invalidates": ["session", "annotations"] },
-    { "name": "issue.create", "permission": "issue.create", "input_schema": { "type": "object", "properties": { "annotation_id": { "type": "string", "minLength": 1, "maxLength": 128 }, "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "body": { "type": "string", "minLength": 1, "maxLength": 65536 } }, "required": ["annotation_id", "title", "body"], "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "url": { "type": "string", "maxLength": 2048 } }, "required": ["url"], "additionalProperties": false }, "invalidates": ["session", "annotations"] },
-    { "name": "issue.request", "permission": "issue.create", "input_schema": { "type": "object", "properties": {
-        "anchor": { "type": "object", "properties": {}, "additionalProperties": false },
-        "comment": { "type": "string", "minLength": 1, "maxLength": 2000 }
-      }, "required": ["anchor", "comment"], "additionalProperties": false }, "output_schema": { "type": "object", "properties": { "annotation_id": { "type": "string", "maxLength": 128 } }, "required": ["annotation_id"], "additionalProperties": false }, "invalidates": ["session", "annotations", "history"] }
+    {
+      "name": "issue.draft",
+      "permission": "ai.execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dom",
+                  "region"
+                ]
+              },
+              "page_path": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "selector": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "xpath": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "text_excerpt": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "space": {
+                "type": "string",
+                "enum": [
+                  "document",
+                  "image"
+                ]
+              },
+              "rect": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "bounds": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "document": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "natural": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "viewport": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  },
+                  "scroll_x": {
+                    "type": "number"
+                  },
+                  "scroll_y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height",
+                  "scroll_x",
+                  "scroll_y"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "request",
+          "anchor"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 6000
+          }
+        },
+        "required": [
+          "annotation_id",
+          "title",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "issues"
+      ]
+    },
+    {
+      "name": "issue.draft.retry",
+      "permission": "ai.execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "annotation_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 6000
+          }
+        },
+        "required": [
+          "annotation_id",
+          "title",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "issues"
+      ]
+    },
+    {
+      "name": "issue.create",
+      "permission": "external.execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 6000
+          }
+        },
+        "required": [
+          "annotation_id",
+          "title",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "annotation_id",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "session",
+        "issues",
+        "history"
+      ]
+    }
   ]
 }

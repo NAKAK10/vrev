@@ -6,26 +6,35 @@ import { BlockList } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createBundledBridgeCatalog, type BundledBridgeAdapter } from "./bundled-plugin-catalog.js";
+import type { AiCapabilityV1 } from "../packages/plugin-sdk/index.js";
+import { createBundledBridgeCatalog, isBundledAiBridgeOperation, type BundledBridgeAdapter, type BundledBridgeRequest } from "./bundled-plugin-catalog.js";
 import { bundledPluginsRoot } from "./bundled-plugins-root.js";
+import { CapabilityRegistry } from "./capability-registry.js";
 import { fileSha256 } from "./file-utils.js";
 import { createIssueTaskCapability, type GitHubIssueDraft } from "./github-issue.js";
 import { JobManager, type JobManagerOptions } from "./job-manager.js";
 import { layoutSettingsRevision, readLayoutSettings, updateLayoutSettings, type LayoutSettingsUpdateInput } from "./layout-settings.js";
+import { createLocalWorkspaceStorageProvider } from "./local-storage-provider.js";
 import { resolveTarget } from "./paths.js";
 import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, type InstalledPlugin } from "./plugin-registry.js";
 import { deletePluginCredential, readPluginCredentialPresence, setPluginCredential } from "./plugin-credentials.js";
-import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, type PluginIssueResult } from "./plugin-runtime.js";
+import { loadPluginCustomCommandProvider, loadPluginIssueProvider, loadTrustedPluginAnnotationFlowProvider, loadWorkspaceStorageProviderV1, type PluginIssueResult } from "./plugin-runtime.js";
 import { effectivePluginSettings, pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "./plugin-settings.js";
 import { createReviewCapability } from "./review-capability.js";
 import type { ReviewStore } from "./review-store.js";
+import { createRunnerRegistry } from "./runner-registry.js";
 import { loadPluginUiSurface, resolvePluginBrowserModule } from "./plugin-ui-surface.js";
+import { createPluginHostRuntime } from "./plugin-host-runtime.js";
+import { createProcessSupervisor } from "./process-supervisor.js";
 import { acquireServerLease, type ServerLease } from "./server-lease.js";
+import { transferWorkspaceStorage, type StorageTransferResult } from "./storage-transfer.js";
+import type { WorkspaceStorageProviderV1 } from "./storage-provider.js";
 import type { AddMessageInput, CreateAnnotationInput, SetStatusInput } from "./types.js";
 import { loadWorkspaceSettings } from "./workspace-settings.js";
 
 export const MAX_REQUEST_BODY = 1024 * 1024;
 export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
+export const DEFAULT_STORAGE_PREFLIGHT_TIMEOUT_MS = 10_000;
 
 const SECURITY_POLICY = [
   "default-src 'none'",
@@ -113,6 +122,8 @@ export interface VisualReviewServerOptions {
   issueCreator?: (draft: GitHubIssueDraft) => Promise<PluginIssueResult>;
   /** One-beta rollback switch. Declarative UI is the default. */
   legacyUi?: boolean;
+  /** Timeout for the storage-backend connectivity preflight run when enabling a storage provider plugin. Defaults to 10s; tests may override it. */
+  storagePreflightTimeoutMs?: number;
 }
 
 export interface VisualReviewServer {
@@ -528,7 +539,7 @@ function pluginManagementPayload(projectRoot: string): object {
   const settings = readPluginSettings(projectRoot);
   return {
     revision: pluginSettingsRevision(settings),
-    plugins: listPlugins(projectRoot).map(({ id, version, manifest, source, installed_at, resolved }) => {
+    plugins: listPlugins(projectRoot).map(({ id, version, manifest, source, installed_at, resolved, directory }) => {
       const effective = effectivePluginSettings(manifest, projectRoot);
       const hasCredentialField = (manifest.configuration ?? []).some((field) => field.source === "credential");
       const credentialPresence = hasCredentialField ? readPluginCredentialPresence(id, projectRoot) : {};
@@ -557,6 +568,7 @@ function pluginManagementPayload(projectRoot: string): object {
         installed_at,
         resolved: resolved ?? null,
         bundled: isBundledPluginSource(source),
+        package_managed: directory !== undefined,
       };
     }),
   };
@@ -578,9 +590,31 @@ async function createIssueWithInstalledPlugin(projectRoot: string, draft: GitHub
     return await provider.createIssue(projectRoot, draft);
   } catch (error) {
     if (error instanceof Error && error.message === "plugin is not installed: github-issue") {
-      throw new Error("GitHub Issue provider plugin 'github-issue' is not installed. Install it with: visual-review plugin install @nakak10/visual-review-plugin-github-issue");
+      throw new Error("GitHub Issue provider plugin 'github-issue' is not installed. Add it to the workspace with: npm install --save-dev @visual-review/github-issue");
     }
     throw error;
+  }
+}
+
+/**
+ * Verifies that a storage provider plugin's backend is actually reachable before enabling it,
+ * by loading the provider with the just-written configuration and issuing a lightweight read.
+ * Throws with a message safe to surface to the caller (no credential values are appended).
+ */
+async function verifyStorageProviderConnectivity(pluginId: string, projectRoot: string, timeoutMs: number): Promise<void> {
+  const probe = (async () => {
+    const { provider } = await loadWorkspaceStorageProviderV1(pluginId, projectRoot);
+    await provider.list("reviews/");
+  })();
+  probe.catch(() => undefined); // avoid an unhandled rejection when the timeout wins the race below
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("backend への接続がタイムアウトしました")), timeoutMs);
+  });
+  try {
+    await Promise.race([probe, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -595,10 +629,46 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
     ...(options.projectDirectory ? { projectDirectory: options.projectDirectory } : {}),
   });
   const store = reviewCapability.store;
-  const customCommandProvider = async () => (await loadPluginCustomCommandProvider("custom-command", store.target.projectRoot)).provider;
+  const customCommandProvider = async () => (await loadPluginCustomCommandProvider("ai", store.target.projectRoot)).provider;
+  const runnerRegistry = createRunnerRegistry(store.target.projectRoot);
+  const processSupervisor = options.jobManager?.executor ? {
+    run(spec: { command: string; args: readonly string[]; cwd: string; env: NodeJS.ProcessEnv }) {
+      const running = options.jobManager!.executor!({ ...spec, args: [...spec.args] });
+      return { cancel: () => running.cancel(), result: running.result.then((result) => ({ exitCode: result.exitCode, reason: result.reason, stdout: result.output ?? "" })) };
+    },
+  } : createProcessSupervisor();
+  const hostCapabilities = new CapabilityRegistry();
+  hostCapabilities.register("review", 1, reviewCapability);
+  hostCapabilities.register("host.process-supervisor", 1, processSupervisor);
+  hostCapabilities.register("host.runner-registry", 1, runnerRegistry);
+  let packagePluginHostReady: Promise<void> = Promise.resolve();
+  const resolveAi = (): AiCapabilityV1 => {
+    if (!pluginEnabled("ai", store.target.projectRoot)) throw new Error("AI package is disabled");
+    return hostCapabilities.resolve<AiCapabilityV1>("ai", 1);
+  };
+  const ai: AiCapabilityV1 = Object.freeze({
+    apiVersion: 1,
+    async list(input: Parameters<AiCapabilityV1["list"]>[0]) {
+      if (!pluginEnabled("ai", store.target.projectRoot)) return [];
+      await packagePluginHostReady;
+      return resolveAi().list(input);
+    },
+    invoke(input: Parameters<AiCapabilityV1["invoke"]>[0]) {
+      let delegated: ReturnType<AiCapabilityV1["invoke"]> | undefined;
+      let cancelled = false;
+      const result = (async () => {
+        await packagePluginHostReady;
+        if (cancelled) return { status: "cancelled" as const, output: "", exit_code: null, message: "AI invocation was cancelled", retryable: true };
+        delegated = resolveAi().invoke(input);
+        if (cancelled) delegated.cancel();
+        return delegated.result;
+      })();
+      return { result, cancel() { cancelled = true; delegated?.cancel(); } };
+    },
+  });
   const jobManager = new JobManager(store, {
     ...options.jobManager,
-    customCommandResolver: async (runnerId) => (await customCommandProvider()).resolve(store.target.projectRoot, runnerId),
+    ai,
   });
   const issueCreator = options.issueCreator ?? ((draft: GitHubIssueDraft) => createIssueWithInstalledPlugin(store.target.projectRoot, draft));
   const issueTask = createIssueTaskCapability(
@@ -618,6 +688,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
     }
     return result;
   };
+  const storagePreflightTimeoutMs = options.storagePreflightTimeoutMs ?? DEFAULT_STORAGE_PREFLIGHT_TIMEOUT_MS;
   const uiRoot = defaultUiRoot();
   const settingsUiRoot = pluginSettingsUiRoot();
   const pluginManagementVisible = loadWorkspaceSettings(store.target.projectRoot).ui?.plugin_management !== false;
@@ -636,16 +707,54 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
   const bundledBridgeCatalog = createBundledBridgeCatalog({
     review: reviewCapability,
     workflowManager: jobManager,
-    customCommands: customCommandProvider,
+    ai,
     issueTask,
     allowScripts,
     aiJobsEnabled,
     pluginManagementVisible,
   });
-  const bridgeAdapter = (pluginId: string): BundledBridgeAdapter | undefined =>
-    pluginEnabled(pluginId, store.target.projectRoot) ? bundledBridgeCatalog.get(pluginId) : undefined;
+  const createPackagePluginHost = () => createPluginHostRuntime({
+    workspaceRoot: store.target.projectRoot,
+    workspaceId: store.target.projectRoot,
+    target: { id: store.entryPath, source: options.target },
+    capabilities: hostCapabilities,
+    runnerRegistry,
+    principal: "human-ui",
+    authorizeOperation: ({ permission }) => aiJobsEnabled || (permission !== "ai.execute" && permission !== "external.execute"),
+    excludePluginIds: [...bundledBridgeCatalog.keys()],
+  });
+  let packagePluginHost = createPackagePluginHost();
+  const packageBridgeAdapters = new Map<string, BundledBridgeAdapter>();
+  let packageHostReconciliation = Promise.resolve();
+  const reconcilePackagePluginHost = (): Promise<void> => {
+    packageHostReconciliation = packageHostReconciliation.then(async () => {
+      await packagePluginHost.stop("reload");
+      packagePluginHost = createPackagePluginHost();
+      packageBridgeAdapters.clear();
+      packagePluginHostReady = packagePluginHost.start().catch(() => undefined);
+      await packagePluginHostReady;
+    });
+    return packageHostReconciliation;
+  };
+  const bridgeAdapter = (pluginId: string): BundledBridgeAdapter | undefined => {
+    if (!pluginEnabled(pluginId, store.target.projectRoot)) return undefined;
+    const bundled = bundledBridgeCatalog.get(pluginId);
+    if (bundled) return bundled;
+    let adapter = packageBridgeAdapters.get(pluginId);
+    if (!adapter) {
+      adapter = {
+        query: (name, request) => packagePluginHost.query(pluginId, name, { protocol: "plugin-bridge/1", request_id: request.request_id, input: request.input }),
+        command: (name, request) => packagePluginHost.sendAction(pluginId, name, { protocol: "plugin-bridge/1", request_id: request.request_id, idempotency_key: (request as BundledBridgeRequest & { idempotency_key?: string }).idempotency_key ?? "", ...((typeof request.expected_revision === "string" || request.expected_revision === null) ? { expected_revision: request.expected_revision } : {}), input: request.input }),
+      } as BundledBridgeAdapter;
+      packageBridgeAdapters.set(pluginId, adapter);
+    }
+    return adapter;
+  };
   try {
-    if (aiJobsEnabled && pluginEnabled("annotation-workflow", store.target.projectRoot)) jobManager.start();
+    // start() is async; server creation stays synchronous, so startup reconciliation runs in the background
+    // and any failure there is swallowed rather than aborting server creation.
+    packagePluginHostReady = packagePluginHost.start().catch(() => undefined);
+    if (aiJobsEnabled && pluginEnabled("annotation-workflow", store.target.projectRoot)) void jobManager.start().catch(() => undefined);
   } catch (error) {
     lease.release();
     throw error;
@@ -671,6 +780,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         const bridgeQuery = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/queries\/([a-z][a-z0-9_.-]*)$/.exec(pathname);
         if (request.method === "POST" && bridgeQuery?.[1] && bridgeQuery[2]) {
+          if (!aiJobsEnabled && isBundledAiBridgeOperation(bridgeQuery[1], bridgeQuery[2])) throw new HttpError(403, "AI operations are disabled while target scripts are allowed");
           assertBridgeRequestOrigin(request);
           const payload = await readBridgeJson(request);
           const result = await delegateBridge(bridgeAdapter(bridgeQuery[1]), "query", bridgeQuery[2], payload);
@@ -678,6 +788,8 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         const bridgeCommand = /^\/api\/plugin-host\/v1\/plugins\/([a-z0-9._-]+)\/commands\/([a-z][a-z0-9_.-]*)$/.exec(pathname);
         if (request.method === "POST" && bridgeCommand?.[1] && bridgeCommand[2]) {
+          if (!pluginEnabled("ai", store.target.projectRoot) && ((bridgeCommand[1] === "annotation-workflow" && (bridgeCommand[2] === "jobs.enqueue" || bridgeCommand[2] === "jobs.retry")) || (bridgeCommand[1] === "github-issue" && bridgeCommand[2] === "issue.draft"))) throw new HttpError(409, "AI package is disabled");
+          if (!aiJobsEnabled && isBundledAiBridgeOperation(bridgeCommand[1], bridgeCommand[2])) throw new HttpError(403, "AI operations are disabled while target scripts are allowed");
           assertBridgeRequestOrigin(request);
           const payload = await readBridgeJson(request);
           const idempotencyKey = typeof payload.idempotency_key === "string" && payload.idempotency_key ? `${bridgeCommand[1]}:${payload.idempotency_key}` : null;
@@ -746,6 +858,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 if (!(error instanceof Error) || error.message !== "plugin settings revision conflict" || attempt === 4) throw error;
               }
             }
+            await reconcilePackagePluginHost();
             return sendJson(response, 201, {
               installed: {
                 id: installed.plugin.id,
@@ -763,6 +876,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             if (!plugin) throw new HttpError(404, "plugin not found");
             if (isBundledPluginSource(plugin.source)) throw new HttpError(409, "bundled plugin cannot be removed; disable it instead");
             removePlugin(plugin.id, store.target.projectRoot);
+            await reconcilePackagePluginHost();
             return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
           }
           const readmeMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/readme$/.exec(pathname);
@@ -773,16 +887,45 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             if (!plugin) throw new HttpError(404, "plugin not found");
             const payload = await readJson(request);
             if (typeof payload.revision !== "string" || typeof payload.enabled !== "boolean" || typeof payload.configuration !== "object" || payload.configuration === null || Array.isArray(payload.configuration)) throw new HttpError(400, "plugin settings update is invalid");
+            const previousEntry = readPluginSettings(store.target.projectRoot).plugins[plugin.id];
+            let updateResult: ReturnType<typeof updatePluginSettings>;
             try {
-              updatePluginSettings(plugin.id, plugin.manifest, { revision: payload.revision, enabled: payload.enabled, configuration: payload.configuration as Record<string, unknown> }, store.target.projectRoot);
-              if (plugin.id === "annotation-workflow") {
-                if (payload.enabled && aiJobsEnabled) jobManager.start();
-                else await jobManager.close();
-              }
+              updateResult = updatePluginSettings(plugin.id, plugin.manifest, { revision: payload.revision, enabled: payload.enabled, configuration: payload.configuration as Record<string, unknown> }, store.target.projectRoot);
             } catch (error) {
               if (error instanceof Error && error.message === "plugin settings revision conflict") throw new HttpError(409, error.message);
               throw error;
             }
+            if (payload.enabled === true && plugin.manifest.storage_provider) {
+              try {
+                await verifyStorageProviderConnectivity(plugin.id, store.target.projectRoot, storagePreflightTimeoutMs);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "unknown error";
+                try {
+                  updatePluginSettings(
+                    plugin.id,
+                    plugin.manifest,
+                    {
+                      revision: updateResult.revision,
+                      enabled: previousEntry?.enabled ?? false,
+                      configuration: previousEntry?.configuration ?? {},
+                    },
+                    store.target.projectRoot,
+                  );
+                } catch (rollbackError) {
+                  const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : "unknown error";
+                  throw new HttpError(500, `storageバックエンドへの接続確認に失敗し、さらに設定のロールバックにも失敗しました: ${rollbackMessage}`);
+                }
+                throw new HttpError(
+                  409,
+                  `ストレージbackendへ接続できないため有効化できません: ${message} 認証情報や設定を登録してから再度有効にしてください。`,
+                );
+              }
+            }
+            if (plugin.id === "annotation-workflow") {
+              if (payload.enabled && aiJobsEnabled) await jobManager.start();
+              else await jobManager.close();
+            }
+            await reconcilePackagePluginHost();
             return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
           }
           const credentialMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/credentials\/([a-z][a-z0-9_]{0,63})$/.exec(pathname);
@@ -802,12 +945,57 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new HttpError(400, "credential value must be a JSON object");
               }
               setPluginCredential(plugin.id, field.key, payload.value, store.target.projectRoot);
+              await reconcilePackagePluginHost();
               return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
             }
             if (request.method === "DELETE") {
               deletePluginCredential(plugin.id, field.key, store.target.projectRoot);
+              await reconcilePackagePluginHost();
               return sendJson(response, 200, pluginManagementPayload(store.target.projectRoot));
             }
+          }
+          const storageTransferMatch = /^\/api\/settings\/plugins\/([a-z0-9._-]+)\/storage-transfer$/.exec(pathname);
+          if (request.method === "POST" && storageTransferMatch?.[1]) {
+            const plugin = listPlugins(store.target.projectRoot).find(({ id }) => id === storageTransferMatch[1]);
+            if (!plugin) throw new HttpError(404, "plugin not found");
+            if (!plugin.manifest.storage_provider) throw new HttpError(404, "plugin does not declare a storage provider");
+            const payload = await readJson(request);
+            if (
+              (payload.direction !== "local-to-plugin" && payload.direction !== "plugin-to-local")
+              || typeof payload.dry_run !== "boolean"
+            ) throw new HttpError(400, "storage transfer request is invalid");
+            const direction = payload.direction as "local-to-plugin" | "plugin-to-local";
+            let pluginProvider: WorkspaceStorageProviderV1;
+            try {
+              pluginProvider = (await loadWorkspaceStorageProviderV1(plugin.id, store.target.projectRoot)).provider;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "plugin storage provider is unavailable";
+              throw new HttpError(409, message);
+            }
+            const localProvider = createLocalWorkspaceStorageProvider(store.target.projectRoot);
+            const prefix = "reviews/";
+            let result: StorageTransferResult;
+            try {
+              result = await transferWorkspaceStorage({
+                source: direction === "local-to-plugin" ? localProvider : pluginProvider,
+                destination: direction === "local-to-plugin" ? pluginProvider : localProvider,
+                prefix,
+                direction,
+                dryRun: payload.dry_run,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "unknown error";
+              throw new HttpError(502, `storage transfer failed: ${message}`);
+            }
+            return sendJson(response, 200, {
+              direction: result.direction,
+              dry_run: result.dry_run,
+              written: result.written.slice(0, 200),
+              written_total: result.written.length,
+              deleted: result.deleted.slice(0, 200),
+              deleted_total: result.deleted.length,
+              unchanged: result.unchanged,
+            });
           }
           throw new HttpError(404, "route not found");
         }
@@ -828,7 +1016,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
                 ? `/live${new URL(store.target.liveUrl).pathname}${new URL(store.target.liveUrl).search}`
                 : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
             },
-            review: store.loadActive(),
+            review: await store.loadActive(),
             features: { plugin_management: pluginManagementVisible },
           });
         }
@@ -837,7 +1025,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           const limit = Number(url.searchParams.get("limit") ?? "24");
           if (!Number.isInteger(offset) || offset < 0) throw new HttpError(400, "offset must be a nonnegative integer");
           if (!Number.isInteger(limit) || limit < 1 || limit > 24) throw new HttpError(400, "limit must be an integer from 1 to 24");
-          const review = store.load();
+          const review = await store.load();
           const history = [...review.events].sort((left, right) => (
             Date.parse(right.at) - Date.parse(left.at)
             || right.revision - left.revision
@@ -869,7 +1057,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         }
         if (request.method === "GET" && pathname === "/api/plugins/annotation-flow") {
           const installed = listPlugins(store.target.projectRoot).find(({ id }) => id === "annotation-workflow");
-          const customCommandEnabled = pluginEnabled("custom-command", store.target.projectRoot);
+          const customCommandEnabled = pluginEnabled("ai", store.target.projectRoot);
           if (!installed) return sendJson(response, 200, { enabled: false, reason: "not-installed", policy: null, custom_command_enabled: customCommandEnabled });
           if (!pluginEnabled("annotation-workflow", store.target.projectRoot)) {
             return sendJson(response, 200, { enabled: false, reason: "disabled", policy: null, custom_command_enabled: customCommandEnabled });
@@ -885,7 +1073,7 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           throw new HttpError(409, "annotation workflow plugin is disabled");
         }
         if (request.method === "GET" && pathname === "/api/jobs") {
-          const state = jobManager.list();
+          const state = await jobManager.list();
           return sendJson(response, 200, {
             ...state,
             batches: state.batches.map(({ custom_command: _legacyTemplate, ...batch }) => batch),
@@ -893,11 +1081,12 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           });
         }
         if ((request.method === "GET" || request.method === "POST" || request.method === "DELETE") && pathname.startsWith("/api/jobs/custom-commands")
-          && !pluginEnabled("custom-command", store.target.projectRoot)) throw new HttpError(409, "custom command plugin is disabled");
+          && !pluginEnabled("ai", store.target.projectRoot)) throw new HttpError(409, "AI package is disabled");
         if (request.method === "GET" && pathname === "/api/jobs/custom-commands") {
           return sendJson(response, 200, { runners: (await customCommandProvider()).list(store.target.projectRoot) });
         }
         if (request.method === "POST" && pathname === "/api/jobs/custom-commands") {
+          assertBridgeRequestOrigin(request);
           const input = await readJson(request);
           if (typeof input.name !== "string" || typeof input.command !== "string") throw new HttpError(400, "name and command must be strings");
           return sendJson(response, 201, await (await customCommandProvider()).add(store.target.projectRoot, input.name, input.command));
@@ -905,21 +1094,19 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
         const customRunnerMatch = /^\/api\/jobs\/custom-commands\/([^/]+)$/.exec(pathname);
         const customRunnerTestMatch = /^\/api\/jobs\/custom-commands\/([^/]+)\/test$/.exec(pathname);
         if (request.method === "POST" && customRunnerTestMatch?.[1]) {
+          assertBridgeRequestOrigin(request);
           const result = await (await customCommandProvider()).test(store.target.projectRoot, decodeURIComponent(customRunnerTestMatch[1]));
           return sendJson(response, 200, { ok: true, ...result });
         }
         if (request.method === "DELETE" && customRunnerMatch?.[1]) {
+          assertBridgeRequestOrigin(request);
           (await customCommandProvider()).remove(store.target.projectRoot, decodeURIComponent(customRunnerMatch[1]));
           return sendJson(response, 200, { ok: true });
         }
         if (request.method === "POST" && pathname === "/api/jobs/batch") {
+          if (!pluginEnabled("ai", store.target.projectRoot)) throw new HttpError(409, "AI package is disabled");
           const input = await readJson(request);
-          if (input.cli === "custom") {
-            if (!pluginEnabled("custom-command", store.target.projectRoot)) throw new HttpError(409, "custom command plugin is disabled");
-            if (typeof input.runner_id !== "string") throw new HttpError(400, "runner_id is required for custom commands");
-            (await customCommandProvider()).resolve(store.target.projectRoot, input.runner_id);
-          }
-          const result = jobManager.enqueue(input);
+          const result = await jobManager.enqueue(input);
           bridgeEventHub.publish(["jobs", "annotations", "history", "session"]);
           return sendJson(response, 200, result);
         }
@@ -930,16 +1117,16 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           const installed = listPlugins(store.target.projectRoot).some(({ id }) => id === "github-issue");
           if (installed && !pluginEnabled("github-issue", store.target.projectRoot)) throw new HttpError(409, "GitHub Issue plugin is disabled");
           const payload = await readJson(request);
-          store.createIssueRequest(payload as unknown as CreateAnnotationInput);
+          await store.createIssueRequest(payload as unknown as CreateAnnotationInput);
           bridgeEventHub.publish(["session", "annotations", "history"]);
-          return sendJson(response, 200, store.loadActive());
+          return sendJson(response, 200, await store.loadActive());
         }
         if (request.method === "POST" && pathname === "/api/issues") {
           const installed = listPlugins(store.target.projectRoot).some(({ id }) => id === "github-issue");
           if (installed && !pluginEnabled("github-issue", store.target.projectRoot)) throw new HttpError(409, "GitHub Issue plugin is disabled");
           const payload = await readJson(request);
           if (typeof payload.annotation_id !== "string" || !payload.annotation_id) throw new HttpError(400, "annotation_id is required");
-          let result: PluginIssueResult;
+          let result: PluginIssueResult & { review?: unknown };
           try { result = await issueTask.create(payload.annotation_id, payload); }
           catch (error) {
             if (isAnnotationMissing(error)) throw new HttpError(404, (error as Error).message);
@@ -947,11 +1134,11 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
             throw error;
           }
           bridgeEventHub.publish(["session", "annotations", "history"]);
-          return sendJson(response, 200, { ...result, review: store.loadActive() });
+          return sendJson(response, 200, result);
         }
         const cancelId = request.method === "POST" ? jobId(pathname) : undefined;
         if (cancelId !== undefined) {
-          const { custom_name: _legacyName, ...job } = jobManager.cancel(cancelId);
+          const { custom_name: _legacyName, ...job } = await jobManager.cancel(cancelId);
           bridgeEventHub.publish(["jobs", "annotations", "history", "session"]);
           return sendJson(response, 200, job);
         }
@@ -966,21 +1153,21 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
           return serveFile(response, resolvePublicFile(store.target.projectRoot, `assets/${decodePath(pathname.slice(8))}`));
         }
         if (request.method === "POST" && pathname === "/api/annotations") {
-          store.createAnnotation(await readJson(request) as unknown as CreateAnnotationInput);
+          await store.createAnnotation(await readJson(request) as unknown as CreateAnnotationInput);
           bridgeEventHub.publish(["session", "annotations", "history"]);
-          return sendJson(response, 200, store.loadActive());
+          return sendJson(response, 200, await store.loadActive());
         }
         const messageId = request.method === "POST" ? annotationId(pathname, "/messages") : undefined;
         if (messageId !== undefined) {
-          store.addMessage(messageId, await readJson(request) as unknown as AddMessageInput);
+          await store.addMessage(messageId, await readJson(request) as unknown as AddMessageInput);
           bridgeEventHub.publish(["session", "annotations", "history"]);
-          return sendJson(response, 200, store.loadActive());
+          return sendJson(response, 200, await store.loadActive());
         }
         const statusId = request.method === "PATCH" ? annotationId(pathname) : undefined;
         if (statusId !== undefined) {
-          store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
+          await store.setStatus(statusId, await readJson(request) as unknown as SetStatusInput);
           bridgeEventHub.publish(["session", "annotations", "history"]);
-          return sendJson(response, 200, store.loadActive());
+          return sendJson(response, 200, await store.loadActive());
         }
         if (store.target.liveUrl && !publicTarget) {
           const fallbackUrl = new URL(url.href);
@@ -998,14 +1185,25 @@ export function createVisualReviewServer(options: VisualReviewServerOptions): Vi
       }
     })();
   });
+  let stopBundledPromise: Promise<void> | undefined;
+  const stopBundledAdapters = (): Promise<void> => {
+    stopBundledPromise ??= Promise.all([...bundledBridgeCatalog.values()].map((adapter) => adapter.stop?.())).then(() => undefined);
+    return stopBundledPromise;
+  };
+  const stopPackagePluginHost = async (): Promise<void> => {
+    await packageHostReconciliation.catch(() => undefined);
+    await packagePluginHost.stop();
+  };
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = async (): Promise<void> => {
-    shutdownPromise ??= jobManager.close().finally(() => lease.release());
+    shutdownPromise ??= Promise.all([jobManager.close(), stopPackagePluginHost(), stopBundledAdapters()]).then(() => undefined).finally(() => lease.release());
     await shutdownPromise;
   };
   server.once("close", () => { void shutdown(); });
   const close = async (): Promise<void> => {
+    const stoppingAdapters = stopBundledAdapters();
     if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await stoppingAdapters;
     await shutdown();
   };
   return { server, store, jobManager, uiRoot, lease, close };

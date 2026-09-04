@@ -32,29 +32,29 @@ Implementation status: 未着手
 | Review portions of `src/types.ts` | `plugins/review` contract |
 | `src/job-manager.ts` | `plugins/annotation-workflow/server` |
 | `src/job-store.ts` | `plugins/annotation-workflow/server` |
-| built-in command builders in `src/adapters.ts` | `annotation-workflow` |
+| built-in AI command builders in `src/adapters.ts` | `plugins/ai/server` |
 | generic spawn supervisor in `src/adapters.ts` | Core host |
-| `src/custom-command-test.ts` | `plugins/custom-command/server/capability-test` |
-| raw custom command parser/runner | `plugins/custom-command/server` |
+| external AI command capability test | `plugins/ai/server/capability-test` |
+| raw external AI command parser/executor | `plugins/ai/server` |
 | `src/github-issue.ts` | `plugins/github-issue` + deprecated façade |
 | `src/ui/index.html` | Core shell + declarative plugin documents |
 | `src/ui/reviewer.js` | review declarative UI + target-stage Core primitive + Issue contribution |
 | `src/ui/jobs.ts` | annotation-workflow declarative UI/server state |
 | `src/ui/reviewer.css` | Core renderer component CSS |
-| hardcoded workflow/custom settings UI | plugin `settings.detail` documents |
+| hardcoded workflow/AI settings UI | owning packageの`settings.detail` documents |
 | generic plugin list/modal/README | Core plugin management UI |
 
 ## 3. Mandatory security fix before broad extraction
 
-Current raw custom command flow is not an acceptable v4 bridge boundary.
+Raw external AI commands outside the AI package are not an acceptable v4 bridge boundary.
 
 Before PluginBridge is exposed generally:
 
-1. Browser job requestから`custom_command`文字列を削除。
-2. Browserはopaque `runner_id`だけを送信。
-3. `custom-command` serverがverified registryを所有。
-4. capability test成功とrunner resolutionをserver側で結合。
-5. `annotation-workflow`はRunnerRegistry capabilityから`CommandSpec`を取得。
+1. Browserのfeature requestから`custom_command`文字列とAI選択値を削除。
+2. Feature packageは用途に必要なAI modeだけを`ai/v1`へ送信。
+3. `ai` serverがCLI選択とverified external-command registryを所有。
+4. capability test成功とAI method resolutionをAI package内で結合。
+5. `annotation-workflow`と`github-issue`は`ai/v1`だけを利用。
 6. Job stateへraw command templateを保存しない。
 7. script-enabled targetからprocess-launch routeへ到達できないsession capability/origin protectionを追加。
 
@@ -89,7 +89,7 @@ Add without behavior move:
 - capability registry types
 - principal types
 - process supervisor interface
-- review/runner/issue capability ports
+- review/AI/issue capability ports
 
 Keep all current runtime paths.
 
@@ -143,42 +143,33 @@ Completion criteria:
 
 Rollback: feature flag OFF。
 
-## 7. Phase 3 — External AI command boundary
+## 7. Phase 3 — AI package boundary
 
-Move:
+Move CLI selection, built-in CLI adapters, command template parsing, capability testing, verified external-command persistence, and method resolution to `plugins/ai/server`.
 
-- `src/custom-command-test.ts`
-- command template parsing
-- verified command persistence
-- runner resolution
-
-to `plugins/custom-command/server`.
-
-Introduce RunnerRegistry capability.
+Provide `ai/v1` so feature packages request a mode without selecting an implementation.
 
 Compatibility:
 
-- existing browser localStorage commands migrate once to server registry only after explicit re-test
-- existing plugin CLI command continues
-- display name remains `外部AIコマンド`
-- technical ID remains`custom-command`
+- existing browser localStorage commands migrate once to the AI package only after explicit re-test
+- display name remains `外部AIコマンド` within AI settings
 
 Tests:
 
-- raw command in browser request rejected
-- unknown/unverified runner ID rejected
-- verified runner accepted
+- raw command or AI selection in a feature request is rejected
+- unknown/unverified external command is rejected
+- verified external command can be selected by AI package settings
 - failed re-test revokes verification
-- command definition never returned to unrelated plugin/browser state
+- command definition never reaches another feature package or unrelated browser state
 - no shell execution
 - script-enabled target cannot inject executable
 
 Completion criteria:
 
-- annotation workflow executes external runner by ID only
+- annotation-workflow and github-issue invoke only `ai/v1` with a required mode
 - no raw command field in bridge/job state
 
-Rollback: built-in runners remain available; external runner feature can be disabled without review impact。
+Rollback: AI package can disable external commands while retaining built-in CLI methods。
 
 ## 8. Phase 4 — Extract Review domain server
 
@@ -237,15 +228,13 @@ to `plugins/annotation-workflow/server`.
 Dependencies:
 
 - ReviewCapability
-- RunnerRegistry
-- Core ProcessSupervisor
-- optional IssueTask registry
+- `ai/v1` (`workspace-write` mode)
 
 Remove:
 
 - concrete ReviewStore import
 - CLI self-reentry for annotation mutation
-- raw custom command details
+- raw external AI command details
 
 Tests:
 
@@ -340,7 +329,7 @@ Create documents:
 
 - `review/ui/review.ui.json`
 - `annotation-workflow/ui/sidebar.ui.json`
-- `custom-command/ui/settings.ui.json`
+- `ai/ui/settings.ui.json`
 - `github-issue/ui/issue.ui.json`
 
 Composition:
@@ -403,7 +392,7 @@ Completed for `1.1.9`:
 - [x] every published plugin has standalone tests
 - [x] manifest version matches package version
 - [x] root package contains default plugin server/UI documents
-- [x] default bootstrap includes `review`, `github-issue`, `custom-command`, `annotation-workflow`
+- [x] default bootstrap includes exactly `ai`, `firestore`, `review`, `annotation-workflow`, `page-map`, `github-issue`
 - [x] clean offline fresh workspace starts
 - [x] existing review fixture opens unchanged
 - [x] `npm test`
@@ -412,7 +401,7 @@ Completed for `1.1.9`:
 - [x] `/legacy`, `/settings/legacy`, and `VISUAL_REVIEW_LEGACY_UI=1` rollback acceptance
 - [x] `git diff --check`
 
-Publication remains non-atomic. If root publish succeeds and a standalone plugin publish fails, retain the root release because it bundles compatible default copies, fix the plugin failure, and rerun the workflow; version-existence checks skip packages already published. Never overwrite an existing version.
+Publication remains non-atomic. If root publish succeeds and one of the six feature package publishes fails, retain the root release because it bundles compatible default copies, fix the package failure, and rerun the workflow; version-existence checks skip packages already published. Never overwrite an existing version.
 
 ## 15. Global acceptance matrix
 
@@ -427,7 +416,7 @@ Publication remains non-atomic. If root publish succeeds and a standalone plugin
 | Invalid server | independently valid static UI renders with actions disabled; host remains if optional |
 | Review plugin failure | serve fail closed, data untouched |
 | Annotation workflow failure | sidebar unavailable, review data/headless capability intact |
-| External command failure | built-in runners intact |
+| External command failure | AI packageのbuilt-in CLI methodsは利用可能 |
 | Issue provider failure | review/annotation/history intact |
 | Opposite behavior | plugin without UI remains valid |
 | Insufficient capability | explicit unavailable reason, no inferred fallback |

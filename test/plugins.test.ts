@@ -33,6 +33,7 @@ function workspace(): string {
 
 const trustedBundledRoot = new URL("../src/bundled-plugins", import.meta.url).pathname;
 const bundledVersion = (JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { version: string }).version;
+const bundledPluginVersion = (id: string) => (JSON.parse(readFileSync(path.join(process.cwd(), "plugins", id, "package.json"), "utf8")) as { version: string }).version;
 
 function bundledFixture(idsToDowngrade: string[] = []): string {
   const fixture = mkdtempSync(path.join(os.tmpdir(), "visual-review-bundled-"));
@@ -94,8 +95,10 @@ test("creates a one-level plugin base that can be installed and executed", async
   assert.deepEqual(manifest.configuration, []);
   assert.deepEqual(manifest.commands, [{ name: "hello", module: "./index.js", export: "hello" }]);
   assert.deepEqual(manifest.server, { module: "./server/index.js", api_version: 1, bridge_api_version: 1, contract: "./server.contract.json" });
-  assert.deepEqual(manifest.ui?.contributions, [{ id: "annotation-action", slot: "annotation-workflow.annotation.actions", document: "./ui/annotation-action.ui.json", order: 100 }]);
-  assert.deepEqual(manifest.requires, [{ capability: "review", api_version: 1, optional: false }]);
+  assert.deepEqual(manifest.ui?.contributions, [{ id: "sidebar-tool", slot: "review.sidebar", document: "./ui/annotation-action.ui.json", order: 100 }]);
+  assert.deepEqual(manifest.requires, []);
+  const packageJson = JSON.parse(readFileSync(path.join(scaffold.directory, "package.json"), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(packageJson.visualReview, { apiVersion: 1, manifest: "./visual-review.plugin.json" });
   assert.deepEqual(manifest.provides, []);
   const contract = parsePluginBridgeContract(JSON.parse(readFileSync(path.join(scaffold.directory, "server.contract.json"), "utf8")));
   assert.deepEqual(contract, { schema_version: 1, queries: [], commands: [] });
@@ -334,25 +337,28 @@ test("CLI creates and immediately installs a plugin base", () => {
   assert.match(run.stdout, /Hello from created-plugin: world/);
 });
 
-test("automatically installs bundled default plugins once per workspace", async () => {
+test("automatically installs the six bundled feature plugins once per workspace", async () => {
   const root = workspace();
-  assert.deepEqual(await ensureDefaultPlugins(root), ["review", "github-issue", "custom-command", "annotation-workflow", "page-map"].map((id) => `${id}@${bundledVersion}`));
+  const defaultIds = ["review", "ai", "firestore", "annotation-workflow", "page-map", "github-issue"];
+  assert.deepEqual(await ensureDefaultPlugins(root), defaultIds.map((id) => `${id}@${bundledPluginVersion(id)}`));
   const defaults = listPlugins(root);
-  assert.deepEqual(defaults.map(({ id }) => id), ["review", "github-issue", "custom-command", "annotation-workflow", "page-map"]);
-  const expectedVersions = new Map(["review", "github-issue", "custom-command", "annotation-workflow", "page-map"].map((id) => [id, bundledVersion]));
+  assert.deepEqual(defaults.map(({ id }) => id), defaultIds);
+  const expectedVersions = new Map(defaultIds.map((id) => [id, bundledPluginVersion(id)]));
   for (const plugin of defaults) {
     const packageJson = JSON.parse(readFileSync(path.join(root, ".vreview/plugins", plugin.id, "package.json"), "utf8")) as { version: string };
     assert.equal(plugin.version, expectedVersions.get(plugin.id));
     assert.equal(packageJson.version, plugin.version);
   }
-  assert.ok(defaults.every(({ manifest }) => effectivePluginSettings(manifest, root).enabled));
+  assert.ok(defaults.filter(({ id }) => id !== "firestore").every(({ manifest }) => effectivePluginSettings(manifest, root).enabled));
+  const firestore = defaults.find(({ id }) => id === "firestore")!;
+  assert.equal(effectivePluginSettings(firestore.manifest, root).enabled, false);
+  await assert.rejects(loadPluginStorageProvider("firestore", root), /plugin is disabled/);
   assert.deepEqual(await ensureDefaultPlugins(root), []);
   assert.equal(typeof (await loadPluginIssueProvider("github-issue", root)).provider.createIssue, "function");
-  assert.equal(typeof (await loadPluginCommand("custom-command", "custom-command", root)).handler, "function");
+  assert.equal(typeof (await loadPluginCommand("ai", "custom-command", root)).handler, "function");
   const flow = await loadPluginAnnotationFlowProvider("annotation-workflow", root);
   assert.deepEqual(flow.policy.events, ["annotation-created", "annotation-reopened"]);
   assert.equal(flow.policy.debounceMs, 300);
-  assert.equal(flow.policy.settings.runner.label, "CLI");
   assert.equal(flow.policy.settings.maxParallel.max, 10);
   assert.match(flow.policy.settings.autoRun.label, /自動/);
   assert.equal(existsSync(path.join(root, ".vreview/plugins/annotation-workflow/package.json")), true);
@@ -364,12 +370,13 @@ test("automatically installs bundled default plugins once per workspace", async 
 
 test("upgrades proven schema-v3 bundled defaults while preserving workspace data", async () => {
   const root = workspace();
-  const bundledRoot = bundledFixture(["github-issue", "custom-command", "annotation-workflow"]);
+  const downgradedIds = ["ai", "annotation-workflow", "github-issue"];
+  const bundledRoot = bundledFixture(downgradedIds);
   await ensureDefaultPlugins(root, bundledRoot);
-  assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [3, 3, 3, 4]);
+  assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [3, 4, 3, 4, 3]);
 
-  const customCommand = listPlugins(root).find(({ id }) => id === "custom-command")!;
-  updatePluginSettings("custom-command", customCommand.manifest, {
+  const ai = listPlugins(root).find(({ id }) => id === "ai")!;
+  updatePluginSettings("ai", ai.manifest, {
     revision: pluginSettingsRevision(readPluginSettings(root)),
     enabled: false,
     configuration: {},
@@ -378,9 +385,9 @@ test("upgrades proven schema-v3 bundled defaults while preserving workspace data
   const commandsBefore = `${JSON.stringify({ schema_version: 1, runners: [{ runner_id: "kept", command: "agent" }] }, null, 2)}\n`;
   writeFileSync(path.join(root, ".vreview/custom-commands.json"), commandsBefore);
 
-  for (const id of ["github-issue", "custom-command", "annotation-workflow"]) restoreBundledPlugin(bundledRoot, id);
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["github-issue", "custom-command", "annotation-workflow"].map((id) => `${id}@${bundledVersion}`));
-  assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [4, 4, 4, 4]);
+  for (const id of downgradedIds) restoreBundledPlugin(bundledRoot, id);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), downgradedIds.map((id) => `${id}@${bundledPluginVersion(id)}`));
+  assert.deepEqual(listPlugins(root).filter(({ id }) => id !== "review").map(({ manifest }) => manifest.schema_version), [4, 4, 4, 4, 4]);
   assert.equal(readFileSync(path.join(root, ".vreview/plugin-settings.json"), "utf8"), settingsBefore);
   assert.equal(readFileSync(path.join(root, ".vreview/custom-commands.json"), "utf8"), commandsBefore);
 });
@@ -400,7 +407,7 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   writeFileSync(packagePath, `${JSON.stringify(oldPackage, null, 2)}\n`);
   writeFileSync(uiPath, `${JSON.stringify({ schema_version: 1, root: { type: "text", props: { text: { literal: "stale bundled UI" } } } }, null, 2)}\n`);
 
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", ...["github-issue", "custom-command", "annotation-workflow", "page-map"].map((id) => `${id}@${bundledVersion}`)]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", ...["ai", "firestore", "annotation-workflow", "page-map", "github-issue"].map((id) => `${id}@${bundledPluginVersion(id)}`)]);
   assert.match(readFileSync(path.join(root, ".vreview/plugins/review/ui/stage.ui.json"), "utf8"), /stale bundled UI/);
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 
@@ -442,16 +449,17 @@ test("fails closed for a tampered installed manifest and never evaluates a tampe
   const marker = path.join(moduleRoot, "tampered-module-evaluated");
   const modulePath = path.join(moduleRoot, ".vreview/plugins/annotation-workflow/index.js");
   writeFileSync(modulePath, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "bad");\nexport default {};\n`);
-  assert.deepEqual(await ensureDefaultPlugins(moduleRoot, moduleBundle), [`annotation-workflow@${bundledVersion}`]);
+  assert.deepEqual(await ensureDefaultPlugins(moduleRoot, moduleBundle), [`annotation-workflow@${bundledPluginVersion("annotation-workflow")}`]);
   assert.equal(existsSync(marker), false);
   assert.equal((JSON.parse(readFileSync(path.join(moduleRoot, ".vreview/plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { schema_version: number }).schema_version, 4);
 });
 
 test("serializes concurrent bundled upgrades and leaves same-version installs untouched", async () => {
   const root = workspace();
-  const bundledRoot = bundledFixture(["github-issue", "custom-command", "annotation-workflow"]);
+  const downgradedIds = ["ai", "annotation-workflow", "github-issue"];
+  const bundledRoot = bundledFixture(downgradedIds);
   await ensureDefaultPlugins(root, bundledRoot);
-  for (const id of ["github-issue", "custom-command", "annotation-workflow"]) restoreBundledPlugin(bundledRoot, id);
+  for (const id of downgradedIds) restoreBundledPlugin(bundledRoot, id);
 
   const results = await Promise.all([ensureDefaultPlugins(root, bundledRoot), ensureDefaultPlugins(root, bundledRoot)]);
   assert.equal(results.flat().length, 3);
@@ -463,16 +471,16 @@ test("serializes concurrent bundled upgrades and leaves same-version installs un
 test("disabled plugin state persists separately from installation and gates runtime loading", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
-  const plugin = listPlugins(root).find(({ id }) => id === "custom-command")!;
+  const plugin = listPlugins(root).find(({ id }) => id === "ai")!;
   const settings = readPluginSettings(root);
-  const updated = updatePluginSettings("custom-command", plugin.manifest, {
+  const updated = updatePluginSettings("ai", plugin.manifest, {
     revision: pluginSettingsRevision(settings),
     enabled: false,
     configuration: {},
   }, root);
   assert.equal(updated.effective.enabled, false);
-  assert.equal(listPlugins(root).some(({ id }) => id === "custom-command"), true);
-  await assert.rejects(loadPluginCommand("custom-command", "custom-command", root), /plugin is disabled/);
+  assert.equal(listPlugins(root).some(({ id }) => id === "ai"), true);
+  await assert.rejects(loadPluginCommand("ai", "custom-command", root), /plugin is disabled/);
   assert.deepEqual(await ensureDefaultPlugins(root), []);
 });
 
@@ -489,24 +497,30 @@ test("automatic annotation workflow rejects a tampered workspace copy before eva
 test("concurrent default bootstrap accepts a verified winner", async () => {
   const root = workspace();
   const results = await Promise.all([ensureDefaultPlugins(root), ensureDefaultPlugins(root)]);
-  assert.equal(results.flat().length, 5);
-  assert.deepEqual(listPlugins(root).map(({ id }) => id).sort(), ["annotation-workflow", "custom-command", "github-issue", "page-map", "review"]);
+  assert.equal(results.flat().length, 6);
+  assert.deepEqual(listPlugins(root).map(({ id }) => id).sort(), ["ai", "annotation-workflow", "firestore", "github-issue", "page-map", "review"]);
 });
 
-test("installs and dispatches the bundled custom-command and Firebase sample plugins", () => {
+test("dispatches AI's custom-command CLI and the bundled Firestore CLI", async () => {
   const root = workspace();
   const cli = new URL("../src/cli.js", import.meta.url);
-  const customSource = new URL("../../plugins/custom-command", import.meta.url).pathname;
-  const firebaseSource = new URL("../../plugins/firebase-storage", import.meta.url).pathname;
   const invoke = (args: string[], env: NodeJS.ProcessEnv = process.env) => spawnSync(process.execPath, [cli.pathname, "plugin", ...args], { cwd: root, encoding: "utf8", env });
 
-  assert.equal(invoke(["install", customSource]).status, 0);
-  const customList = invoke(["run", "custom-command", "custom-command", "list"]);
+  await ensureDefaultPlugins(root);
+  const customList = invoke(["run", "ai", "custom-command", "list"]);
   assert.equal(customList.status, 0, customList.stderr);
   assert.match(customList.stdout, /No custom commands/);
 
-  assert.equal(invoke(["install", firebaseSource]).status, 0);
-  const dryRun = invoke(["run", "firebase-storage", "push", "--dry-run"], { ...process.env, FIREBASE_PROJECT_ID: "example-project" });
+  const disabled = invoke(["run", "firestore", "push", "--dry-run"], { ...process.env, FIREBASE_PROJECT_ID: "example-project" });
+  assert.notEqual(disabled.status, 0);
+  assert.match(disabled.stderr, /plugin is disabled: firestore/);
+  const firestore = listPlugins(root).find(({ id }) => id === "firestore")!;
+  updatePluginSettings("firestore", firestore.manifest, {
+    revision: pluginSettingsRevision(readPluginSettings(root)),
+    enabled: true,
+    configuration: {},
+  }, root);
+  const dryRun = invoke(["run", "firestore", "push", "--dry-run"], { ...process.env, FIREBASE_PROJECT_ID: "example-project" });
   assert.equal(dryRun.status, 0, dryRun.stderr);
   assert.match(dryRun.stdout, /Would push 0 file\(s\)/);
 });

@@ -27,7 +27,7 @@ export interface ReviewCapabilityV1 {
   readonly store: ReviewStoreContract;
   readonly annotations: {
     /** Browser-shaped input: anchor carries optional page_path/kind like the bridge command. Returns the created annotation. */
-    create(input: ReviewAnnotationCreateInputV1): ReviewAnnotationCreateResultV1;
+    create(input: ReviewAnnotationCreateInputV1): Promise<ReviewAnnotationCreateResultV1>;
   };
 }
 
@@ -61,14 +61,14 @@ interface BridgeResult {
 
 export function createReviewAnnotationsV1(store: ReviewStoreContract): ReviewCapabilityV1["annotations"] {
   return Object.freeze({
-    create(input: ReviewAnnotationCreateInputV1): ReviewAnnotationCreateResultV1 {
+    async create(input: ReviewAnnotationCreateInputV1): Promise<ReviewAnnotationCreateResultV1> {
       if (typeof input.comment !== "string" || !input.comment.trim() || typeof input.anchor !== "object"
         || input.anchor === null || Array.isArray(input.anchor)) throw new Error("annotation input is invalid");
       const anchor = input.anchor as Record<string, unknown>;
       const pagePath = typeof anchor.page_path === "string" ? anchor.page_path : store.entryPath;
       const kind: AnnotationKind = anchor.kind === "dom" ? "dom" : "region";
       const { kind: _kind, page_path: _pagePath, ...persistedAnchor } = anchor;
-      const beforeIds = new Set(store.load().annotations.map(({ id }) => id));
+      const beforeIds = new Set((await store.load()).annotations.map(({ id }) => id));
       const payload = {
         kind,
         page_path: pagePath,
@@ -77,7 +77,7 @@ export function createReviewAnnotationsV1(store: ReviewStoreContract): ReviewCap
         comment: input.comment.trim(),
         actor: "human" as const,
       };
-      const review = input.mode === "issue-request" ? store.createIssueRequest(payload) : store.createAnnotation(payload, input.expected_revision);
+      const review = input.mode === "issue-request" ? await store.createIssueRequest(payload) : await store.createAnnotation(payload, input.expected_revision);
       const annotation = review.annotations.find(({ id }) => !beforeIds.has(id));
       if (!annotation) throw new Error("annotation was not created");
       return { review, annotation };
@@ -100,13 +100,19 @@ function bridgeError(request: ReviewBridgeRequestV1, code: string, message: stri
   return { ok: false, error: { code, message, retryable: false, request_id: request.request_id } };
 }
 
+function activeReviewProjection(review: Awaited<ReturnType<ReviewCapabilityV1["store"]["load"]>>) {
+  const annotations = review.annotations.filter(({ status }) => status !== "resolved");
+  const ids = new Set(annotations.map(({ id }) => id));
+  return { ...review, annotations, annotation_order: review.annotations.map(({ id }) => id), events: review.events.filter(({ annotation_id }) => ids.has(annotation_id)) };
+}
+
 /** Plugin-owned transport projection used by the one-beta HTTP compatibility host. */
 export function createReviewBridgeAdapter(review: ReviewCapabilityV1, presentation: ReviewBridgePresentationV1) {
   const store = review.store;
   return Object.freeze({
     async query(name: string, request: ReviewBridgeRequestV1): Promise<ReviewBridgeResultV1> {
       if (name !== "session.get") return bridgeError(request, "NOT_FOUND", "query is not declared by the plugin");
-      const loaded = store.load();
+      const loaded = await store.load();
       return {
         ok: true,
         revision: `review:${loaded.revision}`,
@@ -124,7 +130,7 @@ export function createReviewBridgeAdapter(review: ReviewCapabilityV1, presentati
               ? `/live${new URL(store.target.liveUrl).pathname}${new URL(store.target.liveUrl).search}`
               : `/target/${store.entryPath.split("/").map(encodeURIComponent).join("/")}`,
           },
-          review: store.loadActive(),
+          review: activeReviewProjection(loaded),
           features: { plugin_management: presentation.pluginManagementVisible },
         },
       };
@@ -133,13 +139,13 @@ export function createReviewBridgeAdapter(review: ReviewCapabilityV1, presentati
       if (name !== "annotation.create") return bridgeError(request, "NOT_FOUND", "command is not declared by the plugin");
       const { input } = request;
       try {
-        review.annotations.create({ anchor: input.anchor, comment: input.comment as string, expected_revision: request.expected_revision, mode: "annotation" });
+        await review.annotations.create({ anchor: input.anchor, comment: input.comment as string, expected_revision: request.expected_revision, mode: "annotation" });
       } catch (error) {
         if (error instanceof Error && error.message === "review revision conflict") return bridgeError(request, "CONFLICT", error.message);
         if (error instanceof Error && error.message === "annotation input is invalid") return bridgeError(request, "VALIDATION_FAILED", error.message);
         throw error;
       }
-      const active = store.loadActive();
+      const active = await store.loadActive();
       return { ok: true, revision: `review:${active.revision}`, data: active, effects: [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }] };
     },
   });

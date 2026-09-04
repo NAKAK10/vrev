@@ -57,9 +57,9 @@ export function createPluginScaffold(id: string, workspace = process.cwd(), opti
     ui: {
       renderer_api_version: 1,
       bridge_api_version: 1,
-      contributions: [{ id: "annotation-action", slot: "annotation-workflow.annotation.actions", document: "./ui/annotation-action.ui.json", order: 100 }],
+      contributions: [{ id: "sidebar-tool", slot: "review.sidebar", document: "./ui/annotation-action.ui.json", order: 100 }],
     },
-    requires: [{ capability: "review", api_version: 1, optional: false }],
+    requires: [],
     provides: [],
     commands: [{ name: "hello", module: "./index.js", export: "hello" }],
   });
@@ -86,6 +86,8 @@ export function createPluginScaffold(id: string, workspace = process.cwd(), opti
       files: ["index.js", "README.md", "visual-review.plugin.json", "server/index.js", "server.contract.json", "ui/annotation-action.ui.json", "types.d.ts"],
       engines: { node: ">=20" },
       scripts: { test: "node --test test.js" },
+      devDependencies: { "@visual-review/plugin-sdk": `^${manifest.version}` },
+      visualReview: { apiVersion: 1, manifest: "./visual-review.plugin.json" },
     });
     writeNew(path.join(directory, "index.js"), `/** @param {{ workspaceRoot: string, pluginDirectory: string, args: readonly string[] }} context */\nexport async function hello(context) {\n  console.log(\`Hello from ${manifest.id}: \${context.args.join(" ")}\`);\n}\n`);
     writeNew(path.join(directory, "test.js"), `import assert from "node:assert/strict";\nimport test from "node:test";\nimport { hello } from "./index.js";\n\ntest("exports the hello command", () => {\n  assert.equal(typeof hello, "function");\n});\n`);
@@ -135,7 +137,7 @@ export default provider;
   PluginUiSurfaceExtensionPointV1,
   PluginServerProviderV1,
   PluginBridgeContractV1,
-} from "@nakak10/visual-review";
+} from "@visual-review/plugin-sdk";
 `);
     writeNew(path.join(directory, "README.md"), `# ${title}
 
@@ -173,7 +175,7 @@ JSON manifest fields cannot carry comments, so this section keeps a \`ui.extensi
       }
     ],
     "contributions": [
-      { "id": "annotation-action", "slot": "annotation-workflow.annotation.actions", "document": "./ui/annotation-action.ui.json", "order": 100 }
+      { "id": "sidebar-tool", "slot": "review.sidebar", "document": "./ui/annotation-action.ui.json", "order": 100 }
     ]
   }
 }

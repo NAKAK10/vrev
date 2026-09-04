@@ -12,6 +12,7 @@ import { findWorkspaceRoot, normalizeTargetUrl } from "./paths.js";
 import { installPlugin, installedPluginDirectory, listPlugins, removePlugin, upgradeBundledPlugin } from "./plugin-registry.js";
 import { loadPluginCommand, pluginRuntimeContext } from "./plugin-runtime.js";
 import { createPluginScaffold } from "./plugin-scaffold.js";
+import { pluginSettingsRevision, readPluginSettings, updatePluginSettings } from "./plugin-settings.js";
 import { createReviewCapability } from "./review-capability.js";
 import type { ReviewStore } from "./review-store.js";
 
@@ -127,7 +128,7 @@ export function parseAnnotationArguments(argv: string[], cwd = process.cwd()): A
   return { action, projectRoot: path.resolve(cwd, projectRoot), reviewPath, annotationId };
 }
 
-function reviewStoreForPath(args: AnnotationArguments): ReviewStore {
+async function reviewStoreForPath(args: AnnotationArguments): Promise<ReviewStore> {
   const supplied = path.resolve(args.projectRoot, ...args.reviewPath.split("/"));
   const raw = readFileSync(supplied, "utf8");
   let value: unknown;
@@ -140,7 +141,7 @@ function reviewStoreForPath(args: AnnotationArguments): ReviewStore {
   const store = createReviewCapability((target as { entry_path: string }).entry_path, { projectRoot: args.projectRoot }).store;
   const canonical = path.relative(store.target.projectRoot, store.path).split(path.sep).join("/");
   if (canonical !== args.reviewPath || realpathSync(store.path) !== realpathSync(supplied)) throw new Error("review-path does not match the canonical ReviewStore path");
-  store.load();
+  await store.load();
   return store;
 }
 
@@ -159,13 +160,19 @@ async function readStdinBody(): Promise<string> {
   return body;
 }
 
-const DEFAULT_PLUGIN_IDS = ["review", "github-issue", "custom-command", "annotation-workflow", "page-map"] as const;
+const DEFAULT_PLUGIN_IDS = ["review", "ai", "firestore", "annotation-workflow", "page-map", "github-issue"] as const;
+const OBSOLETE_PLUGIN_IDS = ["runner-local", "custom-command"] as const;
 
 export async function ensureDefaultPlugins(
   workspaceRoot: string,
   defaultBundledPluginsRoot = bundledPluginsRoot(),
 ): Promise<string[]> {
   const installedIds = new Set(listPlugins(workspaceRoot).map(({ id }) => id));
+  for (const obsoleteId of OBSOLETE_PLUGIN_IDS) {
+    if (!installedIds.has(obsoleteId)) continue;
+    removePlugin(obsoleteId, workspaceRoot);
+    installedIds.delete(obsoleteId);
+  }
   const installed: string[] = [];
   for (const id of DEFAULT_PLUGIN_IDS) {
     const bundledSource = path.resolve(defaultBundledPluginsRoot, id);
@@ -178,6 +185,9 @@ export async function ensureDefaultPlugins(
       const result = await installPlugin(bundledSource, workspaceRoot);
       installed.push(`${result.plugin.id}@${result.plugin.version}`);
       installedIds.add(result.plugin.id);
+      if (id === "firestore") {
+        updatePluginSettings(id, result.plugin.manifest, { revision: pluginSettingsRevision(readPluginSettings(workspaceRoot)), enabled: false, configuration: {} }, workspaceRoot);
+      }
     } catch (error) {
       const concurrentWinner = listPlugins(workspaceRoot).find((plugin) => plugin.id === id);
       if (!concurrentWinner || !(error instanceof Error) || !error.message.startsWith("plugin is already installed:")) throw error;
@@ -355,12 +365,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   if (argv[0] === "annotation") {
     const args = parseAnnotationArguments(argv);
-    const store = reviewStoreForPath(args);
-    if (args.action === "add-message") store.addMessage(args.annotationId, { actor: "ai", body: await readStdinBody() });
-    else if (args.action === "set-status") store.setStatus(args.annotationId, { actor: "ai", status: "addressed" });
+    const store = await reviewStoreForPath(args);
+    if (args.action === "add-message") await store.addMessage(args.annotationId, { actor: "ai", body: await readStdinBody() });
+    else if (args.action === "set-status") await store.setStatus(args.annotationId, { actor: "ai", status: "addressed" });
     else {
       const draft = normalizeGitHubIssueDraft(JSON.parse(await readStdinBody()) as unknown);
-      store.setIssueDraftReady(args.annotationId, draft.title, draft.body);
+      await store.setIssueDraftReady(args.annotationId, draft.title, draft.body);
     }
     return;
   }

@@ -1,0 +1,31 @@
+{
+  "name": "@visual-review/ai",
+  "version": "1.0.1",
+  "description": "Reusable AI capability and integration-method facade for Visual Review",
+  "license": "UNLICENSED",
+  "type": "module",
+  "files": [
+    "README.md",
+    "server",
+    "server.contract.json",
+    "ui",
+    "visual-review.plugin.json"
+  ],
+  "exports": {
+    ".": "./server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "visualReview": {
+    "apiVersion": 1,
+    "manifest": "./visual-review.plugin.json"
+  }
+}

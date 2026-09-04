@@ -19,7 +19,6 @@ test("AI batch controls and compiled script are present", () => {
     "ai-batch-form",
     "ai-settings-open",
     "ai-settings-dialog",
-    "ai-cli",
     "ai-max-parallel",
     "ai-auto-run",
     "ai-open-count",
@@ -28,8 +27,8 @@ test("AI batch controls and compiled script are present", () => {
     assert.match(sourceHtml, new RegExp(`id=["']${id}["']`), id);
   }
   assert.match(sourceHtml, /<option value="10">10<\/option>/);
-  assert.match(sourceHtml, /<option value="copilot">GitHub Copilot<\/option>/);
-  assert.match(sourceHtml, /<option value="pi">Pi<\/option>/);
+  assert.doesNotMatch(sourceHtml, /id="ai-cli"|name="cli"|AIを選択/);
+  assert.match(sourceHtml, /href="\/settings\/plugins#ai">利用するAIと外部AIコマンドはAIパッケージで設定/);
   assert.match(sourceHtml, /id="global-settings-link"[^>]*hidden/);
   assert.match(sourceHtml, /class="sidebar-section ai-jobs-section"[^>]*hidden/);
   assert.match(sourceHtml, /class="review-layout workflow-disabled"/);
@@ -70,13 +69,10 @@ test("jobs UI keeps annotation cards synchronized without rendering internal job
   assert.match(jobsSource, /visual-review:auto-run/);
   assert.match(jobsSource, /window\.location\.href = "\/settings\/plugins#annotation-workflow"/);
   assert.match(jobsSource, /form\.hidden = autoRunCheckbox\.checked/);
-  assert.match(jobsSource, /requestJson\("\/api\/jobs\/custom-commands"\)/);
-  assert.match(jobsSource, /return \{ cli: "custom", runner_id: custom\.runner_id \}/);
-  assert.doesNotMatch(jobsSource, /\bcustom_name\b|\bcustom_command\b|visual-review:custom-commands/);
+  assert.match(jobsSource, /body: JSON\.stringify\(\{ max_parallel: maxParallel \}\)/);
+  assert.doesNotMatch(jobsSource, /\/api\/jobs\/custom-commands|runner_id|selectedConfiguration|CLI_STORAGE_KEY/);
   assert.match(jobsSource, /response\.enabled === false[^]*aiJobsSection\.hidden = true;[^]*reviewSidebar\.hidden = true;[^]*workflow-disabled/);
   assert.match(jobsSource, /annotationWorkflowEnabled = true;[^]*aiJobsSection\.hidden = false;[^]*reviewSidebar\.hidden = false;[^]*classList\.remove\("workflow-disabled"\)/);
-  assert.match(jobsSource, /builtInValues\.has\("claude"\) \? "claude"/);
-  assert.match(jobsSource, /renderCustomCommands\(allowCustomCommands\)/);
   assert.match(sourceHtml, /プラグイン固有の設定は、左上の設定画面/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-id["']/);
   assert.doesNotMatch(sourceHtml, /id=["']ai-session-note["']/);
@@ -92,8 +88,7 @@ test("legacy plugin settings UI stays generic while declarative contributions ow
   assert.match(pluginSettingsHtml, /class="details-button"[^>]*aria-haspopup="dialog"/);
   assert.match(pluginSettingsHtml, /id="plugin-details-dialog"/);
   assert.match(pluginSettingsHtml, /id="readme-content" class="markdown-body"/);
-  assert.match(pluginSettingsHtml, /class="dialog-section custom-command-manager"/);
-  assert.match(pluginSettingsHtml, /class="dialog-section workflow-settings"/);
+  assert.doesNotMatch(pluginSettingsHtml, /custom-command-manager|workflow-cli|workflow-settings/);
   assert.match(pluginSettingsHtml, /id="toast-region"[^>]*aria-live="polite"/);
   assert.match(pluginSettingsSource, /async function autosaveToggle/);
   assert.match(pluginSettingsSource, /body: JSON\.stringify\(\{ revision, enabled, configuration: committedConfiguration\(plugin\) \}\)/);
@@ -204,8 +199,8 @@ test("annotation marks use translucent fills instead of red outlines", () => {
 
 test("review target renders before nonessential sidebar resources finish", () => {
   assert.match(rendererSource, /const activeStage = surface\.contributions\.find\(\(contribution\) => `\$\{contribution\.plugin_id\}\/\$\{contribution\.id\}` === activeStageKey\)/);
-  assert.match(rendererSource, /if \(contribution === activeStage\) await Promise\.all\(loads\)/);
-  assert.match(rendererSource, /rerender\(\);\s*if \(resourceLoads\.length\) void Promise\.all\(resourceLoads\)\.then\(\(\) => rerender\(\)\)/);
+  assert.match(rendererSource, /\(contribution === activeStage \? activeStageLoads : resourceLoads\)\.push\(\.\.\.loads\)/);
+  assert.match(rendererSource, /await Promise\.all\(activeStageLoads\);\s*rerender\(\);\s*if \(resourceLoads\.length\) void Promise\.all\(resourceLoads\)\.then\(\(\) => rerender\(\)\)/);
 });
 
 test("running AI shows only its start, latest status, and stop control", () => {
@@ -219,7 +214,7 @@ test("running AI shows only its start, latest status, and stop control", () => {
 test("failed annotations use a rerun action and keep the human force-resolve escape route", () => {
   assert.match(workflowSidebarSource, /"failed"[^]*"再実行"[^]*"command": "jobs\.retry"/);
   assert.match(workflowSidebarSource, /"resolved"[^]*"再オープン"/);
-  assert.match(workflowSidebarSource, /\["open", "in_progress", "failed"\][^]*"強制的に解決"/);
+  assert.match(workflowSidebarSource, /\[\s*"open",\s*"in_progress",\s*"failed"\s*\][^]*"強制的に解決"/);
 });
 
 test("declarative toasts show their remaining time and can be dismissed", () => {

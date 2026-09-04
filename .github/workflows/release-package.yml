@@ -1,4 +1,4 @@
-name: Publish package
+name: Publish packages to npm
 
 on:
   release:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
     steps:
       - name: Check out the released tag
         uses: actions/checkout@v5
@@ -27,15 +27,17 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: '@nakak10'
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm version with trusted publishing support
+        run: npm install --global npm@latest
 
       - name: Apply release tag version to every package
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tag must be a semantic version such as v1.1.9: $RELEASE_TAG" >&2
+            echo "Release tag must be a semantic version such as v1.3.0: $RELEASE_TAG" >&2
             exit 1
           fi
 
@@ -44,16 +46,19 @@ jobs:
           RELEASE_VERSION="$release_version" node <<'NODE'
           const fs = require("node:fs");
           const files = [
+            "packages/plugin-sdk/package.json",
             "plugins/review/package.json",
             "plugins/review/visual-review.plugin.json",
-            "plugins/github-issue/package.json",
-            "plugins/github-issue/visual-review.plugin.json",
-            "plugins/custom-command/package.json",
-            "plugins/custom-command/visual-review.plugin.json",
+            "plugins/ai/package.json",
+            "plugins/ai/visual-review.plugin.json",
             "plugins/annotation-workflow/package.json",
             "plugins/annotation-workflow/visual-review.plugin.json",
-            "plugins/firebase-storage/package.json",
-            "plugins/firebase-storage/visual-review.plugin.json",
+            "plugins/github-issue/package.json",
+            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/firestore/package.json",
+            "plugins/firestore/visual-review.plugin.json",
+            "plugins/page-map/package.json",
+            "plugins/page-map/visual-review.plugin.json",
           ];
           for (const file of files) {
             const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -72,16 +77,19 @@ jobs:
           const files = [
             "package.json",
             "package-lock.json",
+            "packages/plugin-sdk/package.json",
             "plugins/review/package.json",
             "plugins/review/visual-review.plugin.json",
-            "plugins/github-issue/package.json",
-            "plugins/github-issue/visual-review.plugin.json",
-            "plugins/custom-command/package.json",
-            "plugins/custom-command/visual-review.plugin.json",
+            "plugins/ai/package.json",
+            "plugins/ai/visual-review.plugin.json",
             "plugins/annotation-workflow/package.json",
             "plugins/annotation-workflow/visual-review.plugin.json",
-            "plugins/firebase-storage/package.json",
-            "plugins/firebase-storage/visual-review.plugin.json",
+            "plugins/github-issue/package.json",
+            "plugins/github-issue/visual-review.plugin.json",
+            "plugins/firestore/package.json",
+            "plugins/firestore/visual-review.plugin.json",
+            "plugins/page-map/package.json",
+            "plugins/page-map/visual-review.plugin.json",
           ];
           for (const file of files) {
             const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -101,9 +109,6 @@ jobs:
       - name: Test and build
         run: npm test
 
-      - name: Inspect publish contents
-        run: npm pack --dry-run
-
       - name: Select npm dist-tag
         id: dist-tag
         run: |
@@ -116,28 +121,31 @@ jobs:
           fi
           echo "value=$dist_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Publish package when its version is new
+      - name: Inspect every npm package
         run: |
-          name="$(node -p "require('./package.json').name")"
-          version="$(node -p "require('./package.json').version")"
-          if npm view "${name}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
-            echo "Skipping existing ${name}@${version}"
-          else
-            npm publish --tag "${{ steps.dist-tag.outputs.value }}"
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm pack --dry-run
+          npm pack --dry-run ./packages/plugin-sdk
+          for directory in dist/plugins/review dist/plugins/ai dist/plugins/firestore dist/plugins/annotation-workflow dist/plugins/page-map dist/plugins/github-issue; do
+            npm pack --dry-run "./${directory}"
+          done
 
-      - name: Publish plugin packages when their version is new
+      - name: Publish missing package versions to npm
+        env:
+          DIST_TAG: ${{ steps.dist-tag.outputs.value }}
         run: |
-          for directory in plugins/review plugins/github-issue plugins/custom-command plugins/annotation-workflow plugins/firebase-storage; do
+          publish_if_missing() {
+            directory="$1"
             name="$(node -p "require('./${directory}/package.json').name")"
             version="$(node -p "require('./${directory}/package.json').version")"
-            if npm view "${name}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            if npm view "${name}@${version}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
               echo "Skipping existing ${name}@${version}"
             else
-              npm publish "./${directory}" --tag latest
+              npm publish "./${directory}" --tag "$DIST_TAG" --access public --provenance
             fi
+          }
+
+          publish_if_missing .
+          publish_if_missing packages/plugin-sdk
+          for directory in dist/plugins/review dist/plugins/ai dist/plugins/firestore dist/plugins/annotation-workflow dist/plugins/page-map dist/plugins/github-issue; do
+            publish_if_missing "$directory"
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

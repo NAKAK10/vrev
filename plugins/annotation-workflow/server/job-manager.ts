@@ -1,44 +1,24 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { buildCommand, type CommandExecutor, type CommandResult, type RunningCommand } from "./adapters.js";
+import type { CommandExecutor, CommandResult, RunningCommand } from "./adapters.js";
 import { JobStore } from "./job-store.js";
-import type { EnqueueJobsInput, ReviewCapabilityV1, ReviewJob, ReviewJobState, RunnerRegistryV1, WorkflowAnnotation, WorkflowTaskCapabilityV1 } from "./workflow-types.js";
+import { createWorkflowRuntimeSnapshot, type WorkflowRuntimeSnapshot } from "./runtime-snapshot.js";
+import type { AiCapabilityV1, EnqueueJobsInput, ReviewCapabilityV1, ReviewJob, ReviewJobState, WorkflowAnnotation } from "./workflow-types.js";
 
-const SESSION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const ANNOTATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function now(): string { return new Date().toISOString(); }
 
-function validateAttach(value: string): string {
-  let url: URL;
-  try { url = new URL(value); } catch { throw new Error("opencode_attach must be a loopback HTTP URL"); }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "::1"].includes(hostname) || url.username || url.password || url.search || url.hash) {
-    throw new Error("opencode_attach must be a loopback HTTP URL without credentials, query, or fragment");
-  }
-  return value;
-}
-
-export function validateEnqueueInput(value: Record<string, unknown>): Required<EnqueueJobsInput> {
-  const allowed = new Set(["cli", "max_parallel", "session_id", "opencode_attach", "runner_id", "annotation_ids"]);
+export function validateEnqueueInput(value: Record<string, unknown>): { max_parallel: number; annotation_ids: string[] | null; cli?: undefined; runner_id?: undefined } {
+  const allowed = new Set(["max_parallel", "annotation_ids"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("job batch contains an unknown field");
-  if (!["opencode", "claude", "codex", "copilot", "pi", "custom"].includes(String(value.cli))) throw new Error("cli is unsupported");
   if (!Number.isInteger(value.max_parallel) || (value.max_parallel as number) < 1 || (value.max_parallel as number) > 10) throw new Error("max_parallel must be an integer from 1 to 10");
-  const sessionId = value.session_id === undefined ? null : value.session_id;
-  if (sessionId !== null && (typeof sessionId !== "string" || !SESSION_ID.test(sessionId))) throw new Error("session_id is invalid");
-  if (sessionId !== null && value.cli !== "opencode" && value.cli !== "claude" && value.cli !== "codex") throw new Error("session_id is not available for this CLI");
-  const attach = value.opencode_attach === undefined ? null : value.opencode_attach;
-  if (attach !== null && typeof attach !== "string") throw new Error("opencode_attach must be a string or null");
-  if (attach !== null && value.cli !== "opencode") throw new Error("opencode_attach is only valid for opencode");
-  const runnerId = value.runner_id === undefined ? null : value.runner_id;
-  if (value.cli === "custom") {
-    if (typeof runnerId !== "string" || !runnerId.trim() || runnerId.length > 128) throw new Error("runner_id must be a nonblank opaque identifier");
-  } else if (runnerId !== null) throw new Error("runner_id requires cli=custom");
   const annotationIds = value.annotation_ids === undefined ? null : value.annotation_ids;
-  if (annotationIds !== null && (!Array.isArray(annotationIds) || annotationIds.length < 1 || annotationIds.length > 2000 || annotationIds.some((id) => typeof id !== "string" || !SESSION_ID.test(id)) || new Set(annotationIds).size !== annotationIds.length)) {
+  if (annotationIds !== null && (!Array.isArray(annotationIds) || annotationIds.length < 1 || annotationIds.length > 2000 || annotationIds.some((id) => typeof id !== "string" || !ANNOTATION_ID.test(id)) || new Set(annotationIds).size !== annotationIds.length)) {
     throw new Error("annotation_ids must contain unique valid annotation IDs");
   }
-  return { cli: value.cli as Required<EnqueueJobsInput>["cli"], max_parallel: value.max_parallel as number, session_id: sessionId, opencode_attach: attach === null ? null : validateAttach(attach), runner_id: runnerId, annotation_ids: annotationIds as string[] | null };
+  return { max_parallel: value.max_parallel as number, annotation_ids: annotationIds as string[] | null };
 }
 
 const COMPLETION_START = "VISUAL_REVIEW_COMPLETION_START";
@@ -69,63 +49,62 @@ function extractCompletionOutput(output: string): Array<{ annotationId: string; 
   return [...completed.values()];
 }
 
-export function buildBatchPrompt(reviewPath: string, annotationIds: string[], maxParallel: number, taskInstructions = ""): string {
+export function buildBatchPrompt(reviewPath: string, annotationIds: string[], maxParallel: number, explicitContextPath?: string): string {
   const ids = annotationIds.map((id) => `- ${id}`).join("\n");
-  const contextPath = path.posix.join(path.posix.dirname(reviewPath), "context.json");
-  const extensionTasks = taskInstructions ? `${taskInstructions}\n\n` : "";
-  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review file: ${reviewPath}\ncontext file: ${contextPath}\n${ids}\n\n${extensionTasks}通常annotationでは完了速度を優先し、関連fileを一度だけ読み、同じfileへの指摘はまとめて1回で編集してください。annotationが5件以下、または同じfileに集中している場合はsubagentを使わず親coordinatorが直接処理してください。それ以外の場合のみ最大${maxParallel}個のread-only subagentで異なるfileの調査を並列化できます。subagentはファイル変更禁止で、親coordinatorだけが編集します。context fileのdiscovery_statusがcompletedならworkspace再調査は禁止です。pendingの場合だけmanifest、target route、source hintからprimary_projectとrelated_scopesを最小限調査し、repository相対pathでcompletedへ更新してください。コメント本文はpromptやコマンドラインへ展開せずreview fileから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintはrepository内で実在確認してください。編集後は実行環境で利用可能なbrowser確認手段を使い、同じpage_pathとviewport_modeの組み合わせごとに1回だけvisual検証してください。指摘へ直接必要な最小限のsource確認・編集・検証だけを行い、広範な回帰調査、無関係なfile探索、同じpageの重複screenshotは禁止です。既存の未commit変更を保持し、対象scope以外を編集しないでください。git add、commit、push、stash、resetは禁止です。message受け渡し用の一時fileをrepository内へ作らずstdinを使ってください。各annotationの検証が済んだ直後、追加調査より先にhostへ完了結果を返してください。review fileやannotation CLIへ書き込まず、通常annotationごとに最終応答へ次の3行だけを出力してください。JSONは1行でannotation_idと人間向けの完了messageを含めます。hostがReviewCapability経由でmessage追加とaddressed変更を行います。全annotationを最後まで保留しないでください。\nVISUAL_REVIEW_COMPLETION_START\n{\"annotation_id\":\"<ID>\",\"message\":\"実装・検証内容\"}\nVISUAL_REVIEW_COMPLETION_END`;
+  const contextPath = explicitContextPath ?? path.join(path.dirname(reviewPath), "context.json").split(path.sep).join("/");
+  return `Visual review batch coordinatorとして次のannotation IDだけを処理してください。review snapshot: ${reviewPath}\ncontext snapshot: ${contextPath}\n${ids}\n\nreview/contextはauthoritative storageから作られた実行時snapshotです。読み取り専用として扱い、変更や削除をしないでください。通常annotationでは完了速度を優先し、関連fileを一度だけ読み、同じfileへの指摘はまとめて1回で編集してください。annotationが5件以下、または同じfileに集中している場合はsubagentを使わず親coordinatorが直接処理してください。それ以外の場合のみ最大${maxParallel}個のread-only subagentで異なるfileの調査を並列化できます。subagentはファイル変更禁止で、親coordinatorだけが編集します。context snapshotのdiscovery_statusがcompletedならworkspace再調査は禁止です。pendingの場合だけmanifest、target route、source hintからprimary_projectとrelated_scopesを最小限調査し、調査結果はsource編集にのみ利用してください。コメント本文はpromptやコマンドラインへ展開せずreview snapshotから取得してください。localhost annotationではanchor.source_hintのframework/component/fileを優先し、次にselector、text_excerpt、routeから編集元を特定してください。source_hintはrepository内で実在確認してください。編集後は実行環境で利用可能なbrowser確認手段を使い、同じpage_pathとviewport_modeの組み合わせごとに1回だけvisual検証してください。指摘へ直接必要な最小限のsource確認・編集・検証だけを行い、広範な回帰調査、無関係なfile探索、同じpageの重複screenshotは禁止です。既存の未commit変更を保持し、対象scope以外を編集しないでください。git add、commit、push、stash、resetは禁止です。message受け渡し用の一時fileをrepository内へ作らずstdinを使ってください。各annotationの検証が済んだ直後、追加調査より先にhostへ完了結果を返してください。review snapshotやannotation CLIへ書き込まず、通常annotationごとに最終応答へ次の3行だけを出力してください。JSONは1行でannotation_idと人間向けの完了messageを含めます。hostがReviewCapability経由でmessage追加とaddressed変更を行います。全annotationを最後まで保留しないでください。\nVISUAL_REVIEW_COMPLETION_START\n{\"annotation_id\":\"<ID>\",\"message\":\"実装・検証内容\"}\nVISUAL_REVIEW_COMPLETION_END`;
 }
 
 interface Checkpoint { threadLength: number; startedAt: string }
-interface RunningBatch { command: RunningCommand; jobIds: string[]; checkpoints: Map<string, Checkpoint> }
+interface RunningBatch { command: RunningCommand; jobIds: string[]; checkpoints: Map<string, Checkpoint>; snapshot: WorkflowRuntimeSnapshot }
 export interface JobManagerOptions {
-  executor: CommandExecutor;
-  runnerRegistry?: RunnerRegistryV1;
-  taskCapability?: WorkflowTaskCapabilityV1;
+  executor?: CommandExecutor;
+  ai?: AiCapabilityV1;
+  [key: string]: unknown;
 }
 
 export class JobManager {
   readonly jobStore: JobStore;
   readonly reviewStore;
-  private readonly executor: CommandExecutor;
-  private readonly reviewPath: string;
-  private readonly runnerRegistry: RunnerRegistryV1 | undefined;
-  readonly taskCapability: WorkflowTaskCapabilityV1 | undefined;
+  private readonly executor: CommandExecutor | undefined;
+  private readonly ai: AiCapabilityV1 | undefined;
   private readonly running = new Map<string, RunningBatch>();
   private scheduling = false;
   private stopped = true;
+  private lifecycleGeneration = 0;
 
   constructor(readonly reviewCapability: ReviewCapabilityV1, options: JobManagerOptions) {
     this.reviewStore = reviewCapability.store;
     this.jobStore = new JobStore(this.reviewStore.path);
     this.executor = options.executor;
-    this.runnerRegistry = options.runnerRegistry;
-    this.taskCapability = options.taskCapability;
-    this.reviewPath = path.relative(this.reviewStore.target.projectRoot, this.reviewStore.path).split(path.sep).join("/");
+    this.ai = options.ai;
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (!this.stopped) return;
+    const generation = ++this.lifecycleGeneration;
     this.jobStore.recoverRunning();
-    this.reconcileLateCompletionMessages();
-    this.reconcileInProgressAnnotations();
+    await this.reconcileLateCompletionMessages();
+    if (generation !== this.lifecycleGeneration) return;
+    await this.reconcileInProgressAnnotations();
+    if (generation !== this.lifecycleGeneration) return;
     this.stopped = false;
     this.schedule();
   }
-  list(): ReviewJobState {
-    this.reconcileLateCompletionMessages();
+  async list(): Promise<ReviewJobState> {
+    await this.reconcileLateCompletionMessages();
     return this.jobStore.load();
   }
 
-  enqueue(rawInput: Record<string, unknown>): { batch_id: string; jobs: ReviewJob[] } {
+  async enqueue(rawInput: Record<string, unknown>): Promise<{ batch_id: string; jobs: ReviewJob[] }> {
     const input = validateEnqueueInput(rawInput);
-    const review = this.reviewStore.loadActive();
+    const review = await this.reviewStore.loadActive();
     const jobSnapshot = this.jobStore.load();
     const activeJobs = jobSnapshot.jobs.filter(({ state }) => state === "queued" || state === "running");
     const activeIds = new Set(activeJobs.map(({ annotation_id }) => annotation_id));
     const activePages = new Set(activeJobs.map(({ page_path }) => page_path));
     const selectedIds = input.annotation_ids ? new Set(input.annotation_ids) : null;
-    const annotations = review.annotations.filter(({ status, id }) => status === "open" && !activeIds.has(id) && (!selectedIds || selectedIds.has(id)));
+    const annotations = review.annotations.filter((annotation) => annotation.status === "open" && !activeIds.has(annotation.id) && (!selectedIds || selectedIds.has(annotation.id)));
     const batchId = randomUUID();
     const created = now();
     const candidates = annotations.map((annotation): ReviewJob => {
@@ -137,7 +116,7 @@ export class JobManager {
       } catch (error) {
         state = "failed"; summary = `failed: page unavailable before enqueue (${this.errorMessage(error)})`;
       }
-      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: sourceHash, deferred_checkpoint: state === "queued" && activePages.has(annotation.page_path), cli: input.cli, custom_name: null, session_id: input.session_id, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
+      return { id: randomUUID(), batch_id: batchId, annotation_id: annotation.id, page_path: annotation.page_path, source_hash: sourceHash, deferred_checkpoint: state === "queued" && activePages.has(annotation.page_path), cli: "ai", custom_name: null, session_id: null, state, created, started: null, finished: state === "queued" ? null : created, exit_code: null, summary };
     });
     const jobs: ReviewJob[] = [];
     if (candidates.length > 0) {
@@ -145,37 +124,39 @@ export class JobManager {
         const claimed = new Set(state.jobs.filter(({ state: jobState }) => jobState === "queued" || jobState === "running").map(({ annotation_id }) => annotation_id));
         jobs.push(...candidates.filter(({ annotation_id }) => !claimed.has(annotation_id)));
         if (!jobs.length) return;
-        state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: input.opencode_attach, runner_id: input.runner_id, custom_command: null });
+        state.batches.push({ id: batchId, max_parallel: input.max_parallel, opencode_attach: null, runner_id: null, custom_command: null });
         state.jobs.push(...jobs);
       });
       for (const job of jobs) {
-        if (job.state === "queued") this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
-        else if (job.state === "failed" || job.state === "skipped") this.markAnnotationFailed(job.annotation_id, job.summary);
+        if (job.state === "queued") await this.reviewStore.setStatus(job.annotation_id, { actor: "ai", status: "in_progress" });
+        else if (job.state === "failed" || job.state === "skipped") await this.markAnnotationFailed(job.annotation_id, job.summary);
       }
     }
     this.schedule();
     return { batch_id: batchId, jobs };
   }
 
-  retry(annotationId: string, rawInput: Record<string, unknown>): { batch_id: string; jobs: ReviewJob[] } {
-    const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
+  async retry(annotationId: string, rawInput: Record<string, unknown>): Promise<{ batch_id: string; jobs: ReviewJob[] }> {
+    const active0 = await this.reviewStore.loadActive();
+    const annotation = active0.annotations.find(({ id }) => id === annotationId);
     if (!annotation || annotation.status !== "failed") throw new Error("再実行できる失敗状態の注釈が見つかりません。");
     const active = this.jobStore.load().jobs.some((job) => job.annotation_id === annotationId && (job.state === "queued" || job.state === "running"));
     if (active) throw new Error("この注釈のAI修正はすでに実行中です。");
     validateEnqueueInput({ ...rawInput, annotation_ids: [annotationId] });
-    this.reviewStore.setStatus(annotationId, { actor: "human", status: "open" });
+    await this.reviewStore.setStatus(annotationId, { actor: "human", status: "open" });
     try {
-      const result = this.enqueue({ ...rawInput, annotation_ids: [annotationId] });
+      const result = await this.enqueue({ ...rawInput, annotation_ids: [annotationId] });
       if (result.jobs.length !== 1) throw new Error("再実行するAIジョブを開始できませんでした。");
       return result;
     } catch (error) {
-      const current = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
-      if (current?.status === "open") this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
+      const currentActive = await this.reviewStore.loadActive();
+      const current = currentActive.annotations.find(({ id }) => id === annotationId);
+      if (current?.status === "open") await this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
       throw error;
     }
   }
 
-  cancel(id: string): ReviewJob {
+  async cancel(id: string): Promise<ReviewJob> {
     const existing = this.jobStore.load().jobs.find((job) => job.id === id);
     if (!existing) throw new Error(`job not found: ${id}`);
     if (existing.state === "queued") {
@@ -184,7 +165,7 @@ export class JobManager {
         const job = stored.jobs.find((candidate) => candidate.id === id);
         if (job?.state === "queued") { job.state = "cancelled"; job.finished = timestamp; job.summary = "cancelled before start"; }
       });
-      this.reopenInProgressAnnotation(existing.annotation_id);
+      await this.reopenInProgressAnnotation(existing.annotation_id);
       this.schedule();
       return state.jobs.find((job) => job.id === id)!;
     }
@@ -193,10 +174,12 @@ export class JobManager {
   }
 
   async close(): Promise<void> {
+    this.lifecycleGeneration += 1;
     this.stopped = true;
     const batches = [...this.running.values()];
     batches.forEach(({ command }) => command.cancel());
     await Promise.allSettled(batches.map(({ command }) => command.result));
+    await Promise.allSettled(batches.map(({ snapshot }) => snapshot.cleanup()));
   }
 
   private errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -213,28 +196,30 @@ export class JobManager {
     if (exit) return `AIコマンドが終了コード${exit}で失敗しました。`;
     return "AI修正を完了できませんでした。";
   }
-  private markAnnotationFailed(annotationId: string, summary: string): void {
+  private async markAnnotationFailed(annotationId: string, summary: string): Promise<void> {
     try {
-      const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
+      const active = await this.reviewStore.loadActive();
+      const annotation = active.annotations.find(({ id }) => id === annotationId);
       if (!annotation || !["open", "in_progress"].includes(annotation.status)) return;
-      this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}` });
-      this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
+      await this.reviewStore.addMessage(annotationId, { actor: "ai", body: `AI修正に失敗しました。${this.failureDescription(summary)}` });
+      await this.reviewStore.setStatus(annotationId, { actor: "ai", status: "failed" });
     } catch { /* annotation already changed or review unavailable */ }
   }
-  private markAnnotationAddressed(annotationId: string): void {
+  private async markAnnotationAddressed(annotationId: string): Promise<void> {
     try {
-      const annotation = this.reviewStore.loadActive().annotations.find(({ id }) => id === annotationId);
+      const active = await this.reviewStore.loadActive();
+      const annotation = active.annotations.find(({ id }) => id === annotationId);
       if (annotation && ["open", "in_progress", "failed"].includes(annotation.status)) {
-        this.reviewStore.setStatus(annotationId, { actor: "ai", status: "addressed" });
+        await this.reviewStore.setStatus(annotationId, { actor: "ai", status: "addressed" });
       }
     } catch { /* annotation already changed or review unavailable */ }
   }
   private isCompletionMessage(message: WorkflowAnnotation["thread"][number], startedAt: string): boolean {
     return message.actor === "ai" && message.at >= startedAt && !message.body.startsWith("AI修正に失敗しました。");
   }
-  private reconcileLateCompletionMessages(): void {
+  private async reconcileLateCompletionMessages(): Promise<void> {
     let annotations: WorkflowAnnotation[];
-    try { annotations = this.reviewStore.loadActive().annotations; } catch { return; }
+    try { annotations = (await this.reviewStore.loadActive()).annotations; } catch { return; }
     const snapshot = this.jobStore.load();
     const latest = new Map<string, ReviewJob>();
     for (const job of snapshot.jobs) latest.set(job.annotation_id, job);
@@ -262,18 +247,19 @@ export class JobManager {
       const annotation = annotations.find(({ id }) => id === job.annotation_id);
       const hasCompletionMessage = annotation?.thread.some((message) => this.isCompletionMessage(message, job.started!)) === true;
       if (annotation && !hasCompletionMessage) {
-        try { this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" }); } catch { /* archived or already changed */ }
+        try { await this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" }); } catch { /* archived or already changed */ }
       }
-      this.markAnnotationAddressed(job.annotation_id);
+      await this.markAnnotationAddressed(job.annotation_id);
     }
   }
-  private reopenInProgressAnnotation(annotationId: string): void {
-    try { this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
+  private async reopenInProgressAnnotation(annotationId: string): Promise<void> {
+    try { await this.reviewStore.setStatus(annotationId, { actor: "ai", status: "open" }); } catch { /* status already changed or review unavailable */ }
   }
-  private reconcileInProgressAnnotations(): void {
+  private async reconcileInProgressAnnotations(): Promise<void> {
     const active = new Set(this.jobStore.load().jobs.filter(({ state }) => state === "queued" || state === "running").map(({ annotation_id }) => annotation_id));
-    for (const annotation of this.reviewStore.loadActive().annotations) {
-      if (annotation.status === "in_progress" && !active.has(annotation.id)) this.reopenInProgressAnnotation(annotation.id);
+    const currentActive = await this.reviewStore.loadActive();
+    for (const annotation of currentActive.annotations) {
+      if (annotation.status === "in_progress" && !active.has(annotation.id)) await this.reopenInProgressAnnotation(annotation.id);
     }
   }
   private pageHash(annotation: Pick<WorkflowAnnotation, "page_path">): string {
@@ -282,7 +268,9 @@ export class JobManager {
   private schedule(): void {
     if (this.stopped || this.scheduling) return;
     this.scheduling = true;
-    queueMicrotask(() => { void this.dispatchAvailable().catch(() => undefined).finally(() => {
+    // A macrotask boundary lets the enqueue caller finish immediate workspace changes before the
+    // launch checkpoint is evaluated; the checkpoint remains the authoritative pre-launch guard.
+    setImmediate(() => { void this.dispatchAvailable().catch(() => undefined).finally(() => {
       this.scheduling = false;
       if (!this.stopped && this.running.size === 0 && this.jobStore.load().jobs.some(({ state }) => state === "queued")) this.schedule();
     }); });
@@ -290,6 +278,7 @@ export class JobManager {
 
   private async dispatchAvailable(): Promise<void> {
     if (this.stopped || this.running.size > 0) return;
+    const generation = this.lifecycleGeneration;
     const snapshot = this.jobStore.load();
     const candidate = snapshot.jobs.find(({ state }) => state === "queued");
     if (!candidate) return;
@@ -313,27 +302,28 @@ export class JobManager {
           });
           launchable.push(job);
         } else if (currentHash === job.source_hash) launchable.push(job);
-        else this.finishBeforeLaunch(job.id, "skipped", "skipped: source changed before coordinator launch", timestamp);
+        else await this.finishBeforeLaunch(job.id, "skipped", "skipped: source changed before coordinator launch", timestamp);
       } catch (error) {
-        this.finishBeforeLaunch(job.id, "failed", `failed: page unavailable before coordinator launch (${this.errorMessage(error)})`, timestamp);
+        await this.finishBeforeLaunch(job.id, "failed", `failed: page unavailable before coordinator launch (${this.errorMessage(error)})`, timestamp);
       }
     }
     if (launchable.length === 0) { queueMicrotask(() => this.schedule()); return; }
     let review;
     try {
-      review = this.reviewStore.loadActive();
+      review = await this.reviewStore.loadActive();
     } catch (error) {
       for (const job of launchable) {
-        this.finishBeforeLaunch(job.id, "failed", `failed: review unavailable before coordinator launch (${this.errorMessage(error)})`, timestamp);
+        await this.finishBeforeLaunch(job.id, "failed", `failed: review unavailable before coordinator launch (${this.errorMessage(error)})`, timestamp);
       }
       queueMicrotask(() => this.schedule());
       return;
     }
+    if (this.stopped || generation !== this.lifecycleGeneration) return;
     const checkpoints = new Map<string, Checkpoint>();
     for (const job of launchable) {
       const annotation = review.annotations.find(({ id }) => id === job.annotation_id);
       if (!annotation) {
-        this.finishBeforeLaunch(job.id, "failed", "failed: annotation missing before coordinator launch", timestamp);
+        await this.finishBeforeLaunch(job.id, "failed", "failed: annotation missing before coordinator launch", timestamp);
       } else checkpoints.set(job.id, { threadLength: annotation.thread.length, startedAt: timestamp });
     }
     const claimIds = new Set(checkpoints.keys());
@@ -345,58 +335,90 @@ export class JobManager {
       }
     });
     if (claimed.length === 0) { queueMicrotask(() => this.schedule()); return; }
+    let runtimeSnapshot: WorkflowRuntimeSnapshot;
+    try {
+      runtimeSnapshot = await createWorkflowRuntimeSnapshot(this.reviewStore, claimed.map(({ annotation_id }) => annotation_id), review);
+    } catch {
+      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
+      return;
+    }
+    if (this.stopped || generation !== this.lifecycleGeneration) {
+      await runtimeSnapshot.cleanup();
+      await this.finishBatch(batch.id, { exitCode: null, reason: "cancelled" }, claimed.map(({ id }) => id), checkpoints);
+      return;
+    }
     const prompt = buildBatchPrompt(
-      this.reviewPath,
+      runtimeSnapshot.reviewPath,
       claimed.map(({ annotation_id }) => annotation_id),
       batch.max_parallel,
-      this.taskCapability?.coordinatorInstructions() ?? "",
+      runtimeSnapshot.contextPath,
     );
     let command: RunningCommand;
     try {
-      let customSpec;
-      if (claimed[0]!.cli === "custom") {
-        if (!batch.runner_id || !this.runnerRegistry) throw new Error("custom command runner is unavailable");
-        customSpec = await this.runnerRegistry.resolve(batch.runner_id, { workspaceRoot: this.reviewStore.target.projectRoot, prompt });
+      if (this.ai) {
+        const invocation = await this.ai.invoke({
+          mode: "workspace-write",
+          prompt,
+          timeout_ms: 10 * 60 * 1000,
+          output_limit_bytes: 64 * 1024,
+        });
+        command = {
+          cancel: () => invocation.cancel(),
+          result: invocation.result.then((result) => ({
+            exitCode: result.exit_code,
+            reason: result.status === "completed" ? "exit" : result.status === "failed" ? "spawn-error" : result.status,
+            output: result.output,
+          })),
+        };
+      } else {
+        if (!this.executor) throw new Error("AI package is unavailable");
+        command = this.executor({ command: "visual-review-ai", args: [prompt], cwd: this.reviewStore.target.projectRoot, env: { ...process.env } });
       }
-      command = this.executor(buildCommand({ cli: claimed[0]!.cli, prompt, projectRoot: this.reviewStore.target.projectRoot, sessionId: claimed[0]!.session_id, opencodeAttach: batch.opencode_attach, ...(customSpec ? { customSpec } : {}) }));
+      if (this.stopped || generation !== this.lifecycleGeneration) {
+        command.cancel();
+        await runtimeSnapshot.cleanup();
+        await this.finishBatch(batch.id, { exitCode: null, reason: "cancelled" }, claimed.map(({ id }) => id), checkpoints);
+        return;
+      }
     } catch (error) {
-      this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
+      await runtimeSnapshot.cleanup();
+      await this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints);
       return;
     }
-    this.running.set(batch.id, { command, jobIds: claimed.map(({ id }) => id), checkpoints });
-    void command.result.then((result) => this.finishBatch(batch.id, result, claimed.map(({ id }) => id), checkpoints), () => this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints));
+    this.running.set(batch.id, { command, jobIds: claimed.map(({ id }) => id), checkpoints, snapshot: runtimeSnapshot });
+    void command.result.then((result) => this.finishBatch(batch.id, result, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot), () => this.finishBatch(batch.id, { exitCode: null, reason: "spawn-error" }, claimed.map(({ id }) => id), checkpoints, runtimeSnapshot));
   }
 
-  private finishBeforeLaunch(id: string, stateValue: "failed" | "skipped", summary: string, timestamp: string): void {
+  private async finishBeforeLaunch(id: string, stateValue: "failed" | "skipped", summary: string, timestamp: string): Promise<void> {
     const state = this.jobStore.update((stored) => {
       const job = stored.jobs.find((candidate) => candidate.id === id);
       if (job?.state === "queued") { job.state = stateValue; job.finished = timestamp; job.summary = summary; }
     });
     const job = state.jobs.find((candidate) => candidate.id === id);
-    if (job) this.markAnnotationFailed(job.annotation_id, job.summary);
+    if (job) await this.markAnnotationFailed(job.annotation_id, job.summary);
   }
 
-  private finishBatch(batchId: string, result: CommandResult, jobIds: string[], checkpoints: Map<string, Checkpoint>): void {
+  private async finishBatch(batchId: string, result: CommandResult, jobIds: string[], checkpoints: Map<string, Checkpoint>, runtimeSnapshot?: WorkflowRuntimeSnapshot): Promise<void> {
+    if (runtimeSnapshot) await runtimeSnapshot.cleanup().catch(() => undefined);
     this.running.delete(batchId);
     if (result.output) {
       const jobs = this.jobStore.load().jobs.filter(({ id }) => jobIds.includes(id));
       const allowedAnnotationIds = new Set(jobs.map(({ annotation_id }) => annotation_id));
       for (const completion of extractCompletionOutput(result.output)) {
         if (!allowedAnnotationIds.has(completion.annotationId)) continue;
-        try { this.reviewStore.addMessage(completion.annotationId, { actor: "ai", body: completion.message }); } catch {}
+        try { await this.reviewStore.addMessage(completion.annotationId, { actor: "ai", body: completion.message }); } catch {}
       }
-      this.taskCapability?.acceptCoordinatorOutput(result.output, allowedAnnotationIds);
     }
     const timestamp = now();
     let annotations: WorkflowAnnotation[] = [];
     let reviewError: unknown;
-    try { annotations = this.reviewStore.loadActive().annotations; } catch (error) { reviewError = error; }
+    try { annotations = (await this.reviewStore.loadActive()).annotations; } catch (error) { reviewError = error; }
     let resolvedAnnotations: WorkflowAnnotation[] = [];
     if (!reviewError && jobIds.some((id) => {
       const job = this.jobStore.load().jobs.find((candidate) => candidate.id === id);
       return job && !annotations.some(({ id: annotationId }) => annotationId === job.annotation_id);
     })) {
-      try { resolvedAnnotations = this.reviewStore.load().annotations.filter(({ status }) => status === "resolved"); } catch { /* handled as a missing annotation below */ }
+      try { resolvedAnnotations = (await this.reviewStore.load()).annotations.filter(({ status }) => status === "resolved"); } catch { /* handled as a missing annotation below */ }
     }
     const needsVerificationMessage = new Set<string>();
     const finalState = this.jobStore.update((state) => {
@@ -406,15 +428,14 @@ export class JobManager {
         const annotation = annotations.find(({ id }) => id === job.annotation_id) ?? resolvedAnnotations.find(({ id }) => id === job.annotation_id);
         const checkpoint = checkpoints.get(job.id);
         const hasNewAiMessage = Boolean(annotation && checkpoint && annotation.thread.slice(checkpoint.threadLength).some((message) => this.isCompletionMessage(message, checkpoint.startedAt)));
-        const taskState = annotation ? this.taskCapability?.state(annotation) ?? "none" : "none";
-        const hasDurableCompletion = taskState === "complete" || hasNewAiMessage;
+        const hasDurableCompletion = hasNewAiMessage;
         let completionPageAvailable = true;
         try { this.pageHash(job); } catch { completionPageAvailable = false; }
         const processFailed = result.reason !== "exit" || result.exitCode !== 0;
         if (hasDurableCompletion && (processFailed || completionPageAvailable)) {
           job.state = "succeeded";
           job.summary = result.reason === "exit" && result.exitCode === 0
-            ? (hasNewAiMessage ? "succeeded: AI completion message received" : "succeeded: task completion persisted")
+            ? "succeeded: AI completion message received"
             : `succeeded: completion persisted before coordinator ${result.reason}`;
           continue;
         }
@@ -441,11 +462,6 @@ export class JobManager {
           job.summary = "failed: annotation missing after coordinator exit";
           continue;
         }
-        if ((this.taskCapability?.state(annotation) ?? "none") === "pending") {
-          job.state = "failed";
-          job.summary = "failed: coordinator did not complete the task";
-          continue;
-        }
         job.state = "succeeded";
         if (hasNewAiMessage) job.summary = "succeeded: AI completion message received";
         else {
@@ -459,12 +475,12 @@ export class JobManager {
       if (job.state === "succeeded") {
         if (needsVerificationMessage.has(job.id)) {
           try {
-            this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" });
+            await this.reviewStore.addMessage(job.annotation_id, { actor: "ai", body: "AI処理が完了しました。変更内容は人間による確認が必要です。" });
           } catch { /* annotation already changed or review unavailable */ }
         }
-        this.markAnnotationAddressed(job.annotation_id);
-      } else if (job.state === "cancelled") this.reopenInProgressAnnotation(job.annotation_id);
-      else this.markAnnotationFailed(job.annotation_id, job.summary);
+        await this.markAnnotationAddressed(job.annotation_id);
+      } else if (job.state === "cancelled") await this.reopenInProgressAnnotation(job.annotation_id);
+      else await this.markAnnotationFailed(job.annotation_id, job.summary);
     }
     this.schedule();
   }

@@ -1,6 +1,20 @@
 # Plugin foundation
 
-Visual Review のpluginはworkspace単位でinstallする。repository内では、次のようにpluginごとに一段のdirectoryを設けられる。
+Visual Reviewの拡張単位はnpm packageである。対応packageは`package.json`へversioned metadataを宣言し、manifestの位置をCoreへ知らせる。
+
+```json
+{
+  "name": "@example/visual-review-tool",
+  "visualReview": {
+    "apiVersion": 1,
+    "manifest": "./visual-review.plugin.json"
+  }
+}
+```
+
+Coreが検出するのは対象workspaceの`dependencies`、`devDependencies`、`optionalDependencies`に列挙された**直接依存だけ**である。`node_modules`全体、推移依存、package名patternは走査せず、検出時にpackage codeをimportしない。manifestはpackage内の通常fileを指すcanonicalな`./` pathでなければならない。
+
+従来のworkspace単位installも移行用compatibility layerとして維持する。repository内ではpluginごとに一段のdirectoryを設け、`.vreview/plugins/<id>`へ導入できる。同じIDをnpm packageとlegacy registryの両方が提供した場合はfail closedとする。`.vreview`へnpm package本体はcopyしない。
 
 ```text
 plugins/
@@ -9,7 +23,7 @@ plugins/
     dist/index.js
 ```
 
-`visual-review.plugin.json`がplugin rootを示す。install元directoryはこのfileを直下に持つ必要があり、親の`plugins/`をまとめてinstallするものではない。
+`visual-review.plugin.json`がplugin rootを示す。legacy install元directoryはこのfileを直下に持つ必要があり、親の`plugins/`をまとめてinstallするものではない。
 
 ## Manifest schema
 
@@ -80,7 +94,26 @@ visual-review plugin run my-plugin hello world
 
 ## Installation and registry
 
-`visual-review serve`は、公式`review` 1.1.9、`github-issue` 1.1.9、`custom-command` 1.1.9、`annotation-workflow` 1.1.9、`page-map` 1.1.9がworkspaceに存在しない場合、CLI package内へ同梱したコピーから自動installする。networkやnpm認証には依存せず、`.vreview/plugins/`がGit管理外の新環境でも初回起動時に復元できる。同じbundled sourceから導入され、registry manifestとinstall先manifestが一致してprovenanceを確認できるtrusted copyだけは、同梱版のschemaまたはSemVerが新しい場合にserver/UIをまとめてatomic upgradeする。local sourceや第三者によるsame-ID plugin、manifestが改変されたcopyは上書きしない。その他の更新は引き続き明示操作とする。
+first-party feature packageは次の6つだけで、public npm registryへ個別publishする。
+
+- `@visual-review/ai` — CLI選択、外部AIコマンド、共通AI実行
+- `@visual-review/storage-firestore` — Firestore storage provider
+- `@visual-review/review` — review domain
+- `@visual-review/annotation-workflow` — annotation job workflow
+- `@visual-review/page-map` — 静的画面遷移解析
+- `@visual-review/github-issue` — GitHub Issue draft/create
+
+```sh
+npm install --save-dev @visual-review/ai @visual-review/storage-firestore @visual-review/review @visual-review/annotation-workflow @visual-review/page-map @visual-review/github-issue
+npm install --save-dev @scope/public-plugin@1.2.0
+npx visual-review plugin list
+```
+
+Core runtimeとplugin author向けSDKはhost infrastructureであり、この6つのfeature packageには数えない。
+
+`visual-review serve`は最寄りのGit rootをworkspaceとし、その`package.json`の直接依存をNodeのpackage resolutionで解決する。package managerが管理する実体は`node_modules`に留め、`.vreview`にはplugin設定、credential、review/runtime状態だけを保存する。package pluginの削除・version変更はnpm/pnpm/yarn側で行う。
+
+one-beta移行期間は次のlegacy操作も維持する。
 
 ```sh
 visual-review plugin install ./plugins/example
@@ -90,11 +123,11 @@ visual-review plugin run example-storage sync --dry-run
 visual-review plugin remove example-storage
 ```
 
-current directoryから最寄りのGit rootをworkspaceとする（Git管理外ではcurrent directory）。実体は`.vreview/plugins/<plugin-id>/`、registry/lockは`.vreview/plugins.json`へ保存する。同じIDの再installは暗黙に上書きせず失敗するため、更新時はremoveしてからinstallする。
+legacy installの実体は`.vreview/plugins/<plugin-id>/`、registry/lockは`.vreview/plugins.json`へ保存する。同じIDの再installは暗黙に上書きせず失敗する。global Coreだけで起動する既存workspace向けには標準packageのbundled copyを自動導入する。同じbundled source由来でmanifest一致を確認できるtrusted copyだけはatomic upgradeし、local/third-partyのsame-IDや改変済みcopyは上書きしない。
 
-local directoryはsymlinkと通常file/directory以外を拒否してcopyする。npm specは一時directoryで`shell: false`の`npm pack <spec> --json --ignore-scripts`を実行し、archive entryを検査してから展開する。absolute path、traversal、link、特殊entry、不正manifestを拒否する。認証情報を含むURLやcredential query、control文字を含むsourceも拒否し、install実体・registry・plugin設定・custom command設定は`.vreview/.gitignore`へ追加する。install中にplugin moduleをimportせず、manifestをdataとしてだけ検証する。registry更新には既存のfile lockとatomic JSON writeを使う。
+local directoryはsymlinkと通常file/directory以外を拒否してcopyする。npm specは一時directoryで`shell: false`の`npm pack <spec> --json --ignore-scripts`を実行し、archive entryを検査してから展開する。absolute path、traversal、link、特殊entry、不正manifestを拒否する。認証情報を含むURLやcredential query、control文字を含むsourceも拒否し、install実体・registry・plugin設定・AI packageの外部command設定は`.vreview/.gitignore`へ追加する。install中にplugin moduleをimportせず、manifestをdataとしてだけ検証する。registry更新には既存のfile lockとatomic JSON writeを使う。
 
-npm sourceではinstall scriptやdependency installを実行しない。公開pluginはNode標準APIだけで自己完結させるか、runtime dependencyを成果物へbundleしてpackageへ含める必要がある。同梱plugin packageはrelease workflowから個別にGitHub Packagesへpublishされる。
+legacy npm source installではinstall scriptやdependency installを実行しない。公開pluginはNode標準APIだけで自己完結させるか、runtime dependencyを成果物へbundleしてpackageへ含める必要がある。標準packageはrelease workflowから個別にpublic npm registryへpublishされる。
 
 ### Source kind分類
 
@@ -116,9 +149,9 @@ installに成功したentryへは`resolved`（`{ kind, ref?, integrity?, digest,
 
 ## Declarative UI and plugin management
 
-1.1.9ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。レビュー画面のshell（header・左の描画領域・右のcontent column）はCoreが所有し、pluginは`review.header`（header右側への追加）、`review.stage`（左側の描画。2つ以上あればCoreが切り替えmenuを提供）、`review.sidebar`（右側への追加）の各slotへ部品だけを提供する。公式`review` pluginはheader用のレビュー操作toolbarとstage用の対象表示を提供し、workflow/custom-command/Issue pluginのdocumentをslotへ合成する。headerとsidebarの表示順、表示するstage、切り替えmenuの位置（四隅、既定は右下）は`/settings`で編集し、Git管理外の`.vreview/layout-settings.json`へ保存する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
+1.1.9ではCore-owned declarative rendererが`/`と`/settings/plugins`の既定surfaceである。レビュー画面のshell（header・左の描画領域・右のcontent column）はCoreが所有し、pluginは`review.header`（header右側への追加）、`review.stage`（左側の描画。2つ以上あればCoreが切り替えmenuを提供）、`review.sidebar`（右側への追加）の各slotへ部品だけを提供する。公式`review` pluginはheader用のレビュー操作toolbarとstage用の対象表示を提供し、AI、workflow、page-map、Issue pluginのdocumentをslotへ合成する。headerとsidebarの表示順、表示するstage、切り替えmenuの位置（四隅、既定は右下）は`/settings`で編集し、Git管理外の`.vreview/layout-settings.json`へ保存する。Coreはdocumentとbridge actionを検証してallowlist componentだけを描画する。manifestで明示された`browser_module`がある場合はcontribution rootへmountし、rerender・disable・navigation時にcleanupする。rollback用の旧rendererは`/legacy`、`/settings/legacy`、`VISUAL_REVIEW_LEGACY_UI=1`でこのone-beta lineに限り保持する。
 
-レビュー画面headerの「設定」は`/settings`（レイアウト設定）へ遷移し、そこからinstall済みplugin一覧`/settings/plugins`へ移動できる。`/settings/plugins`は既定で公開する。`.vreview/settings.json`の`ui.plugin_management`がexactly `false`のworkspaceだけ非表示にする。UIからこのvisibility自体は変更できない。管理画面はinstall済みpluginをtitle・summary・即時保存toggle・「詳細」だけのcompact listで表示する。詳細buttonは共通modalを開き、version/capability、必要情報、plugin固有設定、外部AIコマンド登録、READMEを集約する。READMEはraw HTMLを実行せず、安全なMarkdown subsetをDOM nodeとして整形する。有効/無効toggleは設定保存buttonを要求せずworkspaceへ即時保存し、結果をtoastで通知する。`annotation-workflow`で「注釈を保存したら自動でAI修正を開始」が有効な場合、メイン画面の「AIにまとめて修正依頼」buttonは重複操作になるため非表示にする。`annotation-workflow`を無効化するとレビュー画面のAI一括修正領域とworkflow固有設定を非表示にし、新規job登録をserver側でも拒否する。`custom-command`を無効化すると登録データを残したまま設定UIとrunner候補から除外し、選択中のcustom runnerはClaude（利用不能なら先頭のbuilt-in）へfallbackする。workspace設定値はGit管理外の`.vreview/plugin-settings.json`へatomic保存し、disabled状態はpluginのinstall状態と分離して再起動後も維持する。
+レビュー画面headerの「設定」は`/settings`（レイアウト設定）へ遷移し、そこからinstall済みplugin一覧`/settings/plugins`へ移動できる。`/settings/plugins`は既定で公開する。`.vreview/settings.json`の`ui.plugin_management`がexactly `false`のworkspaceだけ非表示にする。UIからこのvisibility自体は変更できない。管理画面はinstall済みpluginをtitle・summary・即時保存toggle・「詳細」だけのcompact listで表示する。詳細buttonは共通modalを開き、version/capability、必要情報、plugin固有設定、READMEを集約する。CLI選択と外部AIコマンド登録はAI packageの詳細だけに表示する。READMEはraw HTMLを実行せず、安全なMarkdown subsetをDOM nodeとして整形する。有効/無効toggleは設定保存buttonを要求せずworkspaceへ即時保存し、結果をtoastで通知する。`annotation-workflow`で「注釈を保存したら自動でAI修正を開始」が有効な場合、メイン画面の「AIにまとめて修正依頼」buttonは重複操作になるため非表示にする。`annotation-workflow`を無効化するとレビュー画面のAI一括修正領域とworkflow固有設定を非表示にし、新規job登録をserver側でも拒否する。AI packageを無効化すると登録データを残したままAI設定と実行を利用不能にする。workspace設定値はGit管理外の`.vreview/plugin-settings.json`へatomic保存し、disabled状態はpluginのinstall状態と分離して再起動後も維持する。
 
 ## Runtime API
 
@@ -133,8 +166,8 @@ import {
   type PluginCommandHandler,
   type PluginIssueProvider,
   type PluginStorageProvider,
-  type VisualReviewPluginManifest,
-} from "@nakak10/visual-review";
+} from "@visual-review/core";
+import type { VisualReviewPluginManifestV1 } from "@visual-review/plugin-sdk";
 ```
 
 ```ts
@@ -148,8 +181,10 @@ await issues.createIssue(workspaceRoot, { title: "Title", body: "Body" });
 
 command exportは`PluginCommandHandler`、すなわち`(context: PluginCommandContext) => void | Promise<void>`である。CLIの`plugin run <plugin-id> <command> [args...]`はworkspace root、install先directory、残りのargv、effective workspace configuration、宣言済みcredentialをcontext（`configuration`、`credentials`）としてhandlerへ渡す。credentialはcontext経由でのみ渡り、argv・log・commandへ渡すsubprocess引数には決して含めない。schema v1のstorage providerはlegacy互換としてobject/factoryを受理する。schema v2以降のstorage providerは`WorkspaceStorageProviderV1`（`list`、`read`、`compareAndSwap`、`delete`）を実装し、Firestoreの`updateTime`、MySQL/PostgreSQLのrow version、local digestを共通のopaque `version`へ写像する。詳細は[`storage-providers.md`](storage-providers.md)を参照する。Issue providerは`createIssue(projectRoot, draft)` methodを持つobjectをexportする。
 
-`storage_provider.export`がfunctionをexportする場合、loaderはこれを`PluginRuntimeContextV1`（`workspaceRoot`、`pluginDirectory`、effective `configuration`、宣言済み`credentials`、`env`）付きで一度だけ呼び出し（戻り値がPromiseならawaitする）、戻り値をproviderとして使う。object exportは従来どおりそのままproviderとして使われる。これによりcredentialを要するproviderがCore設定を経由してtokenやkeyを受け取れる（`firebase-storage`の`createWorkspaceStorageProviderFromContext`が例）。
+`storage_provider.export`がfunctionをexportする場合、loaderはこれを`PluginRuntimeContextV1`（`workspaceRoot`、`pluginDirectory`、effective `configuration`、宣言済み`credentials`、`env`）付きで一度だけ呼び出し（戻り値がPromiseならawaitする）、戻り値をproviderとして使う。object exportは従来どおりそのままproviderとして使われる。これによりcredentialを要するproviderがCore設定を経由してtokenやkeyを受け取れる（`firestore`の`createWorkspaceStorageProviderFromContext`が例）。
 
-v4ではreview保存・validation・status遷移を`review`、job enqueue/recovery/coordinator policyを`annotation-workflow`、verified runner registryを`custom-command`、Issue draft/作成を`github-issue`が所有する。`custom-command`は`runner-registry/v1`を提供し、`annotation-workflow`はこれをoptional dependencyとして受け付ける。外部AIコマンドは登録要求時に隔離directoryでcapability testを先に実行し、成功したrunnerだけをatomicに保存して設定候補へ合成する。テスト失敗時はrunnerを登録しない。enqueue時はopaque runner IDを同じcapabilityで実行specへ解決するため、plugin間でcommand templateを共有しない。Coreはplugin lifecycle、capability routing、target security、declarative renderer、bridge transport、process supervisorを所有し、domain validationをcompatibility adapterへ複製しない。
+`storage_provider`を宣言したpluginがenabledかつrequired configurationを満たしている（`effective.enabled && effective.missing.length === 0`）間、そのpluginがreviewデータの読み書き先として**authoritative**になる（`src/workspace-storage.ts`）。無効化すると、同じworkspaceで次にアクセスした瞬間からローカルfile systemへ戻る（server再起動は不要）。2つ以上のstorage providerが同時にenabledな状態は**fail closed**（明確なerrorで拒否）で、どちらか一方を無効化するまで読み書きできない。切り替え時にデータは自動コピーされない。既存データを新しいbackendへ明示的に移す場合は`POST /api/settings/plugins/:id/storage-transfer`（`direction: "local-to-plugin" | "plugin-to-local"`、`dry_run: boolean`）を使う。詳細は[`storage-providers.md`](storage-providers.md)を参照する。
+
+v4ではCLI選択・外部AIコマンド登録・AI method実行を`ai`、Firestore I/Oを`firestore`、review保存・validation・status遷移を`review`、job enqueue/recovery/coordinator policyを`annotation-workflow`、静的画面遷移解析を`page-map`、Issue draft/作成を`github-issue`が所有する。annotation-workflowとgithub-issueは用途に必要なmodeを`ai/v1`へ指定するだけで、AIを選ばせるUIや特定CLIへの依存を持たない。外部AIコマンドはAI packageが隔離directoryでcapability testを先に実行し、成功した方法だけをatomicに保存する。plugin間でcommand templateを共有せず、Coreはplugin lifecycle、capability routing、target security、declarative renderer、bridge transport、汎用process supervisorを所有する。
 
 loaderはregistryとinstalled manifestの一致、moduleがplugin directory内の通常fileであること、exportの存在とcommand exportがfunctionであることを確認する。ESMの`import()`を使うため、source treeと`dist/src`の双方で動作する。通常のmodule評価（任意codeの実行）はcommand/providerを明示利用した時だけ起き、install/list/removeでは実行しない。自動起動するfirst-party serverはinstalled manifestとmodule digestがCLI package内のbundled copyへ完全一致するtrusted copyだけを評価する。workspaceが同じIDを差し替えた場合は無断実行せず、該当機能をfail closedにする。

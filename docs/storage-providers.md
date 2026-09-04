@@ -2,9 +2,9 @@
 
 ## Boundary
 
-Core owns review schema validation, migration, annotation/status invariants, source-hash checks, job orchestration, and conflict handling. A storage plugin owns only backend I/O, credentials, connection lifecycle, and mapping an opaque backend revision to the common contract.
+The `review` package owns review schema validation, migration, annotation/status invariants, source-hash checks, and storage conflict handling; `annotation-workflow` owns job orchestration. The Firestore package owns only backend I/O, credentials, connection lifecycle, and mapping an opaque backend revision to the common contract.
 
-Runtime-only state (`job-state.json`, server lease, locks) remains local and is not part of remote storage. Remote providers must never replace review files behind a running `ReviewStore`; imports must go through a future host transaction boundary or require the server to be stopped.
+Runtime-only state (`job-state.json`, server lease, locks) remains local and is not part of remote storage. A running `ReviewStore`/`ReviewCapabilityV1` can switch which backend is authoritative (enabling or disabling a `storage_provider` plugin) without a server restart — see migration plan step 5 below — but that switch never copies data itself; bulk import/export between backends always goes through the explicit `storage-transfer` request, never an implicit side effect of enabling a plugin.
 
 ## API v1
 
@@ -37,13 +37,13 @@ Provider-specific table names, collection names, SQL, credentials, pooling, retr
 
 ## Migration plan
 
-1. **Current release:** publish and validate the V1 provider contract. Existing schema-v1 Firebase snapshot provider remains a legacy synchronization plugin.
-2. Add a local provider implementing V1 and a reusable conformance suite.
-3. Move `ReviewStore` persistence behind an asynchronous repository that performs schema validation and mutations in core, using provider CAS for retries.
-4. Convert Firestore to V1 without direct file replacement. Add MySQL and PostgreSQL plugins against the same conformance suite.
-5. Only after all mutation paths use the repository, allow selecting an authoritative provider per workspace.
+1. **Done.** Publish and validate the V1 provider contract. The `firestore` plugin implements it with one Firestore document per storage key, using each document's `updateTime` as the opaque version.
+2. **Done.** Local provider implementing V1: `src/local-storage-provider.ts` (`createLocalWorkspaceStorageProvider`). Reference implementation other backends are copied into place against when transferring workspace data (`src/storage-transfer.ts`).
+3. **Done.** `ReviewStore` persistence lives behind an asynchronous repository, `ReviewDocumentStorage` (`plugins/review/server/review-store.ts`), injected via `ReviewDomainDependencies.createStorage(target, paths)`. Core (`plugins/review/server/review-store.ts`) owns schema validation, migration, and mutation logic; the injected storage implementation owns only I/O and CAS retries.
+4. Future third-party MySQL and PostgreSQL integrations can use the same conformance suite; they are not part of the six first-party feature packages.
+5. **Done.** Selecting an authoritative provider per workspace: `src/workspace-storage.ts` (`createWorkspaceReviewDocumentStorage`, wired as `reviewDomainDependencies.createStorage` in `src/review-capability.ts`). A workspace with zero enabled `storage_provider` plugins uses local files (`src/review-storage-local.ts`); with exactly one enabled and fully configured `storage_provider` plugin, that plugin's provider becomes authoritative; with two or more enabled simultaneously, every review read/write fails closed with an explicit error instead of guessing. The backend is re-resolved (cached per workspace, keyed by the plugin settings revision) on every access, so enabling/disabling a storage plugin takes effect on the next call without a server restart. A provider that fails to load never falls back to local storage — the error is surfaced as-is instead, so data cannot silently split across backends.
 
-This order avoids pretending the current Firebase push/pull implementation is an interchangeable database backend. Until step 3, storage providers are explicit sync/export integrations rather than the authoritative live store.
+Switching a workspace's authoritative backend does **not** copy data automatically. Existing review data stays wherever it was written; to move it to (or back from) a plugin's backend, a user runs the explicit `POST /api/settings/plugins/:id/storage-transfer` request (`direction: "local-to-plugin" | "plugin-to-local"`, optional `dry_run`) from the plugin settings screen ("データの上書き"), backed by `src/storage-transfer.ts`.
 
 ## Required conformance cases
 
@@ -54,7 +54,7 @@ This order avoids pretending the current Firebase push/pull implementation is an
 - JSON round-trip without backend-specific types
 - concurrent writers cannot lose an update
 - malformed or oversized backend data is rejected before it reaches review mutation logic
-- credentials never enter `.vreview` (outside the dedicated, gitignored `.vreview/credentials/<plugin-id>.json` store), plugin registry, review JSON, `.vreview/plugin-settings.json`, or command arguments. Covered by `test/plugin-credentials.test.ts` (store read/write/delete/presence, file/directory mode, symlink rejection, gitignore entry, HTTP credential routes never returning a value, the plain settings `PUT` rejecting a credential key, `loadPluginStorageProvider` delivering the credential only through a function-export's `PluginRuntimeContextV1`, and `plugin run` delivering it through `PluginCommandContext` rather than argv) and `plugins/firebase-storage/test.mjs` (JWT/token material never appearing in Firestore request URLs, gcloud argv, or thrown errors).
+- credentials never enter `.vreview` (outside the dedicated, gitignored `.vreview/credentials/<plugin-id>.json` store), plugin registry, review JSON, `.vreview/plugin-settings.json`, or command arguments. Covered by `test/plugin-credentials.test.ts` (store read/write/delete/presence, file/directory mode, symlink rejection, gitignore entry, HTTP credential routes never returning a value, the plain settings `PUT` rejecting a credential key, `loadPluginStorageProvider` delivering the credential only through a function-export's `PluginRuntimeContextV1`, and `plugin run` delivering it through `PluginCommandContext` rather than argv) and `plugins/firestore/test.mjs` (JWT/token material never appearing in Firestore request URLs, gcloud argv, or thrown errors).
 
 ## Sanctioned credential storage
 

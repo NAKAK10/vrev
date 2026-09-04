@@ -1,16 +1,18 @@
 # Visual Review plugins
 
-このdirectoryには、Visual Reviewプラグインの実装例をプラグインごとに一段ネストして収録しています。beta.7の既定はschema v4 Plugin HostとCore-owned declarative rendererで、first-party pluginはserver contract、capability、検証済みJSON UI contributionを分担します。browserでplugin JavaScriptや任意HTMLは実行しません。
+このdirectoryには、Visual Reviewのfirst-party feature packageをプラグインごとに一段ネストして収録しています。対象は **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。beta.7の既定はschema v4 Plugin HostとCore-owned declarative rendererで、各packageはserver contract、capability、検証済みJSON UI contributionを分担します。browserで任意HTMLは実行しません。
 
 ```text
 plugins/
+├── ai/
+├── firestore/
+├── review/
 ├── annotation-workflow/
-├── custom-command/
-├── firebase-storage/
-├── github-issue/
 ├── page-map/
-└── review/
+└── github-issue/
 ```
+
+`ai` packageがCLI選択と外部AIコマンドの登録・検証・実行を所有します。annotation-workflow、github-issueなどのfeature packageは`ai/v1`だけを利用し、独自のAI選択UIを持ちません。
 
 ## 新しいプラグインのbaseを作る
 
@@ -35,16 +37,20 @@ visual-review plugin create my-plugin --install
 
 ## 第三者が公開したプラグインをinstallする
 
-Visual Reviewは、ローカルdirectoryだけでなく、`npm pack`で取得できる公開package specをinstallできます。対象workspaceのGit rootで実行してください。
+Visual Review対応packageを対象workspaceの直接依存として追加する方法が標準です。Coreは`package.json`の`visualReview.apiVersion`とmanifest pathを検証して検出し、package codeはこの段階で評価しません。
 
 ### npm registryから
 
 公開npm packageはversionを固定してinstallすることを推奨します。
 
 ```sh
-visual-review plugin install visual-review-plugin-example@1.2.3
-visual-review plugin install @community/visual-review-plugin-example@1.2.3
+npm install --save-dev visual-review-plugin-example@1.2.3
+npm install --save-dev @community/visual-review-plugin-example@1.2.3
 ```
+
+package本体はpackage managerが`node_modules`で管理し、`.vreview`へcopyしません。検出対象は`dependencies`、`devDependencies`、`optionalDependencies`の直接依存だけで、推移依存や`node_modules`全体は走査しません。
+
+従来の`visual-review plugin install <npm-spec>`はone-beta compatibilityとして残ります。
 
 GitHub Packagesなどscopeごとにregistryが異なる場合は、通常のnpm設定を使用します。tokenをinstall URLへ埋め込まないでください。
 

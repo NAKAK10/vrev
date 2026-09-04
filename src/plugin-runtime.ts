@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { findWorkspaceRoot } from "./paths.js";
 import { parsePluginBridgeContract, type PluginBridgeContractV1 } from "./plugin-bridge-contract.js";
 import { readPluginCredentials } from "./plugin-credentials.js";
-import { readPluginManifest, type PluginModuleReference, type VisualReviewPluginManifest } from "./plugin-manifest.js";
+import { readPluginManifest, readPluginManifestFile, type PluginModuleReference, type VisualReviewPluginManifest } from "./plugin-manifest.js";
 import { installedPluginDirectory, listPlugins } from "./plugin-registry.js";
 import { assertPluginServerProviderV1, type PluginServerProviderV1 } from "./plugin-server.js";
 import { assertPluginEnabled, effectivePluginSettings } from "./plugin-settings.js";
@@ -38,6 +38,7 @@ export interface AnnotationFlowPolicyV1 {
   events: AnnotationFlowEventV1[];
   debounceMs: number;
   settings: {
+    /** @deprecated AI selection is owned by the AI package and bundled workflows omit this field. */
     runner: { label: string; options: Array<{ value: "opencode" | "claude" | "codex" | "copilot" | "pi"; label: string }> };
     maxParallel: { label: string; min: number; max: number; defaultValue: number };
     autoRun: { label: string };
@@ -100,7 +101,9 @@ function installedManifest(id: string, workspace: string, requireModules = true)
   if (!entry) throw new Error(`plugin is not installed: ${id}`);
   const directory = installedPluginDirectory(id, workspace);
   if (lstatSync(directory).isSymbolicLink()) throw new Error("installed plugin directory must not be a symbolic link");
-  const manifest = readPluginManifest(directory, requireModules);
+  const manifest = entry.manifest_file
+    ? readPluginManifestFile(entry.manifest_file, requireModules)
+    : readPluginManifest(directory, requireModules);
   if (JSON.stringify(manifest) !== JSON.stringify(entry.manifest)) throw new Error("installed plugin manifest does not match the registry");
   assertPluginEnabled(manifest, workspace);
   return { directory, manifest };
@@ -211,12 +214,7 @@ function validateAnnotationFlowPolicy(provider: PluginAnnotationFlowProviderV1, 
   if (!Number.isInteger(policy.debounceMs) || policy.debounceMs < 0 || policy.debounceMs > 5_000) throw new Error(`plugin annotation flow debounceMs is invalid: ${id}`);
   const settings = policy.settings;
   const text = (value: unknown): value is string => typeof value === "string" && Boolean(value.trim()) && value.length <= 120;
-  const runnerValues = new Set(["opencode", "claude", "codex", "copilot", "pi"]);
-  if (!settings || !text(settings.runner?.label) || !Array.isArray(settings.runner.options) || settings.runner.options.length === 0
-    || settings.runner.options.some((option) => !runnerValues.has(option.value) || !text(option.label))
-    || new Set(settings.runner.options.map(({ value }) => value)).size !== settings.runner.options.length) {
-    throw new Error(`plugin annotation flow runner settings are invalid: ${id}`);
-  }
+  if (!settings) throw new Error(`plugin annotation flow settings are invalid: ${id}`);
   const parallel = settings.maxParallel;
   if (!text(parallel?.label) || !Number.isInteger(parallel.min) || !Number.isInteger(parallel.max) || !Number.isInteger(parallel.defaultValue)
     || parallel.min < 1 || parallel.max > 10 || parallel.min > parallel.max || parallel.defaultValue < parallel.min || parallel.defaultValue > parallel.max) {

@@ -1,0 +1,27 @@
+{
+  "name": "@visual-review/storage-firestore",
+  "version": "1.0.0",
+  "description": "Firestore WorkspaceStorageProviderV1 backend for Visual Review, one document per storage key",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "exports": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "auth.mjs",
+    "visual-review.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "visualReview": {
+    "apiVersion": 1,
+    "manifest": "./visual-review.plugin.json"
+  }
+}

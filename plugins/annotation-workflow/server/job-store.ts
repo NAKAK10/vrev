@@ -5,7 +5,7 @@ import { atomicWriteJson, readJson, withFileLock } from "./persistence.js";
 import type { ReviewJob, ReviewJobBatch, ReviewJobState } from "./workflow-types.js";
 
 const JOB_STATES = new Set(["queued", "running", "succeeded", "failed", "cancelled", "skipped"]);
-const CLIS = new Set(["opencode", "claude", "codex", "copilot", "pi", "custom"]);
+const CLIS = new Set(["ai", "opencode", "claude", "codex", "copilot", "pi", "custom"]);
 
 function isStringOrNull(value: unknown): value is string | null {
   return value === null || typeof value === "string";

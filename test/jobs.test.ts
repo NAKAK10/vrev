@@ -8,15 +8,11 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
-  buildCommand,
   createSpawnExecutor,
   fileSha256,
   JobManager,
   JobStore,
-  MAX_COMMAND_OUTPUT,
-  parseCustomCommand,
   ReviewStore,
-  testCustomCommand,
   type CommandExecutor,
   type CommandResult,
   type CommandSpec,
@@ -34,20 +30,18 @@ function repository(): string {
   return root;
 }
 
-test("accepts supported and opaque custom runner configurations", () => {
-  assert.equal(validateEnqueueInput({ cli: "opencode", max_parallel: 10 }).max_parallel, 10);
-  assert.equal(validateEnqueueInput({ cli: "copilot", max_parallel: 2 }).cli, "copilot");
-  assert.equal(validateEnqueueInput({ cli: "pi", max_parallel: 2 }).cli, "pi");
-  const custom = validateEnqueueInput({ cli: "custom", max_parallel: 2, runner_id: "opaque-runner" });
-  assert.equal(custom.runner_id, "opaque-runner");
-  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2 }), /runner_id/);
-  assert.throws(() => validateEnqueueInput({ cli: "custom", max_parallel: 2, runner_id: "x", custom_command: "runner {prompt}" }), /unknown field/);
-  assert.throws(() => validateEnqueueInput({ cli: "opencode", max_parallel: 11 }), /1 to 10/);
+test("workflow enqueue accepts only workflow-owned options", () => {
+  assert.deepEqual(validateEnqueueInput({ max_parallel: 10 }), { max_parallel: 10, annotation_ids: null });
+  assert.deepEqual(validateEnqueueInput({ max_parallel: 2, annotation_ids: ["annotation-1"] }), { max_parallel: 2, annotation_ids: ["annotation-1"] });
+  assert.throws(() => validateEnqueueInput({ max_parallel: 2, runner: "pi" }), /unknown field/);
+  assert.throws(() => validateEnqueueInput({ max_parallel: 2, runner_id: "opaque-runner" }), /unknown field/);
+  assert.throws(() => validateEnqueueInput({ max_parallel: 2, method_id: "pi" }), /unknown field/);
+  assert.throws(() => validateEnqueueInput({ max_parallel: 11 }), /1 to 10/);
 });
 
-function annotate(store: ReviewStore, pagePath: string, comment: string): string {
+async function annotate(store: ReviewStore, pagePath: string, comment: string): Promise<string> {
   const page = new ReviewStore(pagePath, { projectRoot: store.target.projectRoot });
-  const review = store.createAnnotation({
+  const review = await store.createAnnotation({
     kind: "dom", page_path: pagePath, comment, anchor: { selector: "h1" }, source_hash: fileSha256(page.targetPath),
   });
   return review.annotations.at(-1)!.id;
@@ -67,9 +61,9 @@ function controlledExecutor(): { executor: CommandExecutor; pending: Pending[] }
   return { executor, pending };
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
   for (let index = 0; index < 100; index += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.fail("condition was not reached");
@@ -87,87 +81,55 @@ async function runAnnotationCli(args: string[], stdin = ""): Promise<void> {
   });
 }
 
-test("builds concise fixed argv for all adapters without annotation comments", () => {
-  assert.equal(MAX_COMMAND_OUTPUT, 64 * 1024);
-  const base = { prompt: "fixed prompt", projectRoot: "/repo", opencodeAttach: null };
-  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: null }).args, ["run", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "opencode", sessionId: "s:1", opencodeAttach: "http://127.0.0.1:4096" }).args, ["run", "--session", "s:1", "--attach", "http://127.0.0.1:4096", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "claude", sessionId: "s.1" }).args, ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--resume", "s.1", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: null }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "codex", sessionId: "abc" }).args, ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec", "resume", "abc", "fixed prompt"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "copilot", sessionId: null }).args, ["--prompt", "fixed prompt", "--allow-all-tools"]);
-  assert.deepEqual(buildCommand({ ...base, cli: "pi", sessionId: null }).args, ["--print", "--no-session", "--approve", "--", "fixed prompt"]);
-  const custom = buildCommand({ ...base, cli: "custom", sessionId: null, customCommand: "ollama launch claude --model model -- {prompt}" });
-  assert.equal(custom.command, "ollama");
-  assert.deepEqual(custom.args, ["launch", "claude", "--model", "model", "--", "fixed prompt"]);
-  assert.deepEqual(parseCustomCommand("runner --flag {prompt}", "prompt"), { command: "runner", args: ["--flag", "prompt"] });
-  assert.throws(() => parseCustomCommand("runner --flag", "prompt"), /include \{prompt\} exactly once/);
-  assert.throws(() => parseCustomCommand("runner {prompt} {prompt}", "prompt"), /include \{prompt\} exactly once/);
-  assert.throws(() => parseCustomCommand("runner 'unfinished", "prompt"), /unfinished/);
+test("annotation workflow has no Issue draft coordinator integration", () => {
+  const source = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/server/job-manager.ts"), "utf8");
+  assert.doesNotMatch(source, /ISSUE_DRAFT|taskCapability|acceptCoordinatorOutput/);
 });
 
-test("custom command capability test requires both a response and tool use", async () => {
-  const respondingExecutor: CommandExecutor = (spec) => {
-    writeFileSync(path.join(spec.cwd, ".visual-review-command-test"), "VISUAL_REVIEW_OK", "utf8");
-    return { result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }), cancel: () => undefined };
-  };
-  const probe = await testCustomCommand("runner {prompt}", respondingExecutor);
-  assert.ok(probe.durationMs >= 0);
-
-  const textOnlyExecutor: CommandExecutor = () => ({
-    result: Promise.resolve({ exitCode: 0, reason: "exit", output: "VISUAL_REVIEW_OK" }),
-    cancel: () => undefined,
-  });
-  await assert.rejects(testCustomCommand("runner {prompt}", textOnlyExecutor), /toolによるファイル操作/);
-});
-
-test("custom CLI Issue output is persisted by the host without requiring annotation CLI tool use", async () => {
+test("annotation workflow delegates AI selection to the AI package", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const review = store.createIssueRequest({
-    kind: "dom",
-    page_path: store.entryPath,
-    comment: "The creation flow is unclear",
-    anchor: { selector: "h1" },
-    source_hash: store.sourceHash(),
-  });
-  const annotationId = review.annotations.at(-1)!.id;
-  const control = controlledExecutor();
-  const manager = new JobManager(store, { executor: control.executor, customCommandResolver: () => ({ template: "runner {prompt}" }) });
-  manager.start();
-  const enqueued = manager.enqueue({ cli: "custom", max_parallel: 1, runner_id: "opaque-runner" });
-  const storedBatch = manager.jobStore.load().batches.at(-1)!;
-  assert.equal(storedBatch.runner_id, "opaque-runner");
-  assert.equal(storedBatch.custom_command, null);
-  await waitFor(() => control.pending.length === 1);
-  const block = [
-    "VISUAL_REVIEW_ISSUE_DRAFT_START",
-    JSON.stringify({ annotation_id: annotationId, title: "Clarify the creation flow", body: "## Background\\nUsers cannot find the creation controls." }),
-    "VISUAL_REVIEW_ISSUE_DRAFT_END",
-  ].join("\n");
-  control.pending[0]!.resolve({ exitCode: 0, reason: "exit", output: JSON.stringify({ result: block }) });
-  await waitFor(() => manager.list().jobs.find(({ id }) => id === enqueued.jobs[0]!.id)?.state === "succeeded");
-  const annotation = store.load().annotations.find(({ id }) => id === annotationId)!;
-  assert.equal(annotation.status, "addressed");
-  assert.equal(annotation.issue_state, "ready");
-  assert.equal(annotation.issue_title, "Clarify the creation flow");
+  await annotate(store, store.entryPath, "use package selection");
+  const invocations: Array<Record<string, unknown>> = [];
+  const ai = {
+    apiVersion: 1 as const,
+    list: async () => { throw new Error("feature package must not select AI"); },
+    invoke: (input: Record<string, unknown>) => {
+      invocations.push(input);
+      return { cancel() {}, result: Promise.resolve({ status: "failed" as const, output: "", exit_code: 1, message: "fixture" }) };
+    },
+  };
+  const manager = new JobManager(store, { ai });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
+  await waitFor(() => invocations.length === 1);
+  assert.equal(Object.hasOwn(invocations[0]!, "method_id"), false);
+  assert.equal(invocations[0]!.mode, "workspace-write");
   await manager.close();
 });
 
 test("runs one coordinator process per batch with IDs-only prompt and max subagent limit", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const first = annotate(store, ".code/htmls/pages/a.html", "SECRET COMMENT A");
-  const second = annotate(store, ".code/htmls/pages/a.html", "SECRET COMMENT B");
-  const third = annotate(store, ".code/htmls/pages/b.html", "SECRET COMMENT C");
+  const first = await annotate(store, ".code/htmls/pages/a.html", "SECRET COMMENT A");
+  const second = await annotate(store, ".code/htmls/pages/a.html", "SECRET COMMENT B");
+  const third = await annotate(store, ".code/htmls/pages/b.html", "SECRET COMMENT C");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  const enqueued = manager.enqueue({ cli: "opencode", max_parallel: 4 });
-  assert.ok(store.load().annotations.every(({ status }) => status === "in_progress"));
+  await manager.start();
+  const enqueued = await manager.enqueue({ max_parallel: 4 });
+  assert.ok((await store.load()).annotations.every(({ status }) => status === "in_progress"));
   await waitFor(() => control.pending.length === 1);
   const prompt = control.pending[0]!.spec.args.at(-1)!;
   assert.equal(control.pending[0]!.spec.cwd, store.target.projectRoot);
+  const reviewSnapshotPath = prompt.match(/review snapshot: (.+)\ncontext snapshot:/)?.[1];
+  const contextSnapshotPath = prompt.match(/context snapshot: (.+)\n/)?.[1];
+  assert.ok(reviewSnapshotPath && contextSnapshotPath);
+  assert.notEqual(reviewSnapshotPath, store.path);
+  assert.equal(path.dirname(reviewSnapshotPath), path.dirname(contextSnapshotPath));
+  assert.equal(path.relative(root, reviewSnapshotPath).startsWith(".."), true, "runtime snapshot must be outside the repository");
+  assert.equal(JSON.parse(readFileSync(reviewSnapshotPath, "utf8")).annotations.length, 3);
+  assert.deepEqual(JSON.parse(readFileSync(contextSnapshotPath, "utf8")), { schema_version: 1, discovery_status: "pending", primary_project: ".", related_scopes: [] });
   assert.ok([first, second, third].every((id) => prompt.includes(id)));
   assert.doesNotMatch(prompt, /SECRET COMMENT/);
   assert.match(prompt, /最大4個のread-only subagent/);
@@ -180,30 +142,31 @@ test("runs one coordinator process per batch with IDs-only prompt and max subage
   assert.match(prompt, /全annotationを最後まで保留しない/);
   assert.match(prompt, /git add、commit、push、stash、resetは禁止/);
   assert.match(prompt, /一時fileをrepository内へ作らずstdin/);
-  assert.equal(manager.enqueue({ cli: "claude", max_parallel: 4 }).jobs.length, 0);
+  assert.equal((await manager.enqueue({ max_parallel: 4 })).jobs.length, 0);
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();
+  assert.equal(existsSync(path.dirname(reviewSnapshotPath)), false, "runtime snapshot must be cleaned after the coordinator exits");
   assert.equal(enqueued.jobs.length, 3);
-  assert.ok(store.load().annotations.every(({ status }) => status === "failed"));
-  assert.ok(store.load().annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
+  assert.ok((await store.load()).annotations.every(({ status }) => status === "failed"));
+  assert.ok((await store.load()).annotations.every(({ thread }) => thread.at(-1)?.body.includes("終了コード1")));
 });
 
 test("retry queues only the selected failed annotation", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const failedId = annotate(store, ".code/htmls/pages/a.html", "retry me");
-  const untouchedId = annotate(store, ".code/htmls/pages/b.html", "leave me open");
-  store.setStatus(failedId, { actor: "ai", status: "in_progress" });
-  store.setStatus(failedId, { actor: "ai", status: "failed" });
+  const failedId = await annotate(store, ".code/htmls/pages/a.html", "retry me");
+  const untouchedId = await annotate(store, ".code/htmls/pages/b.html", "leave me open");
+  await store.setStatus(failedId, { actor: "ai", status: "in_progress" });
+  await store.setStatus(failedId, { actor: "ai", status: "failed" });
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
+  await manager.start();
 
-  const retried = manager.retry(failedId, { cli: "claude", max_parallel: 1 });
+  const retried = await manager.retry(failedId, { max_parallel: 1 });
 
   assert.deepEqual(retried.jobs.map(({ annotation_id }) => annotation_id), [failedId]);
-  assert.equal(store.load().annotations.find(({ id }) => id === failedId)?.status, "in_progress");
-  assert.equal(store.load().annotations.find(({ id }) => id === untouchedId)?.status, "open");
+  assert.equal((await store.load()).annotations.find(({ id }) => id === failedId)?.status, "in_progress");
+  assert.equal((await store.load()).annotations.find(({ id }) => id === untouchedId)?.status, "open");
   await waitFor(() => control.pending.length === 1);
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
   await manager.close();
@@ -212,20 +175,20 @@ test("retry queues only the selected failed annotation", async () => {
 test("treats normal coordinator exit as success and adds a verification message when completion is missing", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const succeededId = annotate(store, ".code/htmls/pages/a.html", "a");
-  const failedId = annotate(store, ".code/htmls/pages/b.html", "b");
+  const succeededId = await annotate(store, ".code/htmls/pages/a.html", "a");
+  const failedId = await annotate(store, ".code/htmls/pages/b.html", "b");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "claude", max_parallel: 2, session_id: "shared" });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 2 });
   await waitFor(() => control.pending.length === 1);
-  store.addMessage(succeededId, { actor: "ai", body: "implemented and verified" });
+  await store.addMessage(succeededId, { actor: "ai", body: "implemented and verified" });
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
-  await waitFor(() => manager.list().jobs.every(({ state }) => state === "succeeded"));
-  const byAnnotation = new Map(manager.list().jobs.map((job) => [job.annotation_id, job]));
+  await waitFor(async () => (await manager.list()).jobs.every(({ state }) => state === "succeeded"));
+  const byAnnotation = new Map((await manager.list()).jobs.map((job) => [job.annotation_id, job]));
   assert.equal(byAnnotation.get(succeededId)?.summary, "succeeded: AI completion message received");
   assert.match(byAnnotation.get(failedId)?.summary ?? "", /human verification required/);
-  const annotations = store.load().annotations;
+  const annotations = (await store.load()).annotations;
   assert.equal(annotations.find(({ id }) => id === succeededId)?.status, "addressed");
   const verification = annotations.find(({ id }) => id === failedId);
   assert.equal(verification?.status, "addressed");
@@ -236,69 +199,69 @@ test("treats normal coordinator exit as success and adds a verification message 
 test("durable completion wins over a later coordinator timeout", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const annotationId = annotate(store, store.entryPath, "completed before timeout");
+  const annotationId = await annotate(store, store.entryPath, "completed before timeout");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "claude", max_parallel: 1 });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => control.pending.length === 1);
-  store.addMessage(annotationId, { actor: "ai", body: "implemented and verified" });
-  store.setStatus(annotationId, { actor: "ai", status: "addressed" });
+  await store.addMessage(annotationId, { actor: "ai", body: "implemented and verified" });
+  await store.setStatus(annotationId, { actor: "ai", status: "addressed" });
   control.pending[0]!.resolve({ exitCode: null, reason: "timeout" });
-  await waitFor(() => manager.list().jobs[0]?.state === "succeeded");
-  assert.match(manager.list().jobs[0]?.summary ?? "", /completion persisted before coordinator timeout/);
-  assert.equal(store.load().annotations.find(({ id }) => id === annotationId)?.status, "addressed");
+  await waitFor(async () => (await manager.list()).jobs[0]?.state === "succeeded");
+  assert.match((await manager.list()).jobs[0]?.summary ?? "", /completion persisted before coordinator timeout/);
+  assert.equal((await store.load()).annotations.find(({ id }) => id === annotationId)?.status, "addressed");
   await manager.close();
 });
 
 test("keeps a human-resolved annotation archived when its coordinator later exits zero", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const annotationId = annotate(store, store.entryPath, "resolved during run");
+  const annotationId = await annotate(store, store.entryPath, "resolved during run");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "claude", max_parallel: 1 });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => control.pending.length === 1);
-  store.setStatus(annotationId, { actor: "human", status: "resolved" });
+  await store.setStatus(annotationId, { actor: "human", status: "resolved" });
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
-  await waitFor(() => manager.list().jobs[0]?.state === "succeeded");
-  const annotation = store.load().annotations.find(({ id }) => id === annotationId);
+  await waitFor(async () => (await manager.list()).jobs[0]?.state === "succeeded");
+  const annotation = (await store.load()).annotations.find(({ id }) => id === annotationId);
   assert.equal(annotation?.status, "resolved");
   assert.equal(annotation?.thread.at(-1)?.body, "AI処理が完了しました。変更内容は人間による確認が必要です。");
   await manager.close();
 });
 
-test("recovers legacy postcondition failures when a late completion message arrives", () => {
+test("recovers legacy postcondition failures when a late completion message arrives", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const annotationId = annotate(store, store.entryPath, "late");
-  store.setStatus(annotationId, { actor: "ai", status: "in_progress" });
-  store.setStatus(annotationId, { actor: "ai", status: "failed" });
+  const annotationId = await annotate(store, store.entryPath, "late");
+  await store.setStatus(annotationId, { actor: "ai", status: "in_progress" });
+  await store.setStatus(annotationId, { actor: "ai", status: "failed" });
   const manager = new JobManager(store, { executor: controlledExecutor().executor });
   const timestamp = new Date(Date.now() - 1000).toISOString();
   manager.jobStore.update((state) => {
     state.batches.push({ id: "legacy", max_parallel: 1, opencode_attach: null, custom_command: null });
     state.jobs.push({ id: "legacy-postcondition", batch_id: "legacy", annotation_id: annotationId, page_path: store.entryPath, source_hash: fileSha256(store.targetPath), cli: "claude", custom_name: null, session_id: null, state: "failed", created: timestamp, started: timestamp, finished: timestamp, exit_code: 0, summary: "failed: annotation postcondition not met" });
   });
-  store.addMessage(annotationId, { actor: "ai", body: "late completion message" });
-  assert.equal(manager.list().jobs[0]?.state, "succeeded");
-  assert.equal(store.load().annotations[0]?.status, "addressed");
+  await store.addMessage(annotationId, { actor: "ai", body: "late completion message" });
+  assert.equal((await manager.list()).jobs[0]?.state, "succeeded");
+  assert.equal((await store.load()).annotations[0]?.status, "addressed");
 });
 
-test("recovers legacy zero-exit postcondition failures without a completion message", () => {
+test("recovers legacy zero-exit postcondition failures without a completion message", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const annotationId = annotate(store, store.entryPath, "legacy no message");
-  store.setStatus(annotationId, { actor: "ai", status: "failed" });
+  const annotationId = await annotate(store, store.entryPath, "legacy no message");
+  await store.setStatus(annotationId, { actor: "ai", status: "failed" });
   const manager = new JobManager(store, { executor: controlledExecutor().executor });
   const timestamp = new Date(Date.now() - 1000).toISOString();
   manager.jobStore.update((state) => {
     state.batches.push({ id: "legacy-zero", max_parallel: 1, opencode_attach: null, custom_command: null });
     state.jobs.push({ id: "legacy-zero-job", batch_id: "legacy-zero", annotation_id: annotationId, page_path: store.entryPath, source_hash: fileSha256(store.targetPath), cli: "claude", custom_name: null, session_id: null, state: "failed", created: timestamp, started: timestamp, finished: timestamp, exit_code: 0, summary: "failed: annotation postcondition not met" });
   });
-  assert.equal(manager.list().jobs[0]?.state, "succeeded");
-  const annotation = store.loadActive().annotations[0];
+  assert.equal((await manager.list()).jobs[0]?.state, "succeeded");
+  const annotation = (await store.loadActive()).annotations[0];
   assert.equal(annotation?.status, "addressed");
   assert.equal(annotation?.thread.at(-1)?.body, "AI処理が完了しました。変更内容は人間による確認が必要です。");
 });
@@ -306,19 +269,19 @@ test("recovers legacy zero-exit postcondition failures without a completion mess
 test("fails a job when its page target is deleted while the coordinator runs", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const annotationId = annotate(store, store.entryPath, "delete during run");
+  const annotationId = await annotate(store, store.entryPath, "delete during run");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "claude", max_parallel: 1 });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => control.pending.length === 1);
-  store.addMessage(annotationId, { actor: "ai", body: "implemented and verified" });
-  store.setStatus(annotationId, { actor: "ai", status: "addressed" });
+  await store.addMessage(annotationId, { actor: "ai", body: "implemented and verified" });
+  await store.setStatus(annotationId, { actor: "ai", status: "addressed" });
   unlinkSync(store.targetPath);
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
-  await waitFor(() => manager.list().jobs[0]?.state === "failed");
-  assert.match(manager.list().jobs[0]?.summary ?? "", /page unavailable after coordinator exit/);
-  const completed = store.load().annotations.find(({ id }) => id === annotationId);
+  await waitFor(async () => (await manager.list()).jobs[0]?.state === "failed");
+  assert.match((await manager.list()).jobs[0]?.summary ?? "", /page unavailable after coordinator exit/);
+  const completed = (await store.load()).annotations.find(({ id }) => id === annotationId);
   assert.equal(completed?.status, "addressed");
   assert.equal(completed?.thread.at(-1)?.body, "implemented and verified");
   await manager.close();
@@ -327,76 +290,79 @@ test("fails a job when its page target is deleted while the coordinator runs", a
 test("refreshes a deferred checkpoint after an earlier managed edit on the same page", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const firstId = annotate(store, ".code/htmls/pages/a.html", "first managed edit");
+  const firstId = await annotate(store, ".code/htmls/pages/a.html", "first managed edit");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "codex", max_parallel: 1 });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => control.pending.length === 1);
 
-  const secondId = annotate(store, ".code/htmls/pages/a.html", "queued behind first");
-  const second = manager.enqueue({ cli: "codex", max_parallel: 1 }).jobs.find(({ annotation_id }) => annotation_id === secondId)!;
+  const secondId = await annotate(store, ".code/htmls/pages/a.html", "queued behind first");
+  const second = (await manager.enqueue({ max_parallel: 1 })).jobs.find(({ annotation_id }) => annotation_id === secondId)!;
   assert.equal(second.deferred_checkpoint, true);
   writeFileSync(store.targetPath, "<h1>Managed result</h1>");
-  store.addMessage(firstId, { actor: "ai", body: "first completed" });
-  store.setStatus(firstId, { actor: "ai", status: "addressed" });
+  await store.addMessage(firstId, { actor: "ai", body: "first completed" });
+  await store.setStatus(firstId, { actor: "ai", status: "addressed" });
   control.pending[0]!.resolve({ exitCode: 0, reason: "exit" });
 
   await waitFor(() => control.pending.length === 2);
-  const running = manager.list().jobs.find(({ id }) => id === second.id)!;
+  const running = (await manager.list()).jobs.find(({ id }) => id === second.id)!;
   assert.equal(running.state, "running");
   assert.equal(running.deferred_checkpoint, false);
   assert.equal(running.source_hash, fileSha256(store.targetPath));
-  store.addMessage(secondId, { actor: "ai", body: "second completed" });
-  store.setStatus(secondId, { actor: "ai", status: "addressed" });
+  await store.addMessage(secondId, { actor: "ai", body: "second completed" });
+  await store.setStatus(secondId, { actor: "ai", status: "addressed" });
   control.pending[1]!.resolve({ exitCode: 0, reason: "exit" });
-  await waitFor(() => manager.list().jobs.find(({ id }) => id === second.id)?.state === "succeeded");
+  await waitFor(async () => (await manager.list()).jobs.find(({ id }) => id === second.id)?.state === "succeeded");
   await manager.close();
 });
 
 test("checks external hashes immediately before launch and contains missing targets per job", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  annotate(store, ".code/htmls/pages/a.html", "first batch");
+  await annotate(store, ".code/htmls/pages/a.html", "first batch");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  manager.enqueue({ cli: "codex", max_parallel: 1 });
+  await manager.start();
+  await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => control.pending.length === 1);
-  const staleId = annotate(store, ".code/htmls/pages/b.html", "stale before launch");
-  const queued = manager.enqueue({ cli: "codex", max_parallel: 1 });
+  const staleId = await annotate(store, ".code/htmls/pages/b.html", "stale before launch");
+  const queued = await manager.enqueue({ max_parallel: 1 });
   writeFileSync(path.join(root, ".code/htmls/pages/b.html"), "<h1>B external</h1>");
   control.pending[0]!.resolve({ exitCode: 1, reason: "exit" });
-  await waitFor(() => manager.list().jobs.find(({ annotation_id }) => annotation_id === staleId)?.state === "skipped");
+  await waitFor(async () => (await manager.list()).jobs.find(({ annotation_id }) => annotation_id === staleId)?.state === "skipped");
   assert.equal(control.pending.length, 1);
-  assert.equal(manager.list().jobs.find(({ id }) => id === queued.jobs[0]!.id)?.state, "skipped");
+  assert.equal((await manager.list()).jobs.find(({ id }) => id === queued.jobs[0]!.id)?.state, "skipped");
 
-  const missingId = annotate(store, ".code/htmls/pages/a.html", "missing before launch");
-  const blocker = annotate(store, ".code/htmls/pages/b.html", "blocker");
+  const missingId = await annotate(store, ".code/htmls/pages/a.html", "missing before launch");
+  const blocker = await annotate(store, ".code/htmls/pages/b.html", "blocker");
   writeFileSync(path.join(root, ".code/htmls/pages/b.html"), "<h1>B external 2</h1>");
-  const next = manager.enqueue({ cli: "opencode", max_parallel: 1 });
+  const next = await manager.enqueue({ max_parallel: 1 });
   assert.ok([missingId, blocker].some((id) => next.jobs.some((job) => job.annotation_id === id)));
   // Enqueue refreshes both checkpoints; removing A is caught as a launch-time per-job failure.
   unlinkSync(path.join(root, ".code/htmls/pages/a.html"));
-  await waitFor(() => manager.list().jobs.find(({ annotation_id }) => annotation_id === missingId)?.state === "failed");
+  await waitFor(async () => (await manager.list()).jobs.find(({ annotation_id }) => annotation_id === missingId)?.state === "failed");
   await manager.close();
 });
 
 test("cancels queued jobs individually, running coordinator as a batch, and recovers restart state", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const firstId = annotate(store, ".code/htmls/pages/a.html", "a");
-  const secondId = annotate(store, ".code/htmls/pages/b.html", "b");
+  const firstId = await annotate(store, ".code/htmls/pages/a.html", "a");
+  const secondId = await annotate(store, ".code/htmls/pages/b.html", "b");
   const control = controlledExecutor();
   const manager = new JobManager(store, { executor: control.executor });
-  manager.start();
-  const jobs = manager.enqueue({ cli: "opencode", max_parallel: 1 }).jobs;
+  await manager.start();
+  const jobs = (await manager.enqueue({ max_parallel: 1 })).jobs;
   await waitFor(() => control.pending.length === 1);
-  const queuedId = annotate(store, ".code/htmls/pages/a.html", "queued later");
-  const queuedJob = manager.enqueue({ cli: "claude", max_parallel: 1 }).jobs.find(({ annotation_id }) => annotation_id === queuedId)!;
-  assert.equal(manager.cancel(queuedJob.id).state, "cancelled");
-  manager.cancel(jobs[0]!.id);
-  await waitFor(() => jobs.every((job) => manager.list().jobs.find(({ id }) => id === job.id)?.state === "cancelled"));
+  const queuedId = await annotate(store, ".code/htmls/pages/a.html", "queued later");
+  const queuedJob = (await manager.enqueue({ max_parallel: 1 })).jobs.find(({ annotation_id }) => annotation_id === queuedId)!;
+  assert.equal((await manager.cancel(queuedJob.id)).state, "cancelled");
+  await manager.cancel(jobs[0]!.id);
+  await waitFor(async () => {
+    const state = await manager.list();
+    return jobs.every((job) => state.jobs.find(({ id }) => id === job.id)?.state === "cancelled");
+  });
   await manager.close();
 
   const jobStore = new JobStore(store.path);
@@ -408,21 +374,21 @@ test("cancels queued jobs individually, running coordinator as a batch, and reco
   });
   const restartControl = controlledExecutor();
   const restarted = new JobManager(store, { executor: restartControl.executor });
-  restarted.start();
-  assert.equal(restarted.list().jobs.find(({ id }) => id === "unknown")?.state, "failed");
+  await restarted.start();
+  assert.equal((await restarted.list()).jobs.find(({ id }) => id === "unknown")?.state, "failed");
   await waitFor(() => restartControl.pending.length === 1);
-  assert.equal(restarted.list().jobs.find(({ id }) => id === "resume-queued")?.state, "running");
+  assert.equal((await restarted.list()).jobs.find(({ id }) => id === "resume-queued")?.state, "running");
   await restarted.close();
 });
 
-test("refreshes an old annotation hash when enqueueing against the current source", () => {
+test("refreshes an old annotation hash when enqueueing against the current source", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  annotate(store, store.entryPath, "stale");
+  await annotate(store, store.entryPath, "stale");
   writeFileSync(store.targetPath, "<h1>external</h1>");
   const manager = new JobManager(store, { executor: controlledExecutor().executor });
-  manager.start();
-  const result = manager.enqueue({ cli: "opencode", max_parallel: 1 });
+  await manager.start();
+  const result = await manager.enqueue({ max_parallel: 1 });
   assert.equal(result.jobs[0]?.state, "queued");
   assert.equal(result.jobs[0]?.source_hash, fileSha256(store.targetPath));
 });
@@ -431,15 +397,15 @@ test("contains deleted, renamed, and unreadable targets as failed annotation job
   for (const failure of ["deleted", "renamed", "permission"] as const) {
     const root = repository();
     const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-    annotate(store, store.entryPath, failure);
+    await annotate(store, store.entryPath, failure);
     const target = store.targetPath;
     if (failure === "deleted") unlinkSync(target);
     else if (failure === "renamed") renameSync(target, `${target}.moved`);
     else chmodSync(target, 0o000);
     try {
       const manager = new JobManager(store, { executor: controlledExecutor().executor });
-      manager.start();
-      const result = manager.enqueue({ cli: "opencode", max_parallel: 1 });
+      await manager.start();
+      const result = await manager.enqueue({ max_parallel: 1 });
       assert.equal(result.jobs[0]?.state, "failed", failure);
       assert.match(result.jobs[0]?.summary ?? "", /page unavailable/, failure);
       await manager.close();
@@ -449,14 +415,16 @@ test("contains deleted, renamed, and unreadable targets as failed annotation job
   }
 });
 
-test("spawn executor keeps only latest stdout and supports timeout and cancellation", async () => {
+test("spawn executor bounds stdout and supports timeout and cancellation", async () => {
   const run = (script: string, executor = createSpawnExecutor({ timeoutMs: 2_000, killGraceMs: 10 })) => executor({
     command: process.execPath as ReviewCli, args: ["-e", script], cwd: process.cwd(), env: { ...process.env },
   });
   const timeout = await run("setInterval(() => {}, 1000)", createSpawnExecutor({ timeoutMs: 20, killGraceMs: 10 }));
   assert.equal((await timeout.result).reason, "timeout");
   const output = await run("process.stdout.write('0123456789abcdefghij')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
-  assert.deepEqual(await output.result, { exitCode: 0, reason: "exit", output: "abcdefghij" });
+  const outputResult = await output.result;
+  assert.equal(outputResult.reason, "output-limit");
+  assert.equal(outputResult.output, "abcdefghij");
   const diagnostics = await run("process.stderr.write('x'.repeat(100)); process.stdout.write('日本語')", createSpawnExecutor({ outputLimit: 10, killGraceMs: 10 }));
   assert.deepEqual(await diagnostics.result, { exitCode: 0, reason: "exit", output: "日本語" });
   const cancelled = await run("setInterval(() => {}, 1000)");
@@ -533,16 +501,16 @@ test("SIGINT/SIGTERM shutdown handler awaits the supplied close path once", asyn
 test("annotation CLI works for external projects and requires the canonical review path", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  const id = annotate(store, store.entryPath, "fix");
+  const id = await annotate(store, store.entryPath, "fix");
   const reviewPath = path.relative(store.target.projectRoot, store.path).split(path.sep).join("/");
   const common = ["--project-root", root, "--review-path", reviewPath, "--annotation-id", id];
   await runAnnotationCli(["annotation", "add-message", ...common, "--actor", "ai", "--body-stdin"], "implemented\n");
   await runAnnotationCli(["annotation", "set-status", ...common, "--status", "addressed"]);
-  const annotation = store.load().annotations.find((candidate) => candidate.id === id)!;
+  const annotation = (await store.load()).annotations.find((candidate) => candidate.id === id)!;
   assert.equal(annotation.status, "addressed");
   assert.equal(annotation.thread.at(-1)?.body, "implemented");
 
-  const issueReview = store.createIssueRequest({
+  const issueReview = await store.createIssueRequest({
     kind: "dom",
     page_path: store.entryPath,
     comment: "large change",
@@ -550,30 +518,30 @@ test("annotation CLI works for external projects and requires the canonical revi
     source_hash: store.sourceHash(),
   });
   const issueId = issueReview.annotations.at(-1)!.id;
-  store.setStatus(issueId, { actor: "ai", status: "in_progress" });
-  assert.throws(
-    () => store.setIssueDraftReady(issueId, "Internal reference", `Visual Review注釈: ${issueId}`),
+  await store.setStatus(issueId, { actor: "ai", status: "in_progress" });
+  await assert.rejects(
+    store.setIssueDraftReady(issueId, "Internal reference", `Visual Review注釈: ${issueId}`),
     /understandable without internal review references/,
   );
-  assert.throws(
-    () => store.setIssueDraftReady(issueId, "Internal path", "See .vreview/reviews/page/review.json"),
+  await assert.rejects(
+    store.setIssueDraftReady(issueId, "Internal path", "See .vreview/reviews/page/review.json"),
     /understandable without internal review references/,
   );
   await runAnnotationCli(
     ["annotation", "set-issue-draft", "--project-root", root, "--review-path", reviewPath, "--annotation-id", issueId, "--draft-stdin"],
     JSON.stringify({ title: "Large change", body: "## Expected\nUpdated UI" }),
   );
-  const issue = store.load().annotations.find((candidate) => candidate.id === issueId)!;
+  const issue = (await store.load()).annotations.find((candidate) => candidate.id === issueId)!;
   assert.equal(issue.status, "addressed");
   assert.equal(issue.issue_state, "ready");
   assert.equal(issue.issue_title, "Large change");
   assert.throws(() => parseAnnotationArguments(["annotation", "set-status", "--project-root", root, "--review-path", `./${reviewPath}`, "--annotation-id", id, "--status", "addressed"]), /canonical/);
 });
 
-test("job store rejects corrupt or data-bearing state instead of overwriting it", () => {
+test("job store rejects corrupt or data-bearing state instead of overwriting it", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/a.html", { projectRoot: root });
-  store.load();
+  await store.load();
   const jobs = new JobStore(store.path);
   writeFileSync(jobs.path, JSON.stringify({ revision: 0, batches: [], jobs: [], prompt: "must not persist" }));
   assert.throws(() => jobs.load(), /invalid job-state\.json.*unknown field/);

@@ -82,6 +82,8 @@ function walk(root, projectRoot, limits, deadline, state) {
   try {
     dirents = readdirSync(root, { withFileTypes: true });
   } catch {
+    state.incomplete = true;
+    if (!state.warnings.includes("directoryを読み取れなかったため、解析を完了できませんでした")) state.warnings.push("directoryを読み取れなかったため、解析を完了できませんでした");
     return;
   }
   for (const dirent of dirents) {
@@ -96,6 +98,8 @@ function walk(root, projectRoot, limits, deadline, state) {
     try {
       stat = lstatSync(absolutePath);
     } catch {
+      state.incomplete = true;
+      if (!state.warnings.includes("一部のファイルを読み取れなかったため、解析結果が不完全です")) state.warnings.push("一部のファイルを読み取れなかったため、解析結果が不完全です");
       continue;
     }
     if (stat.isSymbolicLink()) continue;
@@ -125,11 +129,11 @@ export function analyzeSite({ projectRoot, entryPath, limits: limitsOverride = {
   const scanRootRepoRel = path.posix.dirname(entryPath);
   const scanRootAbsolute = path.join(projectRoot, scanRootRepoRel);
   const warnings = [];
-  const state = { files: [], truncated: false, warnings };
+  const state = { files: [], truncated: false, incomplete: false, warnings };
   const deadline = startedAt + limits.max_total_ms;
 
   if (existsSync(scanRootAbsolute)) walk(scanRootAbsolute, projectRoot, limits, deadline, state);
-  else warnings.push("公開directoryが見つかりません");
+  else { state.incomplete = true; warnings.push("公開directoryが見つかりません"); }
 
   const pages = new Map(); // repoRelPath -> { path, title, exists, in_count, out_count, reachable }
   const edges = [];
@@ -239,7 +243,11 @@ export function analyzeSite({ projectRoot, entryPath, limits: limitsOverride = {
   const sortedPages = [...pages.values()].sort((a, b) => a.path.localeCompare(b.path));
   const sortedExternals = [...externals.entries()].map(([url, from_count]) => ({ url, from_count })).sort((a, b) => b.from_count - a.from_count);
 
+  const hasHtmlFiles = state.files.length > 0;
+  const incomplete = !hasHtmlFiles && (state.incomplete || state.truncated);
   return {
+    analysis_state: hasHtmlFiles ? "ready" : incomplete ? "incomplete" : "empty",
+    analysis_reason: hasHtmlFiles ? "none" : incomplete ? "scan_incomplete" : "no_html_files",
     generated_at: new Date().toISOString(),
     scan_root: scanRootRepoRel,
     entry_path: entryPath,

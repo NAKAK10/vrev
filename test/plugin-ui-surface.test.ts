@@ -170,7 +170,7 @@ test("falls back to default layout settings when the persisted file is malformed
   assert.deepEqual(surface.layout.header_items.map(({ key }) => key), ["solo/header-only"]);
 });
 
-test("bundled default plugins expose extension points and resolve cross-plugin contributions", async () => {
+test("bundled Issue UI contributes directly to header and sidebar without workflow extension points", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
   const surface = loadPluginUiSurface(root);
@@ -183,14 +183,11 @@ test("bundled default plugins expose extension points and resolve cross-plugin c
   assert.deepEqual(commentDialog.form_fields, ["comment"]);
   assert.deepEqual(Object.keys(commentDialog.events), ["completed"]);
   assert.equal(commentDialog.max_contributions, 4);
-  const annotationActions = points.get("annotation-workflow.annotation.actions");
-  assert.ok(annotationActions);
-  assert.equal(annotationActions.plugin_id, "annotation-workflow");
-  assert.equal(annotationActions.max_contributions, 8);
+  assert.equal(points.has("annotation-workflow.annotation.actions"), false);
 
   const issueSlots = new Map(surface.contributions.filter(({ plugin_id }) => plugin_id === "github-issue").map(({ id, slot }) => [id, slot]));
-  assert.equal(issueSlots.get("issue-request-action"), "review.comment-dialog.actions");
-  assert.equal(issueSlots.get("issue-actions"), "annotation-workflow.annotation.actions");
+  assert.equal(issueSlots.get("issue-header"), "review.header");
+  assert.equal(issueSlots.get("issue-sidebar"), "review.sidebar");
   assert.deepEqual(surface.diagnostics.filter(({ code }) => code === "UNAVAILABLE"), []);
 });
 

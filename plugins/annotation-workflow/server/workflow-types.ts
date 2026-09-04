@@ -1,4 +1,4 @@
-export type ReviewCli = "opencode" | "claude" | "codex" | "copilot" | "pi" | "custom";
+export type ReviewCli = "ai" | "opencode" | "claude" | "codex" | "copilot" | "pi" | "custom";
 export type ReviewJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 
 export interface ReviewJob {
@@ -30,11 +30,7 @@ export interface ReviewJobBatch {
 
 export interface ReviewJobState { revision: number; batches: ReviewJobBatch[]; jobs: ReviewJob[] }
 export interface EnqueueJobsInput {
-  cli: ReviewCli;
   max_parallel: number;
-  session_id?: string | null;
-  opencode_attach?: string | null;
-  runner_id?: string | null;
   annotation_ids?: string[] | null;
 }
 
@@ -45,37 +41,52 @@ export interface WorkflowAnnotation {
   source_hash: string;
   status: string;
   thread: Array<{ actor: string; body: string; at: string }>;
+  [key: string]: unknown;
+}
+export interface WorkflowReviewDocument {
+  annotations: WorkflowAnnotation[];
+  [key: string]: unknown;
+}
+export interface WorkflowReviewContext {
+  schema_version: 1;
+  discovery_status: "pending" | "completed";
+  primary_project: string;
+  related_scopes: string[];
 }
 export interface WorkflowReviewStore {
   readonly path: string;
   readonly target: Readonly<{ projectRoot: string }>;
   sourceHash(pagePath?: string): string;
-  load(): { annotations: WorkflowAnnotation[] };
-  loadActive(): { annotations: WorkflowAnnotation[] };
-  addMessage(annotationId: string, payload: { actor: "ai"; body: string }): unknown;
-  setStatus(annotationId: string, payload: { actor: "ai" | "human"; status: "open" | "in_progress" | "failed" | "addressed" }): unknown;
+  load(): Promise<WorkflowReviewDocument>;
+  loadActive(): Promise<WorkflowReviewDocument>;
+  /** Optional only for legacy capability implementations; current ReviewCapability provides authoritative context. */
+  loadContext?(): Promise<WorkflowReviewContext>;
+  addMessage(annotationId: string, payload: { actor: "ai"; body: string }): Promise<unknown>;
+  setStatus(annotationId: string, payload: { actor: "ai" | "human"; status: "open" | "in_progress" | "failed" | "addressed" }): Promise<unknown>;
 }
 export interface ReviewCapabilityV1 { readonly apiVersion: 1; readonly store: WorkflowReviewStore }
 
-export interface RunnerCommandV1 { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }
+export interface RunnerCommandV1 { readonly command: string; readonly args: readonly string[]; readonly cwd?: string; readonly env?: NodeJS.ProcessEnv }
+/** @deprecated AI consumers should use AiCapabilityV1. */
 export interface RunnerRegistryV1 {
-  list(context: Readonly<{ workspaceRoot: string }>): readonly { runner_id: string; name: string; provider_id: string; verified: boolean }[] | Promise<readonly { runner_id: string; name: string; provider_id: string; verified: boolean }[]>;
-  resolve(runnerId: string, context: Readonly<{ workspaceRoot: string; prompt: string }>): RunnerCommandV1 | Promise<RunnerCommandV1>;
+  list(context: { workspaceRoot: string }): Promise<ReadonlyArray<{ runner_id: string; name: string; provider_id?: string; verified: boolean; profiles?: readonly string[]; integration_kind?: AiMethodV1["method_kind"] }>> | ReadonlyArray<{ runner_id: string; name: string; provider_id?: string; verified: boolean; profiles?: readonly string[]; integration_kind?: AiMethodV1["method_kind"] }>;
+  resolve(runnerId: string, context: { workspaceRoot: string; prompt: string; options?: Readonly<Record<string, string | number | boolean | null>> }): Promise<RunnerCommandV1> | RunnerCommandV1;
 }
-
-export type WorkflowTaskToneV1 = "pending" | "active" | "ready" | "done" | "failed";
-export interface WorkflowTaskLabelV1 { readonly text: string; readonly tone: WorkflowTaskToneV1 }
-export interface WorkflowTaskFilterV1 { readonly id: string; readonly label: string }
-
-/** Structural port supplied by an optional task plugin; no plugin implementation import is required. */
-export interface WorkflowTaskCapabilityV1 {
-  coordinatorInstructions(): string;
-  acceptCoordinatorOutput(output: string, allowedAnnotationIds: ReadonlySet<string>): readonly string[];
-  state(annotation: WorkflowAnnotation): "none" | "pending" | "complete";
-  /** Optional status-badge override for an annotation this task owns; null = use the workflow default label. */
-  label?(annotation: WorkflowAnnotation): WorkflowTaskLabelV1 | null;
-  /** Optional filter categories this task owns; ids must match ^[a-z][a-z0-9-]{0,31}$ and may not collide with workflow statuses. */
-  filters?(): readonly WorkflowTaskFilterV1[];
-  /** Optional: the id of the task filter category this annotation belongs to, or null when the workflow status filter applies. */
-  filter?(annotation: WorkflowAnnotation): string | null;
+export type AiModeV1 = "workspace-write" | "text-only";
+export interface AiMethodV1 {
+  readonly method_id: string;
+  readonly name: string;
+  readonly method_kind: "cli" | "external-command" | "api" | "sdk" | "remote" | "integration";
+  readonly modes: readonly AiModeV1[];
+}
+export interface AiInvocationResultV1 {
+  readonly status: "completed" | "failed" | "cancelled" | "timeout" | "output-limit";
+  readonly output: string;
+  readonly exit_code: number | null;
+  readonly message?: string;
+}
+export interface AiCapabilityV1 {
+  readonly apiVersion: 1;
+  list(input?: { readonly mode?: AiModeV1 }): Promise<readonly AiMethodV1[]> | readonly AiMethodV1[];
+  invoke(input: { readonly method_id?: string; readonly mode: AiModeV1; readonly prompt: string; readonly timeout_ms?: number; readonly output_limit_bytes?: number; readonly options?: Readonly<Record<string, string | number | boolean | null>> }): { readonly result: Promise<AiInvocationResultV1>; cancel(): void };
 }

@@ -9,6 +9,8 @@ export interface ProcessSpecV1 {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly timeoutMs?: number;
+  readonly stdoutLimit?: number;
 }
 
 export interface ProcessResultV1 {
@@ -35,7 +37,7 @@ export interface ProcessSupervisorOptions {
   platform?: NodeJS.Platform;
 }
 
-/** Creates a shell-free supervisor that retains only recent stdout and supports process-tree shutdown. */
+/** Creates a shell-free supervisor that bounds stdout and supports timeout/cancel process-tree shutdown. */
 export function createProcessSupervisor(options: ProcessSupervisorOptions = {}): ProcessSupervisorV1 {
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS;
   const stdoutLimit = options.stdoutLimit ?? DEFAULT_PROCESS_STDOUT_LIMIT;
@@ -50,6 +52,10 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
 
   return {
     run(spec): RunningProcessV1 {
+      const invocationTimeoutMs = spec.timeoutMs ?? timeoutMs;
+      const invocationStdoutLimit = spec.stdoutLimit ?? stdoutLimit;
+      if (!Number.isFinite(invocationTimeoutMs) || invocationTimeoutMs < 0) throw new Error("process timeoutMs must be non-negative");
+      if (!Number.isSafeInteger(invocationStdoutLimit) || invocationStdoutLimit < 0) throw new Error("process stdoutLimit must be a non-negative integer");
       let child: ChildProcess & { stdout: Readable; stderr: Readable };
       let requestedReason: ProcessResultV1["reason"] | undefined;
       let settled = false;
@@ -79,7 +85,7 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
         try {
           killProcess(-child.pid, signal);
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          if (!["ESRCH", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
         }
       };
       const terminate = (reason: ProcessResultV1["reason"]): void => {
@@ -104,12 +110,16 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
       }
 
       child.stdout.on("data", (value: Buffer | string) => {
-        if (stdoutLimit === 0) return;
         const chunk = Buffer.from(value);
+        if (invocationStdoutLimit === 0) {
+          if (chunk.length > 0) terminate("output-limit");
+          return;
+        }
         stdoutChunks.push(chunk);
         stdoutBytes += chunk.length;
-        while (stdoutBytes > stdoutLimit && stdoutChunks.length > 0) {
-          const overflow = stdoutBytes - stdoutLimit;
+        if (stdoutBytes > invocationStdoutLimit) terminate("output-limit");
+        while (stdoutBytes > invocationStdoutLimit && stdoutChunks.length > 0) {
+          const overflow = stdoutBytes - invocationStdoutLimit;
           const oldest = stdoutChunks[0]!;
           if (oldest.length <= overflow) {
             stdoutChunks.shift();
@@ -123,7 +133,7 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
       child.stderr.resume();
       child.once("error", () => finish(null, requestedReason ?? "spawn-error"));
       child.once("close", (code) => finish(code, requestedReason ?? "exit"));
-      timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+      timeoutTimer = setTimeout(() => terminate("timeout"), invocationTimeoutMs);
       timeoutTimer.unref();
       return { result, cancel: () => terminate("cancelled") };
     },

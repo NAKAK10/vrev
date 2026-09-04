@@ -25,11 +25,11 @@ function repository(): string {
   return root;
 }
 
-test("deprecated ReviewStore and ReviewCapability share the plugin-owned persistence implementation", () => {
+test("deprecated ReviewStore and ReviewCapability share the plugin-owned persistence implementation", async () => {
   const root = repository();
   const facade = new ReviewStore(".code/htmls/index.html", { projectRoot: root });
   const capability = createReviewCapability(".code/htmls/index.html", { projectRoot: root });
-  const created = facade.createAnnotation({
+  const created = await facade.createAnnotation({
     kind: "dom",
     page_path: facade.entryPath,
     comment: "same aggregate",
@@ -37,16 +37,16 @@ test("deprecated ReviewStore and ReviewCapability share the plugin-owned persist
     source_hash: fileSha256(facade.targetPath),
   });
 
-  assert.equal(capability.store.load().review_id, created.review_id);
-  assert.equal(capability.store.load().revision, 1);
-  assert.throws(() => facade.createAnnotation({
+  assert.equal((await capability.store.load()).review_id, created.review_id);
+  assert.equal((await capability.store.load()).revision, 1);
+  await assert.rejects(facade.createAnnotation({
     kind: "dom",
     page_path: facade.entryPath,
     comment: "stale write",
     anchor: { selector: "h1" },
     source_hash: fileSha256(facade.targetPath),
   }, "review:0"), /review revision conflict/);
-  assert.equal(capability.store.load().revision, 1);
+  assert.equal((await capability.store.load()).revision, 1);
   assert.match(facade.path, /\.vreview\/reviews\/index--60e665b01e89\/review\.json$/);
 });
 
@@ -66,7 +66,7 @@ test("bundled review server registers and removes ReviewCapabilityV1", async () 
   assert.equal(runtime.status("review").state, "ready");
   const review = capabilities.resolve<ReviewCapabilityV1>(REVIEW_CAPABILITY_ID, 1);
   assert.equal(review.apiVersion, 1);
-  assert.equal(review.store.load().schema_version, 2);
+  assert.equal((await review.store.load()).schema_version, 2);
   await runtime.stop();
   assert.equal(capabilities.has(REVIEW_CAPABILITY_ID, 1), false);
 });

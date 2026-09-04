@@ -366,8 +366,9 @@ export function parsePluginManifest(value: unknown): VisualReviewPluginManifest 
   };
 }
 
-export function readPluginManifest(pluginDirectory: string, requireModules = false): VisualReviewPluginManifest {
-  const manifest = parsePluginManifest(readJson(path.join(pluginDirectory, PLUGIN_MANIFEST_FILE)));
+export function readPluginManifestFile(manifestPath: string, requireModules = false): VisualReviewPluginManifest {
+  const pluginDirectory = path.dirname(manifestPath);
+  const manifest = parsePluginManifest(readJson(manifestPath));
   if (requireModules) {
     const references = [
       ...(manifest.commands ?? []),
@@ -388,4 +389,8 @@ export function readPluginManifest(pluginDirectory: string, requireModules = fal
     }
   }
   return manifest;
+}
+
+export function readPluginManifest(pluginDirectory: string, requireModules = false): VisualReviewPluginManifest {
+  return readPluginManifestFile(path.join(pluginDirectory, PLUGIN_MANIFEST_FILE), requireModules);
 }

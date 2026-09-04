@@ -1,0 +1,63 @@
+{
+  "schema_version": 4,
+  "id": "ai",
+  "version": "1.0.1",
+  "display": {
+    "title": "AI",
+    "summary": "CLI、外部コマンド、API・SDK・remote連携を共通のAI機能として提供します。",
+    "readme": "./README.md"
+  },
+  "configuration": [],
+  "server": {
+    "api_version": 1,
+    "bridge_api_version": 1,
+    "module": "./server/index.js",
+    "contract": "./server.contract.json"
+  },
+  "requires": [
+    {
+      "capability": "host.runner-registry",
+      "api_version": 1,
+      "optional": false
+    },
+    {
+      "capability": "host.process-supervisor",
+      "api_version": 1,
+      "optional": false
+    }
+  ],
+  "provides": [
+    {
+      "capability": "ai",
+      "api_version": 1
+    },
+    {
+      "capability": "ai.integration-registry",
+      "api_version": 1
+    }
+  ],
+  "custom_command_provider": {
+    "module": "./server/index.js",
+    "export": "customCommandProvider",
+    "api_version": 1
+  },
+  "commands": [
+    {
+      "name": "custom-command",
+      "module": "./server/index.js",
+      "export": "handler"
+    }
+  ],
+  "ui": {
+    "renderer_api_version": 1,
+    "bridge_api_version": 1,
+    "contributions": [
+      {
+        "id": "ai-settings",
+        "slot": "settings.detail",
+        "document": "./ui/settings.ui.json",
+        "order": 100
+      }
+    ]
+  }
+}

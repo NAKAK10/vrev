@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "local_state": [
+    {
+      "key": "name",
+      "type": "text",
+      "default": "",
+      "max_length": 100,
+      "persist": false,
+      "reset_on_success": true
+    },
+    {
+      "key": "command",
+      "type": "text",
+      "default": "",
+      "max_length": 4096,
+      "persist": false,
+      "reset_on_success": true
+    }
+  ],
+  "resources": [
+    {
+      "id": "ai-settings",
+      "query": "ai.settings",
+      "input": {},
+      "refresh": "event"
+    },
+    {
+      "id": "runners",
+      "query": "runners.list",
+      "input": {},
+      "refresh": "event"
+    }
+  ],
+  "root": {
+    "type": "section",
+    "props": {
+      "title": {
+        "literal": "AI"
+      },
+      "description": {
+        "literal": "注釈ワークフローとGitHub Issueで共通利用するAIを選択し、外部AIコマンドを管理します。"
+      }
+    },
+    "children": [
+      {
+        "type": "select",
+        "props": {
+          "name": {
+            "literal": "method_id"
+          },
+          "label": {
+            "literal": "利用するAI"
+          },
+          "value": {
+            "resource": "ai-settings",
+            "path": "/method_id"
+          },
+          "required": {
+            "literal": true
+          },
+          "options": {
+            "resource": "ai-settings",
+            "path": "/options"
+          }
+        },
+        "on": {
+          "change": [
+            {
+              "type": "command.execute",
+              "command": "ai.settings.update",
+              "input": {
+                "method_id": {
+                  "event": "/value"
+                }
+              },
+              "pending": {
+                "deduplicate": true
+              },
+              "on_success": [
+                {
+                  "type": "resource.refresh",
+                  "resource": "ai-settings"
+                },
+                {
+                  "type": "toast.show",
+                  "variant": "success",
+                  "message": {
+                    "literal": "利用するAIを保存しました"
+                  }
+                }
+              ],
+              "on_error": [
+                {
+                  "type": "toast.show",
+                  "variant": "error",
+                  "message": {
+                    "error": "/message"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "text",
+        "when": {
+          "eq": [
+            {
+              "resource": "ai-settings",
+              "path": "/available"
+            },
+            {
+              "literal": false
+            }
+          ]
+        },
+        "props": {
+          "text": {
+            "literal": "利用できるAIがありません。CLIをインストールするか外部AIコマンドを登録してください。"
+          },
+          "variant": {
+            "literal": "form-help"
+          }
+        }
+      },
+      {
+        "type": "form",
+        "props": {
+          "name": {
+            "literal": "runner"
+          },
+          "submit_on_enter": {
+            "literal": true
+          }
+        },
+        "on": {
+          "submit": [
+            {
+              "type": "toast.show",
+              "variant": "info",
+              "message": {
+                "literal": "外部AIコマンドを起動してテストしています。完了まで最大2分ほどお待ちください。"
+              }
+            },
+            {
+              "type": "command.execute",
+              "command": "runner.add",
+              "input": {
+                "name": {
+                  "form": "name"
+                },
+                "command": {
+                  "form": "command"
+                }
+              },
+              "pending": {
+                "disable": "register-runner",
+                "deduplicate": true
+              },
+              "on_success": [
+                {
+                  "type": "resource.refresh",
+                  "resource": "runners"
+                },
+                {
+                  "type": "toast.show",
+                  "variant": "success",
+                  "message": {
+                    "literal": "テストに成功し、コマンドを登録しました。"
+                  }
+                }
+              ],
+              "on_error": [
+                {
+                  "type": "toast.show",
+                  "variant": "error",
+                  "message": {
+                    "error": "/message"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "children": [
+          {
+            "type": "input",
+            "props": {
+              "name": {
+                "literal": "name"
+              },
+              "label": {
+                "literal": "表示名"
+              },
+              "value": {
+                "local": "/name"
+              },
+              "required": {
+                "literal": true
+              },
+              "max_length": {
+                "literal": 100
+              }
+            }
+          },
+          {
+            "type": "input",
+            "props": {
+              "name": {
+                "literal": "command"
+              },
+              "label": {
+                "literal": "コマンド"
+              },
+              "value": {
+                "local": "/command"
+              },
+              "required": {
+                "literal": true
+              },
+              "max_length": {
+                "literal": 4096
+              },
+              "autocomplete": {
+                "literal": "off"
+              }
+            }
+          },
+          {
+            "type": "text",
+            "props": {
+              "text": {
+                "literal": "登録前に外部AIを実際に起動します。通常は数秒〜2分かかります。テスト中はこの画面を閉じないでください。"
+              },
+              "variant": {
+                "literal": "form-help"
+              }
+            }
+          },
+          {
+            "id": "register-runner",
+            "type": "button",
+            "props": {
+              "label": {
+                "literal": "テストして登録"
+              },
+              "type": {
+                "literal": "submit"
+              },
+              "variant": {
+                "literal": "primary"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "props": {
+          "label": {
+            "literal": "登録済み外部AIコマンド"
+          },
+          "empty_message": {
+            "literal": "登録済みコマンドはありません。"
+          }
+        },
+        "repeat": {
+          "source": {
+            "resource": "runners",
+            "path": "/runners"
+          },
+          "key": {
+            "item": "/runner_id"
+          }
+        },
+        "children": [
+          {
+            "type": "row",
+            "children": [
+              {
+                "type": "text",
+                "props": {
+                  "text": {
+                    "item": "/name"
+                  }
+                }
+              },
+              {
+                "type": "status",
+                "props": {
+                  "value": {
+                    "item": "/verified"
+                  },
+                  "label": {
+                    "item": "/status_label"
+                  }
+                }
+              },
+              {
+                "type": "button",
+                "props": {
+                  "label": {
+                    "literal": "削除"
+                  },
+                  "variant": {
+                    "literal": "danger"
+                  }
+                },
+                "on": {
+                  "click": [
+                    {
+                      "type": "command.execute",
+                      "command": "runner.delete",
+                      "input": {
+                        "runner_id": {
+                          "item": "/runner_id"
+                        }
+                      },
+                      "pending": {
+                        "deduplicate": true
+                      },
+                      "on_success": [
+                        {
+                          "type": "resource.refresh",
+                          "resource": "runners"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "props": {
+          "label": {
+            "literal": "以前の登録候補"
+          },
+          "empty_message": {
+            "literal": "以前の未完了候補はありません。"
+          }
+        },
+        "repeat": {
+          "source": {
+            "resource": "runners",
+            "path": "/candidates"
+          },
+          "key": {
+            "item": "/runner_id"
+          }
+        },
+        "children": [
+          {
+            "type": "row",
+            "children": [
+              {
+                "type": "text",
+                "props": {
+                  "text": {
+                    "item": "/name"
+                  }
+                }
+              },
+              {
+                "type": "status",
+                "props": {
+                  "value": {
+                    "literal": false
+                  },
+                  "label": {
+                    "item": "/status_label"
+                  }
+                }
+              },
+              {
+                "type": "button",
+                "props": {
+                  "label": {
+                    "literal": "テストして登録"
+                  }
+                },
+                "on": {
+                  "click": [
+                    {
+                      "type": "command.execute",
+                      "command": "runner.test",
+                      "input": {
+                        "runner_id": {
+                          "item": "/runner_id"
+                        }
+                      },
+                      "pending": {
+                        "deduplicate": true
+                      },
+                      "on_success": [
+                        {
+                          "type": "resource.refresh",
+                          "resource": "runners"
+                        },
+                        {
+                          "type": "toast.show",
+                          "variant": "success",
+                          "message": {
+                            "literal": "テストに成功し、コマンドを登録しました。"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "button",
+                "props": {
+                  "label": {
+                    "literal": "削除"
+                  },
+                  "variant": {
+                    "literal": "danger"
+                  }
+                },
+                "on": {
+                  "click": [
+                    {
+                      "type": "command.execute",
+                      "command": "runner.delete",
+                      "input": {
+                        "runner_id": {
+                          "item": "/runner_id"
+                        }
+                      },
+                      "pending": {
+                        "deduplicate": true
+                      },
+                      "on_success": [
+                        {
+                          "type": "resource.refresh",
+                          "resource": "runners"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "safe-markdown",
+        "props": {
+          "value": {
+            "slot_context": "/readme"
+          }
+        }
+      }
+    ]
+  }
+}

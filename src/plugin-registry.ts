@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import {
   cpSync,
   existsSync,
@@ -8,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -20,7 +22,7 @@ import { gunzipSync } from "node:zlib";
 
 import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
 import { findWorkspaceRoot } from "./paths.js";
-import { parsePluginManifest, readPluginManifest, type VisualReviewPluginManifest } from "./plugin-manifest.js";
+import { parsePluginManifest, readPluginManifest, readPluginManifestFile, type VisualReviewPluginManifest } from "./plugin-manifest.js";
 import { parsePluginSource } from "./plugin-source.js";
 
 export interface InstalledPluginResolution {
@@ -38,6 +40,10 @@ export interface InstalledPlugin {
   installed_at: string;
   manifest: VisualReviewPluginManifest;
   resolved?: InstalledPluginResolution;
+  /** Present only for plugins discovered from workspace package dependencies. */
+  directory?: string;
+  /** Absolute manifest filename when it is not the conventional file in directory. */
+  manifest_file?: string;
 }
 
 export interface PluginRegistry {
@@ -70,7 +76,7 @@ function ensurePluginIgnores(vreview: string): void {
   mkdirSync(vreview, { recursive: true });
   const ignorePath = path.join(vreview, ".gitignore");
   if (existsSync(ignorePath) && lstatSync(ignorePath).isSymbolicLink()) throw new Error("plugin storage ignore file must not be a symbolic link");
-  const required = ["plugins/", "plugins.json", "plugin-settings.json", "custom-commands.json", "layout-settings.json"];
+  const required = ["plugins/", "plugins.json", "plugin-settings.json", "ai-settings.json", "workflow-settings.json", "custom-commands.json", "layout-settings.json"];
   const current = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8").split(/\r?\n/).filter(Boolean) : [];
   writeFileSync(ignorePath, `${[...new Set([...current, ...required])].join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
 }
@@ -325,6 +331,8 @@ export async function installPlugin(source: string, workspace = process.cwd()): 
   try {
     const prepared = await prepareSource(source, path.resolve(workspace), temporaryRoot);
     const manifest = readPluginManifest(prepared.directory, true);
+    const packageOwner = discoverPackagePlugins(workspace).find(({ id }) => id === manifest.id);
+    if (packageOwner) throw new Error(`duplicate plugin id ${manifest.id}: ${packageOwner.source} and ${prepared.recordedSource}`);
     return withFileLock(paths.registry, () => {
       const registry = readRegistry(paths.registry);
       if (registry.plugins.some(({ id }) => id === manifest.id)) throw new Error(`plugin is already installed: ${manifest.id}`);
@@ -463,13 +471,120 @@ export function upgradeBundledPlugin(
   });
 }
 
+interface PackageMetadata {
+  name?: unknown;
+  visualReview?: unknown;
+}
+
+function resolvedPackageJson(packageName: string, workspaceRoot: string): string | null {
+  const resolve = createRequire(path.join(workspaceRoot, "package.json")).resolve;
+  try {
+    return realpathSync(resolve(`${packageName}/package.json`));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") return null;
+  }
+
+  // Packages may intentionally not export package.json. Resolving their entry still uses
+  // Node's package resolution algorithm and does not evaluate package code.
+  let entry: string;
+  try { entry = realpathSync(resolve(packageName)); } catch { return null; }
+  let current = path.dirname(entry);
+  while (true) {
+    const candidate = path.join(current, "package.json");
+    if (existsSync(candidate)) {
+      try {
+        const metadata = JSON.parse(readFileSync(candidate, "utf8")) as PackageMetadata;
+        if (metadata.name === packageName) return realpathSync(candidate);
+      } catch { /* A malformed candidate is handled only if it is the resolved package root. */ }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function packageDependencyNames(packageJson: Record<string, unknown>): string[] {
+  const names = new Set<string>();
+  for (const field of ["dependencies", "devDependencies", "optionalDependencies"] as const) {
+    const value = packageJson[field];
+    if (value === undefined) continue;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`workspace package.json ${field} must be an object`);
+    for (const name of Object.keys(value)) names.add(name);
+  }
+  return [...names];
+}
+
+/** Discovers only direct workspace package dependencies, without importing package code. */
+export function discoverPackagePlugins(workspace = process.cwd()): InstalledPlugin[] {
+  const workspaceRoot = findWorkspaceRoot(workspace);
+  const workspacePackagePath = path.join(workspaceRoot, "package.json");
+  if (!existsSync(workspacePackagePath)) return [];
+  const workspacePackage = readJson(workspacePackagePath);
+  if (typeof workspacePackage !== "object" || workspacePackage === null || Array.isArray(workspacePackage)) throw new Error("workspace package.json must be an object");
+
+  const plugins: InstalledPlugin[] = [];
+  for (const packageName of packageDependencyNames(workspacePackage as Record<string, unknown>)) {
+    const packageJsonPath = resolvedPackageJson(packageName, workspaceRoot);
+    if (packageJsonPath === null) continue;
+    let packageJson: PackageMetadata;
+    try { packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageMetadata; }
+    catch { throw new Error(`package ${packageName} has an invalid package.json`); }
+    if (typeof packageJson !== "object" || packageJson === null || Array.isArray(packageJson)) throw new Error(`package ${packageName} has an invalid package.json`);
+    if (packageJson.visualReview === undefined) continue;
+    if (typeof packageJson.visualReview !== "object" || packageJson.visualReview === null || Array.isArray(packageJson.visualReview)) {
+      throw new Error(`package ${packageName} visualReview metadata is invalid`);
+    }
+    const declaration = packageJson.visualReview as Record<string, unknown>;
+    if (declaration.apiVersion !== 1 || typeof declaration.manifest !== "string") {
+      throw new Error(`package ${packageName} visualReview.apiVersion must be 1 and manifest must be a path`);
+    }
+    const manifestReference = declaration.manifest;
+    const parts = manifestReference.startsWith("./") ? manifestReference.slice(2).split("/") : [];
+    if (parts.length === 0 || parts.some((part) => !part || part === "." || part === "..") || manifestReference.includes("\\")) {
+      throw new Error(`package ${packageName} visualReview manifest path is invalid`);
+    }
+    const packageDirectory = realpathSync(path.dirname(packageJsonPath));
+    const candidate = path.join(packageDirectory, ...parts);
+    if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink() || !statSync(candidate).isFile()) {
+      throw new Error(`package ${packageName} visualReview manifest does not exist or is unsafe`);
+    }
+    const manifestPath = realpathSync(candidate);
+    const relative = path.relative(packageDirectory, manifestPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`package ${packageName} visualReview manifest path is unsafe`);
+    const manifest = readPluginManifestFile(manifestPath, true);
+    const duplicate = plugins.find(({ id }) => id === manifest.id);
+    if (duplicate) throw new Error(`duplicate plugin id ${manifest.id}: ${duplicate.source} and ${packageName}`);
+    plugins.push({
+      id: manifest.id,
+      version: manifest.version,
+      source: packageName,
+      installed_at: statSync(packageJsonPath).mtime.toISOString(),
+      manifest,
+      directory: path.dirname(manifestPath),
+      manifest_file: manifestPath,
+    });
+  }
+  return plugins;
+}
+
 export function listPlugins(workspace = process.cwd()): InstalledPlugin[] {
   const paths = storagePaths(workspace);
-  return withFileLock(paths.registry, () => readRegistry(paths.registry).plugins);
+  const legacy = withFileLock(paths.registry, () => readRegistry(paths.registry).plugins);
+  const merged = [...legacy, ...discoverPackagePlugins(workspace)];
+  const owners = new Map<string, string>();
+  for (const plugin of merged) {
+    const owner = owners.get(plugin.id);
+    if (owner !== undefined) throw new Error(`duplicate plugin id ${plugin.id}: ${owner} and ${plugin.source}`);
+    owners.set(plugin.id, plugin.source);
+  }
+  return merged;
 }
 
 export function removePlugin(id: string, workspace = process.cwd()): void {
   const paths = storagePaths(workspace);
+  if (discoverPackagePlugins(workspace).some((plugin) => plugin.id === id)) {
+    throw new Error(`package plugin is managed by workspace package.json: ${id}`);
+  }
   withFileLock(paths.registry, () => {
     const registry = readRegistry(paths.registry);
     const index = registry.plugins.findIndex((plugin) => plugin.id === id);
@@ -492,5 +607,5 @@ export function installedPluginDirectory(id: string, workspace = process.cwd()):
   const paths = storagePaths(workspace);
   const plugin = listPlugins(workspace).find((entry) => entry.id === id);
   if (!plugin) throw new Error(`plugin is not installed: ${id}`);
-  return path.join(paths.plugins, plugin.id);
+  return plugin.directory ?? path.join(paths.plugins, plugin.id);
 }

@@ -15,13 +15,18 @@ import { listPlugins } from "./plugin-registry.js";
 import { loadPluginServerProvider } from "./plugin-runtime.js";
 import type { PluginLoggerV1, PluginServerInstanceV1 } from "./plugin-server.js";
 import { effectivePluginSettings } from "./plugin-settings.js";
+import { createRunnerRegistry, RUNNER_REGISTRY_CAPABILITY_API_VERSION, RUNNER_REGISTRY_CAPABILITY_ID, type RunnerRegistryV1 } from "./runner-registry.js";
 
 export interface PluginHostRuntimeOptions {
   workspaceRoot: string;
   workspaceId: string;
   target: Readonly<{ id: string; source: string }>;
   capabilities?: CapabilityRegistry;
+  runnerRegistry?: RunnerRegistryV1;
+  /** Transitional adapters can exclude IDs they already host while generic package plugins use this runtime. */
+  excludePluginIds?: readonly string[];
   principal?: PluginPrincipalV1;
+  authorizeOperation?: (operation: Readonly<{ pluginId: string; kind: "query" | "command"; name: string; permission: string; principal: PluginPrincipalV1 }>) => boolean;
   logger?: PluginLoggerV1;
 }
 
@@ -62,6 +67,7 @@ const silentLogger: PluginLoggerV1 = {
 export class PluginHostRuntime implements PluginBridgeTransportV1 {
   private readonly entries = new Map<string, RuntimeEntry>();
   private readonly subscriptions = new Set<() => void>();
+  private readonly startupOrder: RuntimeEntry[] = [];
   private readonly capabilities: CapabilityRegistry;
   private readonly logger: PluginLoggerV1;
   private readonly shutdownController = new AbortController();
@@ -71,6 +77,10 @@ export class PluginHostRuntime implements PluginBridgeTransportV1 {
 
   constructor(private readonly options: PluginHostRuntimeOptions) {
     this.capabilities = options.capabilities ?? new CapabilityRegistry();
+    if (!this.capabilities.has(RUNNER_REGISTRY_CAPABILITY_ID, RUNNER_REGISTRY_CAPABILITY_API_VERSION)) {
+      const runners = options.runnerRegistry ?? createRunnerRegistry(options.workspaceRoot);
+      this.capabilities.register(RUNNER_REGISTRY_CAPABILITY_ID, RUNNER_REGISTRY_CAPABILITY_API_VERSION, runners);
+    }
     this.logger = options.logger ?? silentLogger;
   }
 
@@ -145,67 +155,82 @@ export class PluginHostRuntime implements PluginBridgeTransportV1 {
   }
 
   private async startPlugins(): Promise<void> {
+    const excluded = new Set(this.options.excludePluginIds ?? []);
+    const pending = [] as Array<{
+      plugin: ReturnType<typeof listPlugins>[number];
+      settings: ReturnType<typeof effectivePluginSettings>;
+      entry: RuntimeEntry;
+    }>;
     for (const plugin of listPlugins(this.options.workspaceRoot)) {
-      if (plugin.manifest.schema_version !== 4 || !plugin.manifest.server) continue;
+      if (excluded.has(plugin.id) || plugin.manifest.schema_version !== 4 || !plugin.manifest.server) continue;
       const entry: RuntimeEntry = { id: plugin.id, state: "unavailable", capabilityCleanups: [], stopped: false };
       this.entries.set(plugin.id, entry);
       const settings = effectivePluginSettings(plugin.manifest, this.options.workspaceRoot);
-      if (!settings.enabled) {
-        entry.message = "plugin is disabled";
-        continue;
-      }
-      if (settings.missing.length > 0) {
-        entry.message = "plugin configuration is incomplete";
-        continue;
-      }
-      const missing = (plugin.manifest.requires ?? []).filter((requirement) =>
-        !requirement.optional && !this.capabilities.has(requirement.capability, requirement.api_version));
-      if (missing.length > 0) {
-        entry.message = `required capability is unavailable: ${missing[0]!.capability}`;
-        continue;
-      }
+      if (!settings.enabled) { entry.message = "plugin is disabled"; continue; }
+      if (settings.missing.length > 0) { entry.message = "plugin configuration is incomplete"; continue; }
+      pending.push({ plugin, settings, entry });
+    }
 
-      try {
-        entry.state = "loading";
-        const loaded = await loadPluginServerProvider(plugin.id, this.options.workspaceRoot);
-        entry.contract = loaded.contract;
-        const declaredCapabilities = new Set((plugin.manifest.requires ?? []).map(({ capability, api_version }) => `${capability}/${api_version}`));
-        const context = Object.freeze({
-          plugin: Object.freeze({ id: plugin.id, version: plugin.version, root: loaded.pluginDirectory }),
-          workspace: Object.freeze({ root: this.options.workspaceRoot, id: this.options.workspaceId }),
-          target: Object.freeze({ ...this.options.target }),
-          configuration: Object.freeze({ ...settings.configuration }),
-          logger: this.logger,
-          shutdown: this.shutdownController.signal,
-          capability: <T>(id: string, apiVersion: 1): T => {
-            if (!declaredCapabilities.has(`${id}/${apiVersion}`)) throw new Error(`plugin did not declare capability ${id} API version ${apiVersion}`);
-            return this.capabilities.resolve<T>(id, apiVersion);
-          },
-        });
-        entry.instance = await loaded.provider.create(context);
-        assertInstance(entry.instance);
-        entry.state = "starting";
-        await entry.instance.start();
-        const declaredProvides = new Set((plugin.manifest.provides ?? []).map(({ capability, api_version }) => `${capability}/${api_version}`));
-        const contributions = entry.instance.capabilities?.() ?? [];
-        const contributedKeys = new Set<string>();
-        for (const contribution of contributions) {
-          const key = `${contribution.id}/${contribution.apiVersion}`;
-          if (!declaredProvides.has(key)) throw new Error(`plugin did not declare provided capability ${key}`);
-          if (contributedKeys.has(key)) throw new Error(`plugin provided duplicate capability ${key}`);
-          contributedKeys.add(key);
-          entry.capabilityCleanups.push(this.capabilities.register(contribution.id, contribution.apiVersion, contribution.implementation));
+    // A provider may appear before the package that supplies its required capability.
+    // Start satisfiable entries in passes, then diagnose only the unresolved remainder.
+    while (pending.length > 0) {
+      let progressed = false;
+      for (const candidate of [...pending]) {
+        const { plugin, settings, entry } = candidate;
+        const missing = (plugin.manifest.requires ?? []).filter((requirement) =>
+          !requirement.optional && !this.capabilities.has(requirement.capability, requirement.api_version));
+        if (missing.length > 0) continue;
+        pending.splice(pending.indexOf(candidate), 1);
+        progressed = true;
+        try {
+          entry.state = "loading";
+          const loaded = await loadPluginServerProvider(plugin.id, this.options.workspaceRoot);
+          entry.contract = loaded.contract;
+          const declaredCapabilities = new Set((plugin.manifest.requires ?? []).map(({ capability, api_version }) => `${capability}/${api_version}`));
+          const context = Object.freeze({
+            plugin: Object.freeze({ id: plugin.id, version: plugin.version, root: loaded.pluginDirectory }),
+            workspace: Object.freeze({ root: this.options.workspaceRoot, id: this.options.workspaceId }),
+            target: Object.freeze({ ...this.options.target }),
+            configuration: Object.freeze({ ...settings.configuration }),
+            logger: this.logger,
+            shutdown: this.shutdownController.signal,
+            capability: <T>(id: string, apiVersion: 1): T => {
+              if (!declaredCapabilities.has(`${id}/${apiVersion}`)) throw new Error(`plugin did not declare capability ${id} API version ${apiVersion}`);
+              return this.capabilities.resolve<T>(id, apiVersion);
+            },
+          });
+          entry.instance = await loaded.provider.create(context);
+          assertInstance(entry.instance);
+          entry.state = "starting";
+          await entry.instance.start();
+          const declaredProvides = new Set((plugin.manifest.provides ?? []).map(({ capability, api_version }) => `${capability}/${api_version}`));
+          const contributions = entry.instance.capabilities?.() ?? [];
+          const contributedKeys = new Set<string>();
+          for (const contribution of contributions) {
+            const key = `${contribution.id}/${contribution.apiVersion}`;
+            if (!declaredProvides.has(key)) throw new Error(`plugin did not declare provided capability ${key}`);
+            if (contributedKeys.has(key)) throw new Error(`plugin provided duplicate capability ${key}`);
+            contributedKeys.add(key);
+            entry.capabilityCleanups.push(this.capabilities.register(contribution.id, contribution.apiVersion, contribution.implementation));
+          }
+          for (const declared of declaredProvides) {
+            if (!contributedKeys.has(declared)) throw new Error(`plugin did not provide declared capability ${declared}`);
+          }
+          entry.state = "ready";
+          this.startupOrder.push(entry);
+        } catch (error) {
+          entry.state = "failed";
+          entry.message = "plugin server failed to start";
+          this.logger.error("plugin server failed to start", { pluginId: plugin.id, error: safeMessage(error) });
+          await this.stopEntry(entry, "failure");
         }
-        for (const declared of declaredProvides) {
-          if (!contributedKeys.has(declared)) throw new Error(`plugin did not provide declared capability ${declared}`);
-        }
-        entry.state = "ready";
-      } catch (error) {
-        entry.state = "failed";
-        entry.message = "plugin server failed to start";
-        this.logger.error("plugin server failed to start", { pluginId: plugin.id, error: safeMessage(error) });
-        await this.stopEntry(entry, "failure");
       }
+      if (!progressed) break;
+    }
+    for (const { plugin, entry } of pending) {
+      const missing = (plugin.manifest.requires ?? []).find((requirement) =>
+        !requirement.optional && !this.capabilities.has(requirement.capability, requirement.api_version));
+      entry.message = `required capability is unavailable: ${missing?.capability ?? "unknown"}`;
     }
   }
 
@@ -215,6 +240,7 @@ export class PluginHostRuntime implements PluginBridgeTransportV1 {
     name: string,
     request: PluginQueryRequestV1 | PluginCommandRequestV1,
   ): Promise<PluginBridgeResultV1> {
+    await this.start();
     const requestId = typeof request?.request_id === "string" ? request.request_id : "unknown";
     const entry = this.entries.get(pluginId);
     if (this.closed || entry?.state !== "ready" || !entry.instance || !entry.contract) {
@@ -223,12 +249,16 @@ export class PluginHostRuntime implements PluginBridgeTransportV1 {
     const operations = kind === "query" ? entry.contract.queries : entry.contract.commands;
     const operation = operations.find((candidate) => candidate.name === name);
     if (!operation) return bridgeError("PLUGIN_PROTOCOL_ERROR", "operation is not declared by the plugin bridge contract", requestId, false);
+    const principal = this.options.principal ?? "system";
+    if (this.options.authorizeOperation && !this.options.authorizeOperation({ pluginId, kind, name, permission: operation.permission, principal })) {
+      return bridgeError("FORBIDDEN", "plugin operation is not authorized in the current target mode", requestId, false);
+    }
     if (!validRequest(request, kind) || !matchesSchema(request.input, operation.input_schema)) {
       return bridgeError("BAD_REQUEST", "request does not match the plugin bridge contract", requestId, false);
     }
 
     const context: PluginBridgeContextV1 = {
-      principal: this.options.principal ?? "system",
+      principal,
       workspaceId: this.options.workspaceId,
       targetId: this.options.target.id,
       requestId,
@@ -254,6 +284,7 @@ export class PluginHostRuntime implements PluginBridgeTransportV1 {
     await this.startPromise;
     for (const cleanup of [...this.subscriptions]) cleanup();
     this.shutdownController.abort();
+    for (const entry of [...this.startupOrder].reverse()) await this.stopEntry(entry, reason);
     for (const entry of [...this.entries.values()].reverse()) await this.stopEntry(entry, reason);
   }
 

@@ -20,11 +20,11 @@ function payload(store: ReviewStore) {
   return { kind: "dom" as const, page_path: store.entryPath, comment: "直してください", anchor: { selector: " h1 ", attributes: { id: "title", "data-api-key": "secret" }, viewport_mode: "mobile" as const, unknown: "secret" }, source_hash: fileSha256(store.targetPath) };
 }
 
-test("uses deterministic destination and stable JSON format", () => {
+test("uses deterministic destination and stable JSON format", async () => {
   const root = repository();
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: root });
   assert.equal(reviewDirectoryName(store.entryPath), "index--d324f44dd58b");
-  store.load();
+  await store.load();
   assert.match(store.path, /\.vreview\/reviews\/index--d324f44dd58b\/review\.json$/);
   assert.match(store.resolvedPath, /\.vreview\/reviews\/index--d324f44dd58b\/resolved\.json$/);
   const text = readFileSync(store.path, "utf8");
@@ -70,96 +70,96 @@ test("rejects absolute, traversal, hidden, sensitive, wrong-root and symlink tar
   assert.equal(resolveTarget("assets/image.png", root).kind, "image");
 });
 
-test("stores workspace settings centrally for a monorepo project", () => {
+test("stores workspace settings centrally for a monorepo project", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-monorepo-"));
   mkdirSync(path.join(root, ".git"));
   const project = path.join(root, "apps/web");
   mkdirSync(path.join(project, ".code/htmls"), { recursive: true });
   writeFileSync(path.join(project, ".code/htmls/index.html"), "<h1>Web</h1>");
   const store = new ReviewStore("apps/web/.code/htmls/index.html", { projectRoot: root, projectDirectory: project });
-  store.load();
+  await store.load();
   const settings = JSON.parse(readFileSync(path.join(root, ".vreview/settings.json"), "utf8")) as { workspace: { monorepo: boolean }; projects: Array<{ path: string; reviews: Array<{ review_path: string }> }> };
   assert.equal(settings.workspace.monorepo, true);
   assert.equal(settings.projects[0]?.path, "apps/web");
   assert.match(settings.projects[0]?.reviews[0]?.review_path ?? "", /^\.vreview\/reviews\/.*\/review\.json$/);
 });
 
-test("separates resolved annotations and moves reopened feedback back to active JSON", () => {
+test("separates resolved annotations and moves reopened feedback back to active JSON", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  let review = store.createAnnotation(payload(store));
+  let review = await store.createAnnotation(payload(store));
   const id = review.annotations[0]!.id;
-  store.setStatus(id, { actor: "ai", status: "addressed" });
-  store.setStatus(id, { actor: "human", status: "resolved" });
+  await store.setStatus(id, { actor: "ai", status: "addressed" });
+  await store.setStatus(id, { actor: "human", status: "resolved" });
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 0);
   assert.equal((JSON.parse(readFileSync(store.resolvedPath, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
-  review = store.addMessage(id, { actor: "human", body: "再対応" });
+  review = await store.addMessage(id, { actor: "human", body: "再対応" });
   assert.equal(review.annotations[0]?.status, "open");
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
   assert.equal((JSON.parse(readFileSync(store.resolvedPath, "utf8")) as { annotations: unknown[] }).annotations.length, 0);
 });
 
-test("active reads exclude archived annotations without loading the resolved payload", () => {
+test("active reads exclude archived annotations without loading the resolved payload", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
-  store.setStatus(id, { actor: "human", status: "resolved" });
+  const id = (await store.createAnnotation(payload(store))).annotations[0]!.id;
+  await store.setStatus(id, { actor: "human", status: "resolved" });
   writeFileSync(store.resolvedPath, "{ intentionally-not-loaded", "utf8");
-  assert.deepEqual(store.loadActive().annotations, []);
-  assert.throws(() => store.load());
+  assert.deepEqual((await store.loadActive()).annotations, []);
+  await assert.rejects(store.load());
 });
 
-test("migrates legacy review JSON into root .vreview storage", () => {
+test("migrates legacy review JSON into root .vreview storage", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const review = store.load();
+  const review = await store.load();
   unlinkSync(store.path);
   unlinkSync(store.resolvedPath);
   atomicWriteJson(store.legacyPath, review);
-  const migrated = store.load();
+  const migrated = await store.load();
   assert.equal(migrated.review_id, review.review_id);
   assert.equal(existsSync(store.legacyPath), false);
   assert.equal(existsSync(store.path), true);
   assert.equal(existsSync(store.resolvedPath), true);
 });
 
-test("recovers an interrupted active/resolved split transaction", () => {
+test("recovers an interrupted active/resolved split transaction", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const expected = store.createAnnotation(payload(store));
+  const expected = await store.createAnnotation(payload(store));
   atomicWriteJson(store.transactionPath, expected);
   atomicWriteJson(store.path, { ...expected, annotations: [], events: [] });
-  const recovered = store.load();
+  const recovered = await store.load();
   assert.equal(recovered.annotations.length, 1);
   assert.equal(existsSync(store.transactionPath), false);
   assert.equal((JSON.parse(readFileSync(store.path, "utf8")) as { annotations: unknown[] }).annotations.length, 1);
 });
 
-test("human can force-resolve an annotation from every active status", () => {
+test("human can force-resolve an annotation from every active status", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
-  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
-  store.setStatus(id, { actor: "human", status: "open" });
-  store.setStatus(id, { actor: "ai", status: "in_progress" });
-  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
-  store.setStatus(id, { actor: "human", status: "open" });
-  store.setStatus(id, { actor: "ai", status: "failed" });
-  assert.equal(store.setStatus(id, { actor: "human", status: "resolved" }).annotations[0]!.status, "resolved");
+  const id = (await store.createAnnotation(payload(store))).annotations[0]!.id;
+  assert.equal((await store.setStatus(id, { actor: "human", status: "resolved" })).annotations[0]!.status, "resolved");
+  await store.setStatus(id, { actor: "human", status: "open" });
+  await store.setStatus(id, { actor: "ai", status: "in_progress" });
+  assert.equal((await store.setStatus(id, { actor: "human", status: "resolved" })).annotations[0]!.status, "resolved");
+  await store.setStatus(id, { actor: "human", status: "open" });
+  await store.setStatus(id, { actor: "ai", status: "failed" });
+  assert.equal((await store.setStatus(id, { actor: "human", status: "resolved" })).annotations[0]!.status, "resolved");
 });
 
-test("human feedback reopens a failed annotation", () => {
+test("human feedback reopens a failed annotation", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const id = store.createAnnotation(payload(store)).annotations[0]!.id;
-  store.setStatus(id, { actor: "ai", status: "in_progress" });
-  store.addMessage(id, { actor: "ai", body: "AI修正に失敗しました。" });
-  store.setStatus(id, { actor: "ai", status: "failed" });
-  const reopened = store.addMessage(id, { actor: "human", body: "もう一度お願いします" });
+  const id = (await store.createAnnotation(payload(store))).annotations[0]!.id;
+  await store.setStatus(id, { actor: "ai", status: "in_progress" });
+  await store.addMessage(id, { actor: "ai", body: "AI修正に失敗しました。" });
+  await store.setStatus(id, { actor: "ai", status: "failed" });
+  const reopened = await store.addMessage(id, { actor: "human", body: "もう一度お願いします" });
   assert.equal(reopened.annotations[0]!.status, "open");
 });
 
-test("refreshes the annotation source hash after an AI fix", () => {
+test("refreshes the annotation source hash after an AI fix", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const review = store.createAnnotation(payload(store));
+  const review = await store.createAnnotation(payload(store));
   const id = review.annotations[0]!.id;
-  store.setStatus(id, { actor: "ai", status: "in_progress" });
+  await store.setStatus(id, { actor: "ai", status: "in_progress" });
   writeFileSync(store.targetPath, "<h1>AI fixed</h1>", "utf8");
-  const addressed = store.setStatus(id, { actor: "ai", status: "addressed" });
+  const addressed = await store.setStatus(id, { actor: "ai", status: "addressed" });
   assert.equal(addressed.annotations[0]!.source_hash, fileSha256(store.targetPath));
 });
 
@@ -173,15 +173,15 @@ test("rejects a symlinked review storage root", () => {
   );
 });
 
-test("creates schema v2, sanitizes anchors and records status/message events", () => {
+test("creates schema v2, sanitizes anchors and records status/message events", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  let review = store.createAnnotation(payload(store));
+  let review = await store.createAnnotation(payload(store));
   assert.equal(review.schema_version, 2);
   assert.deepEqual(review.annotations[0]!.anchor, { selector: "h1", attributes: { id: "title" }, viewport_mode: "mobile" });
   const id = review.annotations[0]!.id;
-  review = store.setStatus(id, { status: "addressed", actor: "ai" });
-  assert.throws(() => store.setStatus(id, { status: "resolved", actor: "ai" }), /invalid/);
-  review = store.addMessage(id, { body: "再確認", actor: "human" });
+  review = await store.setStatus(id, { status: "addressed", actor: "ai" });
+  await assert.rejects(store.setStatus(id, { status: "resolved", actor: "ai" }), /invalid/);
+  review = await store.addMessage(id, { body: "再確認", actor: "human" });
   assert.equal(review.annotations[0]!.status, "open");
   assert.equal(review.revision, 4);
   assert.deepEqual(review.events.map(({ type }) => type), ["annotation_created", "status_changed", "message_added", "status_changed"]);
@@ -189,7 +189,7 @@ test("creates schema v2, sanitizes anchors and records status/message events", (
   assert.throws(() => sanitizeAnchor("dom", { selector: "h1", viewport_mode: "watch" }), /viewport_mode/);
 });
 
-test("matches the schema 1 compatibility fixture", () => {
+test("matches the schema 1 compatibility fixture", async () => {
   const fixture = JSON.parse(readFileSync(new URL("../../test/fixtures/schema-v1-compat.json", import.meta.url), "utf8")) as {
     input: Record<string, unknown>;
     expected: Record<string, unknown>;
@@ -197,18 +197,18 @@ test("matches the schema 1 compatibility fixture", () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
   atomicWriteJson(store.path, fixture.input);
 
-  const migrated = store.load() as unknown as Record<string, unknown>;
+  const migrated = await store.load() as unknown as Record<string, unknown>;
   const { migrated_at: migratedAt, ...stable } = migrated;
   assert.equal(typeof migratedAt, "string");
   assert.deepEqual(stable, fixture.expected);
-  assert.deepEqual(store.load(), migrated);
+  assert.deepEqual(await store.load(), migrated);
 });
 
-test("migrates schema 1 anchors without changing revision/events", () => {
+test("migrates schema 1 anchors without changing revision/events", async () => {
   const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: repository() });
-  const initial = store.load();
+  const initial = await store.load();
   atomicWriteJson(store.path, { ...initial, schema_version: 1, revision: 7, annotations: [{ kind: "dom", anchor: { selector: " #safe ", value: "secret" } }], events: [{ type: "legacy" }] });
-  const migrated = store.load() as unknown as Record<string, unknown>;
+  const migrated = await store.load() as unknown as Record<string, unknown>;
   assert.equal(migrated.schema_version, 2);
   assert.equal(migrated.revision, 7);
   assert.deepEqual((migrated.annotations as Array<Record<string, unknown>>)[0]!.anchor, { selector: "#safe" });
@@ -220,9 +220,9 @@ test("serializes competing worker updates and recovers an expired lock", async (
   const moduleUrl = new URL("../src/index.js", import.meta.url).href;
   const workerSource = `
     const { parentPort, workerData } = require("node:worker_threads");
-    import(workerData.moduleUrl).then(({ ReviewStore, fileSha256 }) => {
+    import(workerData.moduleUrl).then(async ({ ReviewStore, fileSha256 }) => {
       const store = new ReviewStore(workerData.target, { projectRoot: workerData.root });
-      store.createAnnotation({
+      await store.createAnnotation({
         kind: "dom",
         page_path: store.entryPath,
         comment: workerData.comment,
@@ -241,7 +241,7 @@ test("serializes competing worker updates and recovers an expired lock", async (
     worker.once("error", reject);
   }));
   await Promise.all(updates);
-  const review = store.load();
+  const review = await store.load();
   assert.equal(review.annotations.length, 12);
   assert.deepEqual(review.events.map(({ revision }) => revision), Array.from({ length: 12 }, (_, index) => index + 1));
   writeFileSync(`${store.path}.lock`, "stale");

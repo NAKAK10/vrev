@@ -1,4 +1,3 @@
-type ReviewCli = "opencode" | "claude" | "codex" | "copilot" | "pi" | "custom";
 type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 
 interface SessionPayload {
@@ -12,7 +11,6 @@ interface ReviewJob {
   id: string;
   batch_id: string;
   annotation_id: string;
-  cli: ReviewCli;
   state: JobState;
   summary: string;
   exit_code: number | null;
@@ -24,13 +22,6 @@ interface JobListPayload {
   jobs: ReviewJob[];
 }
 
-interface CustomCommand {
-  runner_id: string;
-  name: string;
-  verified: boolean;
-  probe_ms: number | null;
-}
-
 interface EnqueuePayload {
   batch_id: string;
   jobs: ReviewJob[];
@@ -40,22 +31,12 @@ interface AnnotationFlowPolicy {
   events: Array<"annotation-created" | "annotation-reopened">;
   debounceMs: number;
   settings: {
-    runner: { label: string; options: Array<{ value: Exclude<ReviewCli, "custom">; label: string }> };
     maxParallel: { label: string; min: number; max: number; defaultValue: number };
     autoRun: { label: string };
   };
 }
 
 const ACTIVE_STATES: ReadonlySet<JobState> = new Set(["queued", "running"]);
-const CLI_LABELS: Record<ReviewCli, string> = {
-  opencode: "OpenCode",
-  claude: "Claude",
-  codex: "Codex",
-  copilot: "GitHub Copilot",
-  pi: "Pi",
-  custom: "Custom",
-};
-
 function element<T extends Element>(selector: string, type: { new (): T }): T {
   const value = document.querySelector(selector);
   if (!(value instanceof type)) throw new Error(`required UI element missing: ${selector}`);
@@ -69,8 +50,6 @@ const form = element("#ai-batch-form", HTMLFormElement);
 const settingsOpenButton = element("#ai-settings-open", HTMLButtonElement);
 const settingsDialog = element("#ai-settings-dialog", HTMLDialogElement);
 const settingsCloseButton = element("[data-ai-settings-close]", HTMLButtonElement);
-const cliSelect = element("#ai-cli", HTMLSelectElement);
-const customOptions = element("#ai-custom-options", HTMLOptGroupElement);
 const parallelSelect = element("#ai-max-parallel", HTMLSelectElement);
 const autoRunCheckbox = element("#ai-auto-run", HTMLInputElement);
 const submitButton = element("#ai-batch-submit", HTMLButtonElement);
@@ -88,39 +67,15 @@ let autoRunTimer: number | undefined;
 let annotationFlowPolicy: AnnotationFlowPolicy | null = null;
 let annotationFlowLoading = true;
 let annotationWorkflowEnabled = false;
-let customCommandEnabled = false;
 const pendingAnnotationFlowEvents = new Set<"annotation-created" | "annotation-reopened">();
 let destroyed = false;
 
 const AUTO_RUN_STORAGE_KEY = "visual-review:auto-run";
-const CLI_STORAGE_KEY = "visual-review:cli";
 const PARALLEL_STORAGE_KEY = "visual-review:max-parallel";
-let customCommands: CustomCommand[] = [];
 const storedParallel = window.localStorage.getItem(PARALLEL_STORAGE_KEY);
 if (storedParallel !== null && Number(storedParallel) >= 1 && Number(storedParallel) <= 10) parallelSelect.value = storedParallel;
 autoRunCheckbox.checked = window.localStorage.getItem(AUTO_RUN_STORAGE_KEY) === "true";
 form.hidden = autoRunCheckbox.checked;
-
-function isCli(value: string): value is Exclude<ReviewCli, "custom"> {
-  return value === "opencode" || value === "claude" || value === "codex" || value === "copilot" || value === "pi";
-}
-
-function renderCustomCommands(enabled = customCommandEnabled): void {
-  customOptions.replaceChildren(...customCommands.filter(({ verified }) => enabled && verified).map((item) => {
-    const option = document.createElement("option");
-    option.value = `custom:${item.runner_id}`;
-    option.textContent = item.name;
-    return option;
-  }));
-}
-
-function selectedConfiguration(): { cli: ReviewCli; runner_id?: string } {
-  if (isCli(cliSelect.value)) return { cli: cliSelect.value };
-  const runnerId = cliSelect.value.startsWith("custom:") ? cliSelect.value.slice(7) : "";
-  const custom = customCommands.find((item) => item.runner_id === runnerId);
-  if (!custom?.verified) throw new Error("外部AIコマンドは登録前にテストしてください。");
-  return { cli: "custom", runner_id: custom.runner_id };
-}
 
 function setStatus(message: string, error = false): void {
   if (!message) {
@@ -245,16 +200,12 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
     return;
   }
 
-  const configuration = selectedConfiguration();
   const maxParallel = Number(parallelSelect.value);
   if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 10) {
     setStatus("最大並列数は1〜10で選択してください。", true);
     return;
   }
-  const cliLabel = configuration.runner_id
-    ? customCommands.find(({ runner_id }) => runner_id === configuration.runner_id)?.name ?? CLI_LABELS.custom
-    : CLI_LABELS[configuration.cli];
-  if (!automatic && !window.confirm(`${openCount}件の未対応注釈を${cliLabel}（最大並列${maxParallel}）へ依頼しますか？`)) return;
+  if (!automatic && !window.confirm(`${openCount}件の未対応注釈をAI（最大並列${maxParallel}）へ依頼しますか？`)) return;
 
   submitting = true;
   updateSubmitState();
@@ -263,7 +214,7 @@ async function enqueueOpenAnnotations(automatic: boolean): Promise<void> {
     const payload = await requestJson("/api/jobs/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...configuration, max_parallel: maxParallel }),
+      body: JSON.stringify({ max_parallel: maxParallel }),
     });
     if (typeof payload !== "object" || payload === null || !Array.isArray((payload as Partial<EnqueuePayload>).jobs)) {
       throw new Error("batch response is invalid");
@@ -294,33 +245,20 @@ function validAnnotationFlowPolicy(value: unknown): value is AnnotationFlowPolic
   const settings = policy.settings;
   return Array.isArray(policy.events) && policy.events.length > 0 && policy.events.every((event) => allowed.has(event))
     && Number.isInteger(policy.debounceMs) && Number(policy.debounceMs) >= 0 && Number(policy.debounceMs) <= 5_000
-    && typeof settings?.runner?.label === "string" && Array.isArray(settings.runner.options) && settings.runner.options.length > 0
-    && settings.runner.options.every(({ value, label }) => isCli(value) && typeof label === "string" && Boolean(label.trim()))
-    && typeof settings.maxParallel?.label === "string" && Number.isInteger(settings.maxParallel.min) && Number.isInteger(settings.maxParallel.max)
+    && typeof settings?.maxParallel?.label === "string" && Number.isInteger(settings.maxParallel.min) && Number.isInteger(settings.maxParallel.max)
     && Number.isInteger(settings.maxParallel.defaultValue) && settings.maxParallel.min >= 1 && settings.maxParallel.max <= 10
     && settings.maxParallel.defaultValue >= settings.maxParallel.min && settings.maxParallel.defaultValue <= settings.maxParallel.max
     && typeof settings.autoRun?.label === "string" && Boolean(settings.autoRun.label.trim());
 }
 
-function applyAnnotationFlowSettings(policy: AnnotationFlowPolicy, allowCustomCommands: boolean): void {
-  const runnerLabel = document.querySelector('label[for="ai-cli"] > span');
+function applyAnnotationFlowSettings(policy: AnnotationFlowPolicy): void {
   const parallelLabel = document.querySelector('label[for="ai-max-parallel"] > span');
   const autoRunLabel = document.querySelector('label[for="ai-auto-run"] > span');
-  if (!(runnerLabel instanceof HTMLSpanElement) || !(parallelLabel instanceof HTMLSpanElement) || !(autoRunLabel instanceof HTMLSpanElement)) {
+  if (!(parallelLabel instanceof HTMLSpanElement) || !(autoRunLabel instanceof HTMLSpanElement)) {
     throw new Error("annotation workflow settings slots are missing");
   }
-  runnerLabel.textContent = policy.settings.runner.label;
   parallelLabel.textContent = policy.settings.maxParallel.label;
   autoRunLabel.textContent = policy.settings.autoRun.label;
-  for (const option of [...cliSelect.querySelectorAll(":scope > option")]) option.remove();
-  for (const item of policy.settings.runner.options) {
-    const option = document.createElement("option");
-    option.value = item.value;
-    option.textContent = item.label;
-    cliSelect.insertBefore(option, customOptions);
-  }
-  customCommandEnabled = allowCustomCommands;
-  renderCustomCommands(allowCustomCommands);
   parallelSelect.replaceChildren(...Array.from(
     { length: policy.settings.maxParallel.max - policy.settings.maxParallel.min + 1 },
     (_, offset) => {
@@ -331,13 +269,6 @@ function applyAnnotationFlowSettings(policy: AnnotationFlowPolicy, allowCustomCo
       return option;
     },
   ));
-  const configuredCli = window.localStorage.getItem(CLI_STORAGE_KEY);
-  const builtInValues = new Set(policy.settings.runner.options.map(({ value }) => value));
-  const customAvailable = allowCustomCommands && customCommands.some(({ runner_id, verified }) => verified && configuredCli === `custom:${runner_id}`);
-  const fallback = builtInValues.has("claude") ? "claude" : policy.settings.runner.options[0]!.value;
-  const effectiveCli = configuredCli && ((isCli(configuredCli) && builtInValues.has(configuredCli)) || customAvailable) ? configuredCli : fallback;
-  cliSelect.value = effectiveCli;
-  window.localStorage.setItem(CLI_STORAGE_KEY, effectiveCli);
   const configuredParallel = Number(window.localStorage.getItem(PARALLEL_STORAGE_KEY));
   parallelSelect.value = Number.isInteger(configuredParallel) && configuredParallel >= policy.settings.maxParallel.min && configuredParallel <= policy.settings.maxParallel.max
     ? String(configuredParallel)
@@ -354,7 +285,6 @@ async function loadAnnotationFlowPolicy(): Promise<void> {
       annotationWorkflowEnabled = false;
       annotationFlowPolicy = null;
       annotationFlowLoading = false;
-      customCommandEnabled = response.custom_command_enabled === true;
       pendingAnnotationFlowEvents.clear();
       if (autoRunTimer !== undefined) window.clearTimeout(autoRunTimer);
       autoRunTimer = undefined;
@@ -369,10 +299,7 @@ async function loadAnnotationFlowPolicy(): Promise<void> {
       return;
     }
     if (response.enabled !== true || !validAnnotationFlowPolicy(response.policy)) throw new Error("annotation workflow plugin is unavailable");
-    customCommands = response.custom_command_enabled === true
-      ? ((await requestJson("/api/jobs/custom-commands")) as { runners?: CustomCommand[] }).runners ?? []
-      : [];
-    applyAnnotationFlowSettings(response.policy, response.custom_command_enabled === true);
+    applyAnnotationFlowSettings(response.policy);
     annotationFlowPolicy = response.policy;
     annotationFlowLoading = false;
     annotationWorkflowEnabled = true;
@@ -422,7 +349,6 @@ function destroy(): void {
 form.addEventListener("submit", (event) => void submitBatch(event));
 settingsOpenButton.addEventListener("click", () => { window.location.href = "/settings/plugins#annotation-workflow"; });
 settingsCloseButton.addEventListener("click", () => settingsDialog.close());
-cliSelect.addEventListener("change", () => window.localStorage.setItem(CLI_STORAGE_KEY, cliSelect.value));
 parallelSelect.addEventListener("change", () => window.localStorage.setItem(PARALLEL_STORAGE_KEY, parallelSelect.value));
 autoRunCheckbox.addEventListener("change", () => {
   window.localStorage.setItem(AUTO_RUN_STORAGE_KEY, String(autoRunCheckbox.checked));

@@ -24,6 +24,8 @@ import {
   type IssueTaskCapabilityV1,
 } from "../plugins/github-issue/server/index.js";
 import { provider } from "../plugins/github-issue/server/issue-provider.js";
+import { createProcessSupervisor } from "../src/process-supervisor.js";
+import { createRunnerRegistry } from "../src/runner-registry.js";
 
 function repository(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "visual-review-issue-extraction-"));
@@ -38,21 +40,22 @@ function taskFixture(provider: { createIssue(root: string, draft: { title: strin
   const drafts: Array<{ title: string; body: string }> = [];
   const store = {
     target: { projectRoot: "/workspace" },
-    load: () => ({ annotations: [annotation] }),
-    loadActive: () => ({ annotations: [annotation] }),
-    setIssueDraftReady: (_id: string, title: string, body: string) => { drafts.push({ title, body }); annotation.issue_state = "ready"; },
-    completeIssueDraft: (_id: string, _title: string, url: string) => { annotation.issue_state = "created"; annotation.issue_url = url; },
+    load: async () => ({ annotations: [annotation] }),
+    loadActive: async () => ({ annotations: [annotation] }),
+    setIssueDraftReady: async (_id: string, title: string, body: string) => { drafts.push({ title, body }); annotation.issue_state = "ready"; },
+    failIssueDraft: async (): Promise<never> => { throw new Error("not implemented"); },
+    completeIssueDraft: async (_id: string, _title: string, url: string) => { annotation.issue_state = "created"; annotation.issue_url = url; },
   };
   const annotations = { create: (): never => { throw new Error("not implemented"); } };
   return { annotation, drafts, task: createIssueTaskCapability({ apiVersion: 1, store, annotations }, { provider }) };
 }
 
-test("Issue task accepts only allowed annotation IDs and rejects internal references", () => {
+test("Issue task accepts only allowed annotation IDs and rejects internal references", async () => {
   const fixture = taskFixture({ createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }) });
   const block = (id: string, body: string) => `VISUAL_REVIEW_ISSUE_DRAFT_START\n${JSON.stringify({ annotation_id: id, title: "Title", body })}\nVISUAL_REVIEW_ISSUE_DRAFT_END`;
-  fixture.task.acceptCoordinatorOutput(`${block("other-id", "Body")}\n${block("allowed-id", "mentions allowed-id")}`, new Set(["allowed-id"]));
+  await fixture.task.acceptCoordinatorOutput(`${block("other-id", "Body")}\n${block("allowed-id", "mentions allowed-id")}`, new Set(["allowed-id"]));
   assert.deepEqual(fixture.drafts, []);
-  fixture.task.acceptCoordinatorOutput(block("allowed-id", "Standalone body"), new Set(["allowed-id"]));
+  await fixture.task.acceptCoordinatorOutput(block("allowed-id", "Standalone body"), new Set(["allowed-id"]));
   assert.deepEqual(fixture.drafts, [{ title: "Title", body: "Standalone body" }]);
 });
 
@@ -109,14 +112,14 @@ test("resolveTarget reads the repo and account gh would use, and returns null on
   }
 });
 
-test("issue.target bridge query is ok:true with fields omitted when the target is unknown", async () => {
+test("issue.target bridge query explicitly reports unavailable fields when the target is unknown", async () => {
   const fixture = taskFixture({ createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }) });
   const review = { store: { target: { projectRoot: "/workspace" } } };
   const adapter = createIssueBridgeAdapter(review as never, fixture.task, {
     provider: { createIssue: async () => ({ url: "https://github.com/o/r/issues/1" }), resolveTarget: async () => ({ repo: null, account: null }) },
   });
   const result = await adapter.query("issue.target", { request_id: "r1", input: {} });
-  assert.deepEqual(result, { ok: true, data: {} });
+  assert.deepEqual(result, { ok: true, data: { repo: "利用できません", account: "利用できません" } });
 });
 
 test("issue.target bridge query returns the resolved repo and account", async () => {
@@ -141,23 +144,36 @@ test("Issue creation is single-flight and never automatically retries an indeter
   fixture.annotation.issue_state = "ready";
   const first = fixture.task.create("allowed-id", { title: "Title", body: "Body" });
   const duplicate = fixture.task.create("allowed-id", { title: "Title", body: "Body" });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1);
   const indeterminate = Object.assign(new Error("outcome indeterminate"), { indeterminate: true });
   reject(indeterminate);
   await assert.rejects(first, /indeterminate/);
   await assert.rejects(duplicate, /indeterminate/);
   await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(fixture.task.create("allowed-id", { title: "Title", body: "Body" }), /indeterminate/);
   assert.equal(calls, 1);
 });
 
 test("github-issue schema-v4 capability follows lifecycle and disabled code is not evaluated", async () => {
   const root = repository();
   await ensureDefaultPlugins(root);
+  const workflow = listPlugins(root).find(({ id }) => id === "annotation-workflow")!;
+  updatePluginSettings(workflow.id, workflow.manifest, { revision: pluginSettingsRevision(readPluginSettings(root)), enabled: false, configuration: {} }, root);
   const capabilities = new CapabilityRegistry();
   capabilities.register(REVIEW_DOMAIN_DEPENDENCIES_CAPABILITY_ID, 1, reviewDomainDependencies);
+  capabilities.register("host.runner-registry", 1, createRunnerRegistry(root));
+  capabilities.register("host.process-supervisor", 1, createProcessSupervisor());
   const runtime = createPluginHostRuntime({ workspaceRoot: root, workspaceId: "workspace", target: { id: "target", source: ".code/htmls/index.html" }, capabilities });
   await runtime.start();
   assert.equal(runtime.status("github-issue").state, "ready");
+  assert.equal(runtime.status("annotation-workflow").state, "unavailable");
+  assert.deepEqual(await runtime.query("github-issue", "issues.list", { protocol: "plugin-bridge/1", request_id: "issues-without-workflow", input: {} }), { ok: true, revision: "review:0", data: { items: [], total: 0, latest_id: "", filters: [
+    { value: "creating", label: "作成中" },
+    { value: "retry", label: "再作成" },
+    { value: "drafted", label: "作成済み" },
+    { value: "resolved", label: "解決済み" },
+  ] } });
   assert.equal(capabilities.resolve<IssueTaskCapabilityV1>(ISSUE_TASK_CAPABILITY_ID, 1).apiVersion, 1);
   await runtime.stop();
   assert.equal(capabilities.has(ISSUE_TASK_CAPABILITY_ID, 1), false);
@@ -167,6 +183,8 @@ test("github-issue schema-v4 capability follows lifecycle and disabled code is n
   writeFileSync(path.join(installedPluginDirectory("github-issue", root), "server/index.js"), "throw new Error('disabled module evaluated')");
   const disabledCapabilities = new CapabilityRegistry();
   disabledCapabilities.register(REVIEW_DOMAIN_DEPENDENCIES_CAPABILITY_ID, 1, reviewDomainDependencies);
+  disabledCapabilities.register("host.runner-registry", 1, createRunnerRegistry(root));
+  disabledCapabilities.register("host.process-supervisor", 1, createProcessSupervisor());
   const disabledRuntime = createPluginHostRuntime({ workspaceRoot: root, workspaceId: "workspace", target: { id: "target", source: ".code/htmls/index.html" }, capabilities: disabledCapabilities });
   await disabledRuntime.start();
   assert.equal(disabledRuntime.status("github-issue").state, "unavailable");
@@ -175,11 +193,29 @@ test("github-issue schema-v4 capability follows lifecycle and disabled code is n
 });
 
 test("Issue implementation has plugin boundaries and legacy Core files are adapters", () => {
-  const workflow = readFileSync(new URL("../../plugins/annotation-workflow/server/job-manager.ts", import.meta.url), "utf8");
+  const packageText = (paths: string[]) => paths.map((file) => readFileSync(path.join(process.cwd(), file), "utf8")).join("\n");
+  const workflow = packageText([
+    "plugins/annotation-workflow/visual-review.plugin.json", "plugins/annotation-workflow/server/index.ts",
+    "plugins/annotation-workflow/server/job-manager.ts", "plugins/annotation-workflow/server/workflow-types.ts",
+    "plugins/annotation-workflow/ui/sidebar.ui.json",
+  ]);
+  const issuePackage = packageText([
+    "plugins/github-issue/visual-review.plugin.json", "plugins/github-issue/server.contract.json", "plugins/github-issue/server/index.js",
+    "plugins/github-issue/README.md", "plugins/github-issue/ui/header.ui.json", "plugins/github-issue/ui/sidebar.ui.json",
+  ]);
+  const aiPackage = packageText([
+    "plugins/ai/visual-review.plugin.json", "plugins/ai/server/index.js", "plugins/ai/server/settings.js", "plugins/ai/ui/settings.ui.json",
+  ]);
   const issue = readFileSync(new URL("../../plugins/github-issue/server/index.js", import.meta.url), "utf8");
   const facade = readFileSync(new URL("../../src/github-issue.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(workflow, /VISUAL_REVIEW_ISSUE_DRAFT_START|GitHub Issue自体は作成せず|extractIssueDraftOutput/);
+  const reviewStage = readFileSync(new URL("../../plugins/review/ui/stage.ui.json", import.meta.url), "utf8");
+  assert.doesNotMatch(workflow, /VISUAL_REVIEW_ISSUE_DRAFT_START|extractIssueDraftOutput|github-issue|issue-task|issue_state|taskCapability/);
+  assert.doesNotMatch(issuePackage, /annotation-workflow|ai_method_id|issue\.ai-methods/);
+  assert.match(issue, /ai\.invoke\(\{\s*mode: "text-only"/);
+  assert.doesNotMatch(issue, /ai\.list\(|ai\.invoke\(\{[^}]*method_id/s);
+  assert.match(aiPackage, /selectAiMethod|method_id/);
   assert.doesNotMatch(issue, /plugins\/(?:review|annotation-workflow)\/server/);
+  assert.doesNotMatch(reviewStage, /review\.comment-dialog\.actions/);
   assert.match(facade, /plugins\/github-issue\/server/);
   assert.doesNotMatch(facade, /function requiredText|new Map/);
 });

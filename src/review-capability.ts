@@ -1,6 +1,7 @@
-import { atomicWriteJson, fileSha256, readJson, withFileLock } from "./file-utils.js";
+import { fileSha256 } from "./file-utils.js";
 import { legacyReviewFilePath, resolveTarget, resolvedReviewFilePath, reviewFilePath } from "./paths.js";
 import { registerWorkspaceReview } from "./workspace-settings.js";
+import { createWorkspaceReviewDocumentStorage } from "./workspace-storage.js";
 import {
   createReviewCapability as createPluginReviewCapability,
   REVIEW_CAPABILITY_API_VERSION,
@@ -12,10 +13,8 @@ import type { ReviewDomainDependencies, ReviewStoreOptions } from "../plugins/re
 
 /** Host primitives supplied to the isolated review plugin implementation. */
 export const reviewDomainDependencies: ReviewDomainDependencies = Object.freeze({
-  atomicWriteJson,
   fileSha256,
-  readJson,
-  withFileLock,
+  createStorage: createWorkspaceReviewDocumentStorage,
   legacyReviewFilePath,
   resolveTarget,
   resolvedReviewFilePath,

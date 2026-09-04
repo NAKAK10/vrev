@@ -8,6 +8,8 @@
       "output_schema": {
         "type": "object",
         "properties": {
+          "analysis_state": { "type": "string", "enum": ["ready", "empty", "unsupported", "incomplete"] },
+          "analysis_reason": { "type": "string", "enum": ["none", "no_html_files", "unsupported_target", "scan_incomplete"] },
           "generated_at": { "type": "string", "maxLength": 64 },
           "scan_root": { "type": "string", "maxLength": 1024 },
           "entry_path": { "type": "string", "maxLength": 1024 },
@@ -87,7 +89,7 @@
             }
           }
         },
-        "required": ["generated_at", "scan_root", "entry_path", "truncated", "warnings", "stats", "pages", "edges", "unknown", "externals"],
+        "required": ["analysis_state", "analysis_reason", "generated_at", "scan_root", "entry_path", "truncated", "warnings", "stats", "pages", "edges", "unknown", "externals"],
         "additionalProperties": false
       },
       "resources": ["page-map"]

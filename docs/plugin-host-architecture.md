@@ -1,18 +1,19 @@
 # Plugin Host Architecture v4
 
-Status: Draft for review  
-Scope: Visual Review を最小Core hostとdefault pluginsへ分割する次期architecture  
-Implementation status: 未実装
+Status: Accepted
+Scope: Visual Reviewを最小Core hostと独立npm packagesへ分割するarchitecture
+Implementation status: npm package API v1への移行中（legacy `.vreview/plugins`はone-beta互換）
 
 ## 1. Decision summary
 
 Visual Review Coreはreview productそのものではなく、pluginを安全に導入・起動・描画・接続するhostとする。
 
 - `review` default pluginがReviewStore、review schema、annotation validation、status transition、archive/history dataを所有する。
-- `annotation-workflow` default pluginが右sidebar（AI一括修正・注釈・履歴）のUI composition、job orchestration、runner policyを所有する。
-- `external-ai-command`（技術IDは互換性のため`custom-command`）default pluginがserver-side verified runner registryとcapability testを所有する。
-- `github-issue` default pluginがIssue draft taskとIssue作成providerを所有する。
-- Core browserはplugin JavaScriptを実行しない。plugin UIは宣言的documentとして読み込み、Core rendererがallowlist componentだけを描画する。
+- first-party feature packageは`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`の6つだけとする。
+- `annotation-workflow` default pluginが右sidebar（AI一括修正・注釈・履歴）のUI compositionとjob orchestrationを所有する。
+- `@visual-review/ai`がCLI選択、外部AIコマンドの登録・検証・実行、`ai/v1`、`ai.integration-registry/v1`を所有する。AIを使うfeature packageは必要modeだけを指定し、利用者へAIを選ばせない。
+- `firestore`がremote storage、`page-map`が静的画面遷移解析、`github-issue`がannotation workflowとは別の選択tool、modal、sidebar、Issue作成providerを所有する。
+- Core browserはmanifestで明示されたtrusted browser moduleを除きplugin JavaScriptを実行しない。plugin UIは宣言的documentとして読み込み、Core rendererがallowlist componentだけを描画する。
 - validation、business rule、mutation、permission判定はserver pluginが最終責任を持つ。
 - UI→Server actionとServer→UI eventの双方向通信をCore `PluginBridge`が仲介する。
 - UI contributionとServer contributionは独立して検証・loadできる。
@@ -20,7 +21,7 @@ Visual Review Coreはreview productそのものではなく、pluginを安全に
 ## 2. Goals
 
 1. `src/`をreview機能の置き場所ではなく、plugin host/SDKだけにする。
-2. `review-store.ts`、`job-manager.ts`、`custom-command-test.ts`等をdomain owner pluginへ移す。
+2. `review-store.ts`、`job-manager.ts`、AI command test等をdomain owner pluginへ移す。
 3. plugin固有のUIとserver logicを同じplugin package内で管理できるようにする。
 4. plugin UIによる任意script、任意HTML、任意DOM操作、任意fetchを禁止する。
 5. server-side validatorを唯一のauthoritative validationとする。
@@ -81,24 +82,26 @@ plugins/
       review.ui.json
     test/
 
+  ai/
+    server/
+      index.ts
+      cli-adapters.ts
+      external-command-registry.ts
+      capability-test.ts
+    ui/
+      settings.ui.json
+    test/
+
+  firestore/
   annotation-workflow/
     server/
       index.ts
       job-manager.ts
       job-store.ts
-      adapters.ts
     ui/
       sidebar.ui.json
     test/
-
-  custom-command/
-    server/
-      index.ts
-      runner-registry.ts
-      capability-test.ts
-    ui/
-      settings.ui.json
-    test/
+  page-map/
 
   github-issue/
     server/
@@ -143,9 +146,9 @@ Core MUST NOT know:
 - `review.json` / `resolved.json`のdomain semantics
 - annotation/history labels
 - AI coordinator prompt
-- runner名と選択policy
+- AI method名と選択policy
 - GitHub Issue draft readiness
-- custom command template
+- external AI command template
 - plugin IDごとのsettings panel実装
 
 Coreはbundled catalogとしてdefault plugin IDを知ってよいが、そのdomain behaviorを条件分岐してはならない。
@@ -180,10 +183,10 @@ Server ownership:
 
 - annotation-created/reopened policy
 - job queue、batch、checkpoint、recovery
-- coordinator promptとbuilt-in runner adapter
+- coordinator prompt
 - durable completion reconciliation
 - review capability経由のannotation/message/status mutation
-- runner registry capabilityの利用
+- `ai/v1` capabilityの利用（`workspace-write` mode）
 
 UI ownership:
 
@@ -196,23 +199,28 @@ UI ownership:
 
 Explicit policy: `annotation-workflow`を無効化すると右sidebar contribution全体をunmountし、review stageは全幅になる。review dataは削除せず、`review` serverとCLI/headless capabilityは残る。
 
-### 6.3 `custom-command` / display title `外部AIコマンド`
+### 6.3 `ai`
 
 Server ownership:
 
-- runner definition persistence
-- capability test
-- verified state
-- opaque `runner_id`から`CommandSpec`への解決
-- timeout/output policyへのadapter
+- 利用するCLIの検出とworkspace単位の選択
+- CLI adapter
+- 外部AIコマンドのdefinition persistence、capability test、verified state、実行
+- API/SDK/remote integration registry
+- `ai/v1`によるmode別method解決、timeout、cancel、output policy
 
 UI ownership:
 
+- CLI選択
 - 外部AIコマンド登録・再テスト・削除settings panel
 
-Critical invariant: browserとannotation-workflowはraw executable/templateをjob APIへ送ってはならない。verified server-side `runner_id`だけを送る。commandの検証失敗時はverified stateを失効させる。
+Critical invariant: feature packageと通常のbrowser actionはraw executable/templateやAI選択値を受け取らない。用途に必要なmodeを`ai/v1`へ指定し、AI packageがworkspace設定からmethodを解決する。commandの検証失敗時はverified stateを失効させる。
 
-### 6.4 `github-issue`
+### 6.4 `firestore` / `page-map`
+
+`firestore`は`storage_provider`としてbackend I/Oとopaque version mappingを所有する。`page-map`は静的HTMLの遷移解析とstage contributionを所有する。
+
+### 6.5 `github-issue`
 
 Server ownership:
 
@@ -233,15 +241,12 @@ UI ownership:
 
 ```text
 Core host / SDK
-├── review
-│   └── StorageProvider capability
-├── annotation-workflow
-│   ├── Review capability
-│   └── RunnerRegistry capability
-├── custom-command
-│   └── registers RunnerProvider capability
-└── github-issue
-    └── registers IssueTask / IssueProvider capability
+├── ai（CLI選択・外部AIコマンド・ai/v1）
+├── firestore（StorageProvider capability）
+├── review（StorageProviderを利用しReview capabilityを提供）
+├── annotation-workflow（Review capability + ai/v1 workspace-write）
+├── page-map（target service）
+└── github-issue（Review capability + ai/v1 text-only + IssueProvider）
 ```
 
 Rules:
@@ -249,7 +254,7 @@ Rules:
 - pluginは別pluginのimplementationをimportしてはならない。
 - Core SDK typeとhost capabilityだけをimportする。
 - dependencyはmanifestでcapability ID/API versionとして宣言する。
-- required capability不足はserver contributionをstartしない。
+- required capabilityはpackage列挙順に依存せずmulti-passで解決し、収束後も不足するserver contributionだけをstartしない。
 - optional capability不足はdependent UI/actionだけを非表示またはdisabledにする。
 
 ## 8. Manifest schema v4
@@ -404,7 +409,7 @@ Context exposes immutable:
 - environment credential presence/handles（値はUIへ返さない）
 - target service
 - process supervisor
-- storage/review/runner/provider capability registry
+- storage/review/AI/provider capability registry
 - structured logger
 - shutdown AbortSignal
 
@@ -449,16 +454,13 @@ interface ReviewCapabilityV1 {
   ): () => void;
 }
 
-interface RunnerRegistryV1 {
-  register(providerId: string, provider: RunnerProviderV1): () => void;
-  list(context: CapabilityCallContextV1): Promise<RunnerDescriptorV1[]>;
-  resolve(runnerId: string, context: CapabilityCallContextV1): Promise<CommandSpecV1>;
-}
-
-interface RunnerProviderV1 {
-  providerId: string;
-  listVerified(context: CapabilityCallContextV1): Promise<RunnerDescriptorV1[]>;
-  resolve(runnerId: string, context: CapabilityCallContextV1): Promise<CommandSpecV1>;
+interface AiCapabilityV1 {
+  invoke(input: {
+    mode: "text-only" | "workspace-write";
+    prompt: string;
+    timeout_ms: number;
+    output_limit: number;
+  }, context: CapabilityCallContextV1): Promise<AiInvocationResultV1>;
 }
 
 interface IssueTaskRegistryV1 {
@@ -467,7 +469,7 @@ interface IssueTaskRegistryV1 {
 }
 ```
 
-Core exposes scoped handles declared in`requires`。`host.storage` always resolves to the selected workspace storage provider（defaultはexisting local provider）。`custom-command` owns`runner-registry/v1` and registers its verified command provider by default; another AI integration plugin can require that capability and register/unregister its own`RunnerProviderV1` during lifecycle. `annotation-workflow` consumes the registry optionally and keeps built-in runners locally, so disabling custom-command does not remove built-ins. `github-issue` requires `review` for persisted projection and optionally registers an Issue task provider consumed by annotation-workflow. Capability calls carry Core-assigned principal、workspace/target scope、AbortSignal、request/idempotency metadata and preserve typed error/revision semantics. Capability implementation imports across plugins are forbidden.
+Coreはinstall・remove・enable/disable・configuration/credential変更後にgeneric package hostをreconcileし、停止時はdependencyの逆順でcapabilityを解除する。Core exposes scoped handles declared in`requires`。`host.storage` always resolves to the selected workspace storage provider（defaultはexisting local provider）。`@visual-review/ai`はCoreのgeneric process supervisorを利用し、CLI選択と外部AIコマンドを内包した`ai/v1`を提供する。`annotation-workflow`と`github-issue`は`ai/v1`へ用途のmodeだけを指定し、AI methodを選択しない。`github-issue`はpersisted projectionのため`review`も要求する。Capability calls carry Core-assigned principal、workspace/target scope、AbortSignal、request/idempotency metadata and preserve typed error/revision semantics. Capability implementation imports across plugins are forbidden.
 
 Cross-plugin invalidation uses capability subscription, not plugin-private SSE coupling. `annotation-workflow` subscribes to`ReviewCapabilityV1`; review invalidation triggers its own resource invalidation event to mounted sidebar clients. Core tears down the subscription when either plugin stops. Direct review UI/CLI mutations therefore refresh annotation/history sidebar state.
 
@@ -520,7 +522,7 @@ Migration MUST preserve:
 
 ## 13.1 Bundled plugin trust and bootstrap
 
-- Fresh workspaceには`review`、`annotation-workflow`、`custom-command`、`github-issue`をroot package内のoffline bundleからinstallしdefault enabledにする。
+- Fresh workspaceには`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`の6 packageをroot package内のoffline bundleからinstallする。default enablementは各package manifestに従う。
 - Bundled manifest/module/UI documentはrelease時に記録したdigestと一致する場合だけ自動startする。
 - 同じbundled source由来でregistry/installed manifestが一致してprovenanceを確認できるtrusted copyだけは、新しいschemaまたはSemVerへatomic upgradeする。その他の既存same-ID pluginは上書きしない。bundled digestと不一致なら自動startせず、explicit enable/reviewを要求する。
 - trusted `review`が利用不能な場合はreview serveをfail closedにし、dataを変更せずmanagement diagnosticを返す。
@@ -530,7 +532,7 @@ Migration MUST preserve:
 
 | Scenario | Expected result |
 |---|---|
-| Fresh workspace | `review`, `annotation-workflow`, `custom-command`, `github-issue`がoffline default installされる |
+| Fresh workspace | 6つのfirst-party feature package（`ai`, `firestore`, `review`, `annotation-workflow`, `page-map`, `github-issue`）がoffline installされる |
 | UI-only load | server module import markerが作られない |
 | Server-only invocation | UI document unavailableでもheadless query/commandが動作する |
 | Disabled plugin | UI contributionなし、server module未評価、actionはPLUGIN_UNAVAILABLE |
@@ -538,8 +540,8 @@ Migration MUST preserve:
 | Review disabled | review surfaceなし、Core plugin managementのみ利用可能 |
 | Stale source hash | serverが422/409で拒否しrevision不変 |
 | Actor spoofing | browser actor fieldを拒否 |
-| Raw custom command | browser requestを拒否 |
-| Verified runner ID | server registryからのみCommandSpecを解決 |
+| Raw external AI command in feature request | browser requestを拒否 |
+| AI invocation | AI packageがworkspace設定からverified methodを解決 |
 | Invalid UI document | Core diagnostic surface、script実行なし |
 | Existing review data | path/schema/revisionを変えず開ける |
 | Direct review CLI/UI mutation | ReviewCapability subscription経由でworkflow sidebar resourceがinvalidateされる |

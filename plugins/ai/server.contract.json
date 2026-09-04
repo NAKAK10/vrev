@@ -1,0 +1,302 @@
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "name": "ai.settings",
+      "permission": "jobs.read",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "method_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "options": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              },
+              "required": [
+                "value",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "method_id",
+          "available",
+          "options"
+        ],
+        "additionalProperties": false
+      },
+      "resources": [
+        "ai-settings"
+      ]
+    },
+    {
+      "name": "runners.list",
+      "permission": "jobs.read",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "runners": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "properties": {
+                "runner_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "probe_ms": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "status_label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                }
+              },
+              "required": [
+                "runner_id",
+                "name",
+                "verified",
+                "status_label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "candidates": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "properties": {
+                "runner_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "status_label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                }
+              },
+              "required": [
+                "runner_id",
+                "name",
+                "status_label"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "runners",
+          "candidates"
+        ],
+        "additionalProperties": false
+      },
+      "resources": [
+        "runners"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "ai.settings.update",
+      "permission": "jobs.enqueue",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "method_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "method_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "method_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "schema_version",
+          "method_id"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "ai-settings"
+      ]
+    },
+    {
+      "name": "runner.add",
+      "permission": "external.execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "runner_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "duration_ms": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "runner_id",
+          "duration_ms"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "runners",
+        "ai-settings"
+      ]
+    },
+    {
+      "name": "runner.test",
+      "permission": "external.execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "runner_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "runner_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "duration_ms": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "duration_ms"
+        ],
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "runners",
+        "ai-settings"
+      ]
+    },
+    {
+      "name": "runner.delete",
+      "permission": "jobs.enqueue",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "runner_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "runner_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "invalidates": [
+        "runners",
+        "ai-settings"
+      ]
+    }
+  ]
+}

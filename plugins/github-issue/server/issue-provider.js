@@ -44,13 +44,13 @@ function signalTree(child, signal) {
 }
 
 /**
- * Read-only gh invocation for the dialog's target hint. Hardened the same way as `createIssue`
+ * Read-only process invocation for the dialog's target hint. Hardened the same way as `createIssue`
  * (no shell, output cap, tree kill on timeout) but with a short timeout since it blocks a dialog,
  * and it never rejects — any failure just means the caller falls back to "unknown".
  */
-function runGhReadOnly(projectRoot, args) {
+function runReadOnly(projectRoot, command, args) {
   return new Promise((resolve) => {
-    const child = spawn("gh", args, {
+    const child = spawn(command, args, {
       cwd: projectRoot,
       env: process.env,
       shell: false,
@@ -87,6 +87,12 @@ function runGhReadOnly(projectRoot, args) {
       finish(stdout.trim());
     });
   });
+}
+
+function repositoryFromRemote(remote) {
+  if (typeof remote !== "string") return null;
+  const match = /^(?:git@(?=[^:]*github\.com)[^:]+:|https?:\/\/(?=[^/]*github\.com)[^/]+\/)([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+?)(?:\.git)?$/i.exec(remote.trim());
+  return match && REPO_NAME_PATTERN.test(match[1]) ? match[1] : null;
 }
 
 /** Authoritative provider invocation. It never retries an external side effect. */
@@ -159,10 +165,11 @@ export const provider = Object.freeze({
    */
   async resolveTarget(projectRoot) {
     const [repoRaw, accountRaw] = await Promise.all([
-      runGhReadOnly(projectRoot, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]),
-      runGhReadOnly(projectRoot, ["api", "user", "--jq", ".login"]),
+      runReadOnly(projectRoot, "gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]),
+      runReadOnly(projectRoot, "gh", ["api", "user", "--jq", ".login"]),
     ]);
-    const repo = repoRaw && REPO_NAME_PATTERN.test(repoRaw) ? repoRaw : null;
+    const remoteRaw = repoRaw ? null : await runReadOnly(projectRoot, "git", ["remote", "get-url", "origin"]);
+    const repo = repoRaw && REPO_NAME_PATTERN.test(repoRaw) ? repoRaw : repositoryFromRemote(remoteRaw);
     const account = accountRaw && ACCOUNT_LOGIN_PATTERN.test(accountRaw) ? accountRaw : null;
     return { repo, account };
   },

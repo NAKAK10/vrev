@@ -28,6 +28,23 @@ function localFixture(root: string, id: string): string {
   return source;
 }
 
+function serverFixture(root: string, id: string): string {
+  const source = path.join(root, "server-fixtures", id);
+  mkdirSync(source, { recursive: true });
+  const empty = { type: "object", properties: {}, additionalProperties: false };
+  const output = { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false };
+  writeFileSync(path.join(source, "README.md"), "# Runtime fixture\n");
+  writeFileSync(path.join(source, "contract.json"), JSON.stringify({ schema_version: 1, queries: [{ name: "fixture.get", permission: "fixture.read", input_schema: empty, output_schema: output, resources: ["fixture"] }], commands: [] }));
+  writeFileSync(path.join(source, "server.js"), `
+    import { writeFileSync } from "node:fs";
+    import path from "node:path";
+    writeFileSync(path.join(import.meta.dirname, "evaluated"), "yes");
+    export default { apiVersion: 1, create(context) { return { start() {}, query() { return { ok: true, data: { value: "ready" } }; }, command() {}, stop() { writeFileSync(path.join(context.plugin.root, "stopped"), "yes"); } }; } };
+  `);
+  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({ schema_version: 4, id, version: "1.0.0", display: { title: id, summary: "Runtime fixture", readme: "./README.md" }, configuration: [], server: { api_version: 1, bridge_api_version: 1, module: "./server.js", contract: "./contract.json" } }));
+  return source;
+}
+
 function npmPackableFixture(root: string, id: string): string {
   const source = path.join(root, "npm-fixtures", id);
   mkdirSync(source, { recursive: true });
@@ -79,6 +96,27 @@ test("installs a local plugin without evaluating it, disabled by default, with a
   assert.equal(listed?.resolved?.kind, "local");
 
   assert.equal(existsSync(path.join(root, ".vreview/plugins/install-api-local/dist/evaluated")), false);
+});
+
+test("enabling and disabling a newly installed package server reconciles its lifecycle", async () => {
+  const source = serverFixture(root, "runtime-api-local");
+  const installed = await fetch(`${baseUrl}/api/settings/plugins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source }) });
+  assert.equal(installed.status, 201);
+  const directory = path.join(root, ".vreview/plugins/runtime-api-local");
+  assert.equal(existsSync(path.join(directory, "evaluated")), false);
+
+  const initial = await (await fetch(`${baseUrl}/api/settings/plugins`)).json() as { revision: string };
+  const enabled = await fetch(`${baseUrl}/api/settings/plugins/runtime-api-local`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: initial.revision, enabled: true, configuration: {} }) });
+  assert.equal(enabled.status, 200);
+  assert.equal(existsSync(path.join(directory, "evaluated")), true);
+  const query = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/runtime-api-local/queries/fixture.get`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: "runtime", input: {} }) });
+  assert.equal(query.status, 200);
+  assert.deepEqual((await query.json() as { data: unknown }).data, { value: "ready" });
+
+  const current = await (await fetch(`${baseUrl}/api/settings/plugins`)).json() as { revision: string };
+  const disabled = await fetch(`${baseUrl}/api/settings/plugins/runtime-api-local`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: current.revision, enabled: false, configuration: {} }) });
+  assert.equal(disabled.status, 200);
+  assert.equal(existsSync(path.join(directory, "stopped")), true);
 });
 
 test("installs an npm-packed file: spec, resolved as npm with integrity and an unpinned warning", async () => {

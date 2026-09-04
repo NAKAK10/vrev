@@ -1,4 +1,3 @@
-import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -13,11 +12,32 @@ import type {
   SetStatusInput,
 } from "./review-types.js";
 
+/** Logical review documents a storage implementation must persist; file paths never leak past this boundary. */
+export type ReviewDocumentKind = "active" | "resolved" | "transaction" | "legacy" | "context";
+
+/** Paths a host resolves for the review documents, handed to `createStorage` to build a `ReviewDocumentStorage`. */
+export interface ReviewDocumentPaths {
+  active: string;
+  resolved: string;
+  legacy: string;
+  transaction: string;
+  context: string;
+}
+
+export interface ReviewDocumentStorage {
+  /** Remote authoritative stores may opt into short-lived read coalescing and last-known-good projections. */
+  readonly cacheReads?: boolean;
+  /** Returns `null` when the document does not exist. */
+  read(kind: ReviewDocumentKind): Promise<unknown | null>;
+  write(kind: ReviewDocumentKind, value: unknown): Promise<void>;
+  remove(kind: ReviewDocumentKind): Promise<void>;
+  /** Mutual exclusion for one review's document set. Local storage uses a file lock; a remote backend may implement this differently. */
+  withLock<T>(action: () => Promise<T>): Promise<T>;
+}
+
 export interface ReviewDomainDependencies {
-  atomicWriteJson(filePath: string, value: unknown): void;
   fileSha256(filePath: string): string;
-  readJson(filePath: string): unknown;
-  withFileLock<T>(filePath: string, action: () => T): T;
+  createStorage(target: ResolvedTarget, paths: ReviewDocumentPaths): ReviewDocumentStorage;
   legacyReviewFilePath(target: ResolvedTarget): string;
   resolveTarget(target: string, projectRoot?: string): ResolvedTarget;
   resolvedReviewFilePath(target: ResolvedTarget): string;
@@ -162,6 +182,13 @@ function actor(value: unknown): Actor {
 
 export interface ReviewStoreOptions { projectRoot?: string; projectDirectory?: string }
 
+export interface ReviewContext {
+  schema_version: 1;
+  discovery_status: "pending" | "completed";
+  primary_project: string;
+  related_scopes: string[];
+}
+
 export interface ReviewStoreContract {
   readonly target: ResolvedTarget;
   readonly path: string;
@@ -171,14 +198,17 @@ export interface ReviewStoreContract {
   readonly entryPath: string;
   readonly targetPath: string;
   sourceHash(pagePath?: string): string;
-  load(): Review;
-  loadActive(): Review;
-  createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Review;
-  createIssueRequest(payload: CreateAnnotationInput): Review;
-  setIssueDraftReady(annotationId: string, title: string, body: string): Review;
-  completeIssueDraft(annotationId: string, title: string, url: string): Review;
-  addMessage(annotationId: string, payload: AddMessageInput): Review;
-  setStatus(annotationId: string, payload: SetStatusInput): Review;
+  load(): Promise<Review>;
+  loadActive(): Promise<Review>;
+  /** Context from the same authoritative backend as the review documents. */
+  loadContext(): Promise<ReviewContext>;
+  createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Promise<Review>;
+  createIssueRequest(payload: CreateAnnotationInput): Promise<Review>;
+  setIssueDraftReady(annotationId: string, title: string, body: string): Promise<Review>;
+  failIssueDraft(annotationId: string, message: string): Promise<Review>;
+  completeIssueDraft(annotationId: string, title: string, url: string): Promise<Review>;
+  addMessage(annotationId: string, payload: AddMessageInput): Promise<Review>;
+  setStatus(annotationId: string, payload: SetStatusInput): Promise<Review>;
 }
 
 export interface ReviewDomain {
@@ -189,10 +219,8 @@ export interface ReviewDomain {
 
 export function createReviewDomain(dependencies: ReviewDomainDependencies): ReviewDomain {
   const {
-    atomicWriteJson,
     fileSha256,
-    readJson,
-    withFileLock,
+    createStorage,
     legacyReviewFilePath,
     resolveTarget,
     resolvedReviewFilePath,
@@ -206,6 +234,9 @@ class ReviewStore {
   readonly resolvedPath: string;
   readonly legacyPath: string;
   readonly transactionPath: string;
+  private readonly storage: ReviewDocumentStorage;
+  private pendingLoad: Promise<Review> | undefined;
+  private lastSuccessfulLoad: { at: number; review: Review } | undefined;
 
   constructor(target: string, options: ReviewStoreOptions = {}) {
     this.target = resolveTarget(target, options.projectRoot);
@@ -213,9 +244,8 @@ class ReviewStore {
     this.resolvedPath = resolvedReviewFilePath(this.target);
     this.legacyPath = legacyReviewFilePath(this.target);
     this.transactionPath = path.join(path.dirname(this.path), ".transaction.json");
-    for (const candidate of [this.legacyPath, this.transactionPath]) {
-      if (existsSync(candidate) && lstatSync(candidate).isSymbolicLink()) throw new Error("review storage files must not be symbolic links");
-    }
+    const contextPath = path.join(path.dirname(this.path), "context.json");
+    this.storage = createStorage(this.target, { active: this.path, resolved: this.resolvedPath, legacy: this.legacyPath, transaction: this.transactionPath, context: contextPath });
     registerWorkspaceReview(this.target, options.projectDirectory ?? this.target.projectRoot, this.path, this.resolvedPath);
   }
 
@@ -238,8 +268,8 @@ class ReviewStore {
     return { schema_version: 2, review_id: randomUUID(), revision: 0, created_at: timestamp, updated_at: timestamp, target: { entry_path: this.entryPath, kind: this.target.kind, sha256: this.sourceHash() }, annotations: [], annotation_order: [], events: [] };
   }
 
-  private parseReview(filePath: string): Review {
-    const loaded = record(readJson(filePath), "review file must contain a JSON object");
+  private parseDocument(value: unknown): Review {
+    const loaded = record(value, "review file must contain a JSON object");
     if (loaded.schema_version === 1) {
       if (Array.isArray(loaded.annotations)) for (const item of loaded.annotations) if (typeof item === "object" && item !== null && !Array.isArray(item)) {
         const annotation = item as UnknownRecord;
@@ -258,37 +288,46 @@ class ReviewStore {
     return { ...structuredClone(review), annotations, annotation_order: review.annotations.map(({ id }) => id), events: review.events.filter(({ annotation_id }) => ids.has(annotation_id)) };
   }
 
-  private writeSplitFiles(review: Review): void {
-    atomicWriteJson(this.path, this.splitReview(review, false));
-    atomicWriteJson(this.resolvedPath, this.splitReview(review, true));
+  private async writeSplitFiles(review: Review): Promise<void> {
+    await Promise.all([
+      this.storage.write("active", this.splitReview(review, false)),
+      this.storage.write("resolved", this.splitReview(review, true)),
+    ]);
   }
 
-  private writeUnlocked(review: Review): void {
-    atomicWriteJson(this.transactionPath, review);
-    this.writeSplitFiles(review);
-    unlinkSync(this.transactionPath);
+  private async writeUnlocked(review: Review): Promise<void> {
+    this.lastSuccessfulLoad = undefined;
+    await this.storage.write("transaction", review);
+    await this.writeSplitFiles(review);
+    await this.storage.remove("transaction");
   }
 
-  private loadUnlocked(): Review {
-    if (existsSync(this.transactionPath)) {
-      const pending = this.parseReview(this.transactionPath);
-      this.writeSplitFiles(pending);
-      unlinkSync(this.transactionPath);
+  private async loadUnlocked(): Promise<Review> {
+    const [pendingValue, activeValue, resolvedValue] = await Promise.all([
+      this.storage.read("transaction"),
+      this.storage.read("active"),
+      this.storage.read("resolved"),
+    ]);
+    if (pendingValue !== null) {
+      const pending = this.parseDocument(pendingValue);
+      await this.writeSplitFiles(pending);
+      await this.storage.remove("transaction");
       return pending;
     }
-    if (!existsSync(this.path)) {
-      if (existsSync(this.legacyPath)) {
-        const migrated = this.parseReview(this.legacyPath);
-        this.writeUnlocked(migrated);
-        unlinkSync(this.legacyPath);
+    if (activeValue === null) {
+      const legacyValue = await this.storage.read("legacy");
+      if (legacyValue !== null) {
+        const migrated = this.parseDocument(legacyValue);
+        await this.writeUnlocked(migrated);
+        await this.storage.remove("legacy");
         return migrated;
       }
       const review = this.newReview();
-      this.writeUnlocked(review);
+      await this.writeUnlocked(review);
       return review;
     }
-    const active = this.parseReview(this.path);
-    const resolved = existsSync(this.resolvedPath) ? this.parseReview(this.resolvedPath) : this.splitReview(active, true);
+    const active = this.parseDocument(activeValue);
+    const resolved = resolvedValue !== null ? this.parseDocument(resolvedValue) : this.splitReview(active, true);
     const combinedAnnotations = [...active.annotations.filter(({ status }) => status !== "resolved"), ...resolved.annotations.filter(({ status }) => status === "resolved")];
     const order = active.annotation_order ?? (active.annotations.some(({ status }) => status === "resolved") ? active.annotations.map(({ id }) => id) : resolved.annotation_order) ?? combinedAnnotations.map(({ id }) => id);
     const orderIndex = new Map(order.map((id, index) => [id, index]));
@@ -301,22 +340,63 @@ class ReviewStore {
       annotation_order: order,
       events: [...active.events, ...resolved.events].filter(({ id }) => !eventIds.has(id) && Boolean(eventIds.add(id))).sort((left, right) => left.revision - right.revision),
     };
-    if (!existsSync(this.resolvedPath) || active.annotations.some(({ status }) => status === "resolved")) this.writeUnlocked(merged);
+    if (resolvedValue === null || active.annotations.some(({ status }) => status === "resolved")) await this.writeUnlocked(merged);
     return merged;
   }
 
-  load(): Review { return withFileLock(this.path, () => this.loadUnlocked()); }
+  load(): Promise<Review> {
+    const cached = this.lastSuccessfulLoad;
+    if (this.storage.cacheReads === true && cached && Date.now() - cached.at < 1_000) return Promise.resolve(structuredClone(cached.review));
+    if (!this.pendingLoad) {
+      const load = this.storage.withLock(() => this.loadUnlocked());
+      this.pendingLoad = load;
+      void load.then(
+        (review) => { if (this.storage.cacheReads === true) this.lastSuccessfulLoad = { at: Date.now(), review: structuredClone(review) }; if (this.pendingLoad === load) this.pendingLoad = undefined; },
+        () => { if (this.pendingLoad === load) this.pendingLoad = undefined; },
+      );
+    }
+    const pending = this.pendingLoad;
+    return pending.then((review) => structuredClone(review)).catch((error) => {
+      if (this.storage.cacheReads === true && this.lastSuccessfulLoad) return structuredClone(this.lastSuccessfulLoad.review);
+      throw error;
+    });
+  }
 
-  loadActive(): Review {
-    return withFileLock(this.path, () => {
-      if (existsSync(this.transactionPath) || !existsSync(this.path)) {
-        return this.splitReview(this.loadUnlocked(), false);
+  loadActive(): Promise<Review> {
+    return this.storage.withLock(async () => {
+      const transactionValue = await this.storage.read("transaction");
+      const activeValue = transactionValue === null ? await this.storage.read("active") : null;
+      if (transactionValue !== null || activeValue === null) {
+        return this.splitReview(await this.loadUnlocked(), false);
       }
-      const active = this.parseReview(this.path);
+      const active = this.parseDocument(activeValue);
       if (active.annotations.some(({ status }) => status === "resolved")) {
-        return this.splitReview(this.loadUnlocked(), false);
+        return this.splitReview(await this.loadUnlocked(), false);
       }
       return this.splitReview(active, false);
+    });
+  }
+
+  loadContext(): Promise<ReviewContext> {
+    return this.storage.withLock(async () => {
+      const value = await this.storage.read("context");
+      if (value === null) {
+        const created: ReviewContext = { schema_version: 1, discovery_status: "pending", primary_project: ".", related_scopes: [] };
+        await this.storage.write("context", created);
+        return created;
+      }
+      const loaded = record(value, "review context must contain a JSON object");
+      if (loaded.schema_version !== 1 || (loaded.discovery_status !== "pending" && loaded.discovery_status !== "completed")
+        || typeof loaded.primary_project !== "string" || !Array.isArray(loaded.related_scopes)
+        || loaded.related_scopes.some((scope) => typeof scope !== "string")) {
+        throw new Error("unsupported review context schema");
+      }
+      return {
+        schema_version: 1,
+        discovery_status: loaded.discovery_status,
+        primary_project: loaded.primary_project,
+        related_scopes: [...loaded.related_scopes] as string[],
+      };
     });
   }
 
@@ -360,13 +440,14 @@ class ReviewStore {
     return annotation;
   }
 
-  private addEvent(review: Review, type: Review["events"][number]["type"], annotationId: string, eventActor: Actor, at: string, details: Record<string, JsonValue>): void {
+  private addEvent(review: Review, type: Review["events"][number]["type"], annotationId: string, eventActor: Actor, at: string, details: Record<string, JsonValue>, eventId = randomUUID()): void {
+    if (review.events.some(({ id }) => id === eventId)) return;
     review.revision += 1;
     review.updated_at = at;
-    review.events.push({ revision: review.revision, id: randomUUID(), type, annotation_id: annotationId, actor: eventActor, at, details });
+    review.events.push({ revision: review.revision, id: eventId, type, annotation_id: annotationId, actor: eventActor, at, details });
   }
 
-  createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Review {
+  async createAnnotation(payload: CreateAnnotationInput, expectedRevision?: unknown): Promise<Review> {
     if (payload.kind !== "dom" && payload.kind !== "region") throw new Error("kind must be dom or region");
     const comment = nonblank(payload.comment, "comment");
     const anchor = sanitizeAnchor(payload.kind, payload.anchor);
@@ -374,33 +455,38 @@ class ReviewStore {
     const page = this.pagePath(payload.page_path);
     const annotationActor = actor(payload.actor ?? "human");
     if (!SOURCE_HASH.test(payload.source_hash)) throw new Error("source_hash must be a 64-character lowercase hex digest");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    const timestamp = now();
+    const annotationId = randomUUID();
+    const message = { id: randomUUID(), body: comment, actor: annotationActor, at: timestamp };
+    const eventId = randomUUID();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
+      if (review.annotations.some(({ id }) => id === annotationId)) return review;
       if (expectedRevision !== undefined && expectedRevision !== null && expectedRevision !== review.revision && expectedRevision !== `review:${review.revision}`) throw new Error("review revision conflict");
       if (this.sourceHash(page.entryPath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
-      const timestamp = now();
-      const annotationId = randomUUID();
-      const message = { id: randomUUID(), body: comment, actor: annotationActor, at: timestamp };
       const annotation = { id: annotationId, kind: payload.kind, page_path: page.entryPath, comment, anchor, actor: annotationActor, status: "open" as const, source_hash: payload.source_hash, created_at: timestamp, updated_at: timestamp, thread: [message] };
       review.annotations.push(annotation);
-      this.addEvent(review, "annotation_created", annotationId, annotationActor, timestamp, { kind: payload.kind, page_path: page.entryPath });
-      this.writeUnlocked(review);
+      this.addEvent(review, "annotation_created", annotationId, annotationActor, timestamp, { kind: payload.kind, page_path: page.entryPath }, eventId);
+      await this.writeUnlocked(review);
       return review;
     });
   }
 
-  createIssueRequest(payload: CreateAnnotationInput): Review {
+  async createIssueRequest(payload: CreateAnnotationInput): Promise<Review> {
     if (payload.kind !== "dom" && payload.kind !== "region") throw new Error("kind must be dom or region");
     const comment = nonblank(payload.comment, "comment");
     const anchor = sanitizeAnchor(payload.kind, payload.anchor);
     this.normalizeSourceHint(anchor);
     const page = this.pagePath(payload.page_path);
     if (!SOURCE_HASH.test(payload.source_hash)) throw new Error("source_hash must be a 64-character lowercase hex digest");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    const timestamp = now();
+    const annotationId = randomUUID();
+    const messageId = randomUUID();
+    const eventId = randomUUID();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
+      if (review.annotations.some(({ id }) => id === annotationId)) return review;
       if (this.sourceHash(page.entryPath) !== payload.source_hash) throw new Error("source_hash does not match the current page");
-      const timestamp = now();
-      const annotationId = randomUUID();
       const annotation: Annotation = {
         id: annotationId,
         kind: payload.kind,
@@ -412,47 +498,78 @@ class ReviewStore {
         source_hash: payload.source_hash,
         created_at: timestamp,
         updated_at: timestamp,
-        thread: [{ id: randomUUID(), body: comment, actor: "human", at: timestamp }],
+        thread: [{ id: messageId, body: comment, actor: "human", at: timestamp }],
         issue_state: "requested",
       };
       review.annotations.push(annotation);
-      this.addEvent(review, "annotation_created", annotationId, "human", timestamp, { kind: payload.kind, page_path: page.entryPath });
-      this.writeUnlocked(review);
+      this.addEvent(review, "annotation_created", annotationId, "human", timestamp, { kind: payload.kind, page_path: page.entryPath }, eventId);
+      await this.writeUnlocked(review);
       return review;
     });
   }
 
-  setIssueDraftReady(annotationId: string, title: string, body: string): Review {
+  async setIssueDraftReady(annotationId: string, title: string, body: string): Promise<Review> {
     const issueTitle = nonblank(title, "issue_title");
     const issueBody = nonblank(body, "issue_body");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    const timestamp = now();
+    const messageId = randomUUID();
+    const messageEventId = randomUUID();
+    const statusEventId = randomUUID();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
+      if (annotation.issue_state === "ready" && annotation.status === "addressed" && annotation.issue_title === issueTitle && annotation.issue_body === issueBody) return review;
       const internalReferences = [annotationId, ".vreview/", "Visual Review注釈", "Visual Review annotation"];
       if (internalReferences.some((reference) => issueTitle.includes(reference) || issueBody.includes(reference))) {
         throw new Error("Issue draft must be understandable without internal review references");
       }
-      const timestamp = now();
       annotation.issue_state = "ready";
       annotation.issue_title = issueTitle;
       annotation.issue_body = issueBody;
       const previous = annotation.status;
       annotation.status = "addressed";
       annotation.updated_at = timestamp;
-      const message = { id: randomUUID(), body: "GitHub Issueのラフを作成しました。内容を確認してください。", actor: "ai" as const, at: timestamp };
+      const message = { id: messageId, body: "GitHub Issueのラフを作成しました。内容を確認してください。", actor: "ai" as const, at: timestamp };
       annotation.thread.push(message);
-      this.addEvent(review, "message_added", annotationId, "ai", timestamp, { message_id: message.id });
-      if (previous !== "addressed") this.addEvent(review, "status_changed", annotationId, "ai", timestamp, { from: previous, to: "addressed" });
-      this.writeUnlocked(review);
+      this.addEvent(review, "message_added", annotationId, "ai", timestamp, { message_id: message.id }, messageEventId);
+      if (previous !== "addressed") this.addEvent(review, "status_changed", annotationId, "ai", timestamp, { from: previous, to: "addressed" }, statusEventId);
+      await this.writeUnlocked(review);
       return review;
     });
   }
 
-  completeIssueDraft(annotationId: string, title: string, url: string): Review {
+  /**
+   * A draft failure is an attestation, not a verified fact: the caller may race a later success (or
+   * another failure) writing to the same annotation. Only apply it while the annotation is still
+   * "requested" so a stale failure can never clobber a draft that has since become ready or created.
+   */
+  async failIssueDraft(annotationId: string, message: string): Promise<Review> {
+    const failureMessage = nonblank(message, "message");
+    const timestamp = now();
+    const messageId = randomUUID();
+    const messageEventId = randomUUID();
+    const statusEventId = randomUUID();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
+      const annotation = this.findAnnotation(review, annotationId);
+      if (annotation.issue_state !== "requested") return review;
+      const previous = annotation.status;
+      annotation.status = "failed";
+      annotation.updated_at = timestamp;
+      const failureNotice = { id: messageId, body: `GitHub Issueのラフ作成に失敗しました: ${failureMessage}`, actor: "ai" as const, at: timestamp };
+      annotation.thread.push(failureNotice);
+      this.addEvent(review, "message_added", annotationId, "ai", timestamp, { message_id: failureNotice.id }, messageEventId);
+      if (previous !== "failed") this.addEvent(review, "status_changed", annotationId, "ai", timestamp, { from: previous, to: "failed" }, statusEventId);
+      await this.writeUnlocked(review);
+      return review;
+    });
+  }
+
+  async completeIssueDraft(annotationId: string, title: string, url: string): Promise<Review> {
     const issueTitle = nonblank(title, "issue_title");
     if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/.test(url)) throw new Error("issue_url must be a GitHub Issue URL");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
       if (annotation.issue_state === "created") {
         if (annotation.issue_url === url) return review;
@@ -468,37 +585,40 @@ class ReviewStore {
       const previous = annotation.status;
       annotation.status = "resolved";
       this.addEvent(review, "status_changed", annotationId, "human", timestamp, { from: previous, to: "resolved", issue_url: url });
-      this.writeUnlocked(review);
+      await this.writeUnlocked(review);
       return review;
     });
   }
 
-  addMessage(annotationId: string, payload: AddMessageInput): Review {
+  async addMessage(annotationId: string, payload: AddMessageInput): Promise<Review> {
     const body = nonblank(payload.body, "body");
     const messageActor = actor(payload.actor ?? "human");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    const timestamp = now();
+    const message = { id: randomUUID(), body, actor: messageActor, at: timestamp };
+    const messageEventId = randomUUID();
+    const statusEventId = randomUUID();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
-      const timestamp = now();
-      const message = { id: randomUUID(), body, actor: messageActor, at: timestamp };
+      if (annotation.thread.some(({ id }) => id === message.id)) return review;
       annotation.thread.push(message);
       annotation.updated_at = timestamp;
-      this.addEvent(review, "message_added", annotationId, messageActor, timestamp, { message_id: message.id });
+      this.addEvent(review, "message_added", annotationId, messageActor, timestamp, { message_id: message.id }, messageEventId);
       if (messageActor === "human" && (annotation.status === "failed" || annotation.status === "addressed" || annotation.status === "resolved")) {
         const previous = annotation.status;
         annotation.status = "open";
-        this.addEvent(review, "status_changed", annotationId, messageActor, timestamp, { from: previous, to: "open" });
+        this.addEvent(review, "status_changed", annotationId, messageActor, timestamp, { from: previous, to: "open" }, statusEventId);
       }
-      this.writeUnlocked(review);
+      await this.writeUnlocked(review);
       return review;
     });
   }
 
-  setStatus(annotationId: string, payload: SetStatusInput): Review {
+  async setStatus(annotationId: string, payload: SetStatusInput): Promise<Review> {
     if (!STATUSES.has(payload.status)) throw new Error("status must be open, in_progress, failed, addressed, or resolved");
     const statusActor = actor(payload.actor ?? "human");
-    return withFileLock(this.path, () => {
-      const review = this.loadUnlocked();
+    return this.storage.withLock(async () => {
+      const review = await this.loadUnlocked();
       const annotation = this.findAnnotation(review, annotationId);
       const previous = annotation.status;
       if (previous === payload.status) return review;
@@ -517,7 +637,7 @@ class ReviewStore {
       annotation.updated_at = timestamp;
       if (payload.status === "addressed") annotation.source_hash = this.sourceHash(annotation.page_path);
       this.addEvent(review, "status_changed", annotationId, statusActor, timestamp, { from: previous, to: payload.status });
-      this.writeUnlocked(review);
+      await this.writeUnlocked(review);
       return review;
     });
   }

@@ -219,7 +219,7 @@ function savePreviewPreference(enabled) {
 }
 
 export async function mount({ root, pluginId, toast }) {
-  const canvas = root.querySelector('[data-definition-id="page-map-canvas"]') ?? [...root.querySelectorAll(".vr-panel")].at(-1);
+  const canvas = root.querySelector('[data-definition-id="page-map-canvas"]');
   if (!(canvas instanceof HTMLElement)) return () => {};
 
   let data = null;

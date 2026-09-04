@@ -9,6 +9,7 @@ import {
   CapabilityRegistry,
   createPluginHostRuntime,
   createProcessSupervisor,
+  createRunnerRegistry,
   createVisualReviewServer,
   listPlugins,
   pluginSettingsRevision,
@@ -19,7 +20,6 @@ import {
 } from "../src/index.js";
 import {
   ANNOTATION_WORKFLOW_CAPABILITY_ID,
-  PROCESS_SUPERVISOR_CAPABILITY_ID,
   createAnnotationWorkflowBridgeAdapter,
   type AnnotationWorkflowCapabilityV1,
 } from "../plugins/annotation-workflow/server/index.js";
@@ -46,7 +46,7 @@ test("deprecated workflow modules are delegating facades and Core has no job pol
   assert.match(adapterFacade, /createProcessSupervisor/);
   assert.doesNotMatch(adapterFacade, /opencode|claude|codex|copilot/);
   assert.match(manager, /ReviewCapabilityV1/);
-  assert.match(manager, /runnerRegistry\.resolve/);
+  assert.match(manager, /this\.ai\.invoke/);
   assert.doesNotMatch(manager, /annotation add-message|annotation set-status/);
   assert.doesNotMatch(store, /from ["']\.\.\/\.\.\/\.\.\/src\//);
 });
@@ -56,12 +56,15 @@ test("annotation-workflow server capability follows plugin lifecycle", async () 
   await ensureDefaultPlugins(root);
   const capabilities = new CapabilityRegistry();
   capabilities.register(REVIEW_DOMAIN_DEPENDENCIES_CAPABILITY_ID, 1, reviewDomainDependencies);
-  capabilities.register(PROCESS_SUPERVISOR_CAPABILITY_ID, 1, createProcessSupervisor());
+  capabilities.register("host.process-supervisor", 1, createProcessSupervisor());
+  const runnerRegistry = createRunnerRegistry(root);
+  capabilities.register("host.runner-registry", 1, runnerRegistry);
   const runtime = createPluginHostRuntime({
     workspaceRoot: root,
     workspaceId: "workspace",
     target: { id: "target", source: ".code/htmls/index.html" },
     capabilities,
+    runnerRegistry,
   });
 
   await runtime.start();
@@ -69,12 +72,12 @@ test("annotation-workflow server capability follows plugin lifecycle", async () 
   assert.equal(runtime.status("annotation-workflow").state, "ready");
   const workflow = capabilities.resolve<AnnotationWorkflowCapabilityV1>(ANNOTATION_WORKFLOW_CAPABILITY_ID, 1);
   assert.equal(workflow.apiVersion, 1);
-  assert.deepEqual(workflow.manager.list().jobs, []);
+  assert.deepEqual((await workflow.manager.list()).jobs, []);
   await runtime.stop();
   assert.equal(capabilities.has(ANNOTATION_WORKFLOW_CAPABILITY_ID, 1), false);
 });
 
-test("workflow bridge persists shared settings and strips legacy custom commands from jobs.list", async () => {
+test("workflow bridge persists workflow-only settings and sends no runner payload", async () => {
   const root = repository();
   const review = {
     apiVersion: 1 as const,
@@ -91,46 +94,29 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   let retryInput: unknown;
   const manager = {
     list: () => ({ revision: 2, batches: [{ id: "legacy", max_parallel: 1, opencode_attach: null, runner_id: null, custom_command: "do-not-expose" }], jobs: [
-      { id: "job-1", batch_id: "legacy", annotation_id: "annotation-1", page_path: "/", source_hash: "hash", cli: "codex", custom_name: null, session_id: null, state: "running", created: "2026-08-31T00:00:00.000Z", started: "2026-08-31T00:00:01.000Z", finished: null, exit_code: null, summary: "running" },
-      { id: "job-2", batch_id: "queued", annotation_id: "annotation-2", page_path: "/", source_hash: "hash", cli: "codex", custom_name: null, session_id: null, state: "queued", created: "2026-08-31T00:00:02.000Z", started: null, finished: null, exit_code: null, summary: "queued" },
+      { id: "job-1", batch_id: "legacy", annotation_id: "annotation-1", page_path: "/", source_hash: "hash", cli: "ai", custom_name: null, session_id: null, state: "running", created: "2026-08-31T00:00:00.000Z", started: "2026-08-31T00:00:01.000Z", finished: null, exit_code: null, summary: "running" },
+      { id: "job-2", batch_id: "queued", annotation_id: "annotation-2", page_path: "/", source_hash: "hash", cli: "ai", custom_name: null, session_id: null, state: "queued", created: "2026-08-31T00:00:02.000Z", started: null, finished: null, exit_code: null, summary: "queued" },
     ] }),
     enqueue: (input: unknown) => { enqueueInput = input; return { batch_id: "batch", jobs: Array.isArray((input as { annotation_ids?: unknown }).annotation_ids) ? [{}] : [] }; },
     retry: (annotationId: string, input: unknown) => { retryInput = { annotationId, input }; return { batch_id: "retry", jobs: [] }; },
     cancel: (input: unknown) => { cancelInput = input; },
   };
-  const externalRunnerId = "00000000-0000-4000-8000-000000000001";
-  const unverifiedRunnerId = "00000000-0000-4000-8000-000000000002";
-  const runnerRegistry = {
-    list: () => [
-      { runner_id: externalRunnerId, name: "Local AI", provider_id: "custom-command", verified: true },
-      { runner_id: unverifiedRunnerId, name: "Pending AI", provider_id: "custom-command", verified: false },
-    ],
-    resolve: () => ({ command: "agent", args: [] }),
-  };
-  const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never, runnerRegistry);
-  const saved = await bridge.command("workflow.settings.update", { request_id: "save", input: { runner: "pi", max_parallel: "4", auto_run: true } });
+  const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never);
+  const saved = await bridge.command("workflow.settings.update", { request_id: "save", input: { max_parallel: "4", auto_run: true } });
   assert.equal(saved.ok, true);
   const loaded = await bridge.query("workflow.settings", { request_id: "load", input: {} });
   assert.equal(loaded.ok, true);
-  const settings = (loaded as { data: { runner: string; max_parallel: number; auto_run: boolean } }).data;
-  assert.equal(settings.runner, "pi");
+  const settings = (loaded as { data: { max_parallel: number; auto_run: boolean } }).data;
   assert.equal(settings.max_parallel, 4);
   assert.equal(settings.auto_run, true);
-  const externalSelection = `custom:${externalRunnerId}`;
-  const externalSaved = await bridge.command("workflow.settings.update", { request_id: "external-save", input: { runner: externalSelection, max_parallel: 3, auto_run: false } });
-  assert.equal(externalSaved.ok, true);
-  const externalLoaded = await bridge.query("workflow.settings", { request_id: "external-load", input: {} });
-  assert.deepEqual((externalLoaded as { data: { runner: string; runner_options: { value: string }[] } }).data.runner, externalSelection);
-  const runnerOptions = (externalLoaded as { data: { runner_options: { value: string; label: string }[] } }).data.runner_options;
-  assert.equal(runnerOptions.some(({ value }) => value === externalSelection), true);
-  assert.equal(runnerOptions.some(({ value, label }) => value === `custom:${unverifiedRunnerId}` && label.includes("未検証")), true);
-  await assert.rejects(bridge.command("jobs.enqueue", { request_id: "unverified", input: { runner: `custom:${unverifiedRunnerId}`, max_parallel: 3 } }), /未検証/);
-  await bridge.command("jobs.enqueue", { request_id: "enqueue", input: { runner: externalSelection, max_parallel: 3 } });
-  assert.deepEqual(enqueueInput, { cli: "custom", runner_id: externalRunnerId, max_parallel: 3 });
-  await bridge.command("jobs.enqueue", { request_id: "enqueue-one", input: { annotation_id: "annotation-1", runner: externalSelection, max_parallel: 2 } });
-  assert.deepEqual(enqueueInput, { cli: "custom", runner_id: externalRunnerId, max_parallel: 2, annotation_ids: ["annotation-1"] });
-  await bridge.command("jobs.retry", { request_id: "retry", input: { annotation_id: "annotation-1", runner: externalSelection, max_parallel: 2 } });
-  assert.deepEqual(retryInput, { annotationId: "annotation-1", input: { cli: "custom", runner_id: externalRunnerId, max_parallel: 2 } });
+  assert.equal(Object.hasOwn(settings, "runner"), false);
+  assert.equal(Object.hasOwn(settings, "runner_options"), false);
+  await bridge.command("jobs.enqueue", { request_id: "enqueue", input: { max_parallel: 3 } });
+  assert.deepEqual(enqueueInput, { max_parallel: 3 });
+  await bridge.command("jobs.enqueue", { request_id: "enqueue-one", input: { annotation_id: "annotation-1", max_parallel: 2 } });
+  assert.deepEqual(enqueueInput, { max_parallel: 2, annotation_ids: ["annotation-1"] });
+  await bridge.command("jobs.retry", { request_id: "retry", input: { annotation_id: "annotation-1", max_parallel: 2 } });
+  assert.deepEqual(retryInput, { annotationId: "annotation-1", input: { max_parallel: 2 } });
   const jobs = await bridge.query("jobs.list", { request_id: "jobs", input: {} });
   assert.equal(jobs.ok, true);
   assert.deepEqual((jobs as { data: { active: unknown } }).data.active, { job_id: "job-1", started_at: "2026-08-31T00:00:01.000Z", latest_info: "2件のAI修正を実行中です" });
@@ -138,115 +124,47 @@ test("workflow bridge persists shared settings and strips legacy custom commands
   assert.doesNotMatch(JSON.stringify(jobs), /custom_command|do-not-expose/);
   await bridge.command("jobs.cancel", { request_id: "cancel", input: { job_id: "job-1" } });
   assert.equal(cancelInput, "job-1");
+
+  const contract = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/server.contract.json"), "utf8");
+  const ui = ["settings.ui.json", "sidebar.ui.json"].map((file) => readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui", file), "utf8")).join("\n");
+  assert.doesNotMatch(contract, /runner|method_id/);
+  assert.doesNotMatch(ui, /runner|method_id/);
 });
 
-test("annotations.list applies a task-capability status label override and falls back on invalid overrides", async () => {
+test("annotations.list owns only workflow status labels and filters", async () => {
   const root = repository();
   const review = {
     apiVersion: 1 as const,
     store: {
       target: { projectRoot: root },
-      load: () => ({
+      load: async () => ({
         revision: 1,
         annotations: [
-          { id: "annotation-custom", status: "open", kind: "dom", thread: [] },
-          { id: "annotation-default", status: "open", kind: "dom", thread: [] },
-          { id: "annotation-invalid", status: "open", kind: "dom", thread: [] },
-        ],
-        events: [],
-      }),
-      loadActive: () => ({ annotations: [] }),
-      addMessage() {},
-      setStatus() {},
-    },
-  };
-  const taskCapability = {
-    coordinatorInstructions: () => "",
-    acceptCoordinatorOutput: () => [],
-    state: () => "none" as const,
-    label: (annotation: { id: string }) => {
-      if (annotation.id === "annotation-custom") return { text: "カスタム", tone: "active" as const };
-      if (annotation.id === "annotation-invalid") return { text: "", tone: "active" as const };
-      if (annotation.id === "annotation-default") return null;
-      throw new Error("unexpected annotation");
-    },
-  };
-  const manager = { list: () => ({ revision: 1, batches: [], jobs: [] }), enqueue: () => ({ batch_id: "", jobs: [] }), retry: () => ({ batch_id: "", jobs: [] }), cancel: () => {}, taskCapability };
-  const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never);
-  const result = await bridge.query("annotations.list", { request_id: "list", input: {} });
-  assert.equal(result.ok, true);
-  const items = (result as { data: { items: Array<{ id: string; status_label: string; status_tone: string | null }> } }).data.items;
-  const custom = items.find(({ id }) => id === "annotation-custom")!;
-  assert.equal(custom.status_label, "カスタム");
-  assert.equal(custom.status_tone, "active");
-  const withDefault = items.find(({ id }) => id === "annotation-default")!;
-  assert.equal(withDefault.status_label, "未対応");
-  assert.equal(withDefault.status_tone, null);
-  const invalid = items.find(({ id }) => id === "annotation-invalid")!;
-  assert.equal(invalid.status_label, "未対応");
-  assert.equal(invalid.status_tone, null);
-});
-
-test("annotations.list merges task-provided filter categories and hides by unchecked filter id", async () => {
-  const root = repository();
-  const review = {
-    apiVersion: 1 as const,
-    store: {
-      target: { projectRoot: root },
-      load: () => ({
-        revision: 1,
-        annotations: [
-          { id: "annotation-task", status: "open", kind: "dom", thread: [] },
-          { id: "annotation-unknown", status: "open", kind: "dom", thread: [] },
-          { id: "annotation-plain", status: "open", kind: "dom", thread: [] },
+          { id: "annotation-open", status: "open", kind: "dom", thread: [] },
           { id: "annotation-resolved", status: "resolved", kind: "region", thread: [] },
         ],
         events: [],
       }),
-      loadActive: () => ({ annotations: [] }),
-      addMessage() {},
-      setStatus() {},
+      loadActive: async () => ({ annotations: [] }),
+      async addMessage() {},
+      async setStatus() {},
     },
   };
-  const taskCapability = {
-    coordinatorInstructions: () => "",
-    acceptCoordinatorOutput: () => [],
-    state: () => "none" as const,
-    // "open" collides with a workflow status and "Bad Id" is malformed; both must be dropped.
-    filters: () => [{ id: "task-a", label: "タスクA" }, { id: "open", label: "衝突" }, { id: "Bad Id", label: "x" }],
-    filter: (annotation: { id: string }) => {
-      if (annotation.id === "annotation-task") return "task-a";
-      if (annotation.id === "annotation-unknown") return "unknown";
-      return null;
-    },
-  };
-  const manager = { list: () => ({ revision: 1, batches: [], jobs: [] }), enqueue: () => ({ batch_id: "", jobs: [] }), retry: () => ({ batch_id: "", jobs: [] }), cancel: () => {}, taskCapability };
+  const manager = { list: async () => ({ revision: 1, batches: [], jobs: [] }), enqueue: async () => ({ batch_id: "", jobs: [] }), retry: async () => ({ batch_id: "", jobs: [] }), cancel: async () => {} };
   const bridge = createAnnotationWorkflowBridgeAdapter(review as never, manager as never);
-  type ListData = { data: { filters: Array<{ value: string; label: string }>; items: Array<{ id: string; filter_id: string }> } };
-
-  const all = await bridge.query("annotations.list", { request_id: "all", input: { hidden: [], kinds: ["dom", "region"] } }) as ListData;
-  assert.deepEqual(all.data.filters, [
+  type ListData = { data: { filters: Array<{ value: string; label: string }>; items: Array<{ id: string; filter_id: string; status_label: string }> } };
+  const result = await bridge.query("annotations.list", { request_id: "list", input: { hidden: [], kinds: ["dom", "region"] } }) as ListData;
+  assert.deepEqual(result.data.filters, [
     { value: "open", label: "未対応" },
     { value: "in_progress", label: "AI対応中" },
     { value: "failed", label: "失敗" },
     { value: "addressed", label: "AI対応済み" },
     { value: "resolved", label: "解決済み" },
-    { value: "task-a", label: "タスクA" },
   ]);
-  assert.deepEqual(all.data.items.map(({ id, filter_id }) => [id, filter_id]), [
-    ["annotation-task", "task-a"],
-    // An undeclared category falls back to the annotation's own status.
-    ["annotation-unknown", "open"],
-    ["annotation-plain", "open"],
-    ["annotation-resolved", "resolved"],
+  assert.deepEqual(result.data.items.map(({ id, filter_id, status_label }) => [id, filter_id, status_label]), [
+    ["annotation-open", "open", "未対応"],
+    ["annotation-resolved", "resolved", "解決済み"],
   ]);
-
-  const withoutTask = await bridge.query("annotations.list", { request_id: "hide-task", input: { hidden: ["task-a"], kinds: ["dom", "region"] } }) as ListData;
-  assert.deepEqual(withoutTask.data.items.map(({ id }) => id), ["annotation-unknown", "annotation-plain", "annotation-resolved"]);
-
-  const withoutOpen = await bridge.query("annotations.list", { request_id: "hide-open", input: { hidden: ["open"], kinds: ["dom", "region"] } }) as ListData;
-  // The task-categorised annotation stays visible even though its status is "open".
-  assert.deepEqual(withoutOpen.data.items.map(({ id }) => id), ["annotation-task", "annotation-resolved"]);
 });
 
 test("disabling annotation-workflow rejects legacy job APIs while review stays available", async () => {

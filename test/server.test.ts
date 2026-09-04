@@ -127,13 +127,13 @@ test("serves built UI and compatible session/security headers", async () => {
   const flowPayload = await flowResponse.json() as {
     enabled: boolean;
     custom_command_enabled: boolean;
-    policy: { events: string[]; debounceMs: number; settings: { runner: { label: string }; maxParallel: { max: number }; autoRun: { label: string } } };
+    policy: { events: string[]; debounceMs: number; settings: { maxParallel: { max: number }; autoRun: { label: string } } };
   };
   assert.equal(flowPayload.enabled, true);
   assert.equal(flowPayload.custom_command_enabled, true);
   assert.deepEqual(flowPayload.policy.events, ["annotation-created", "annotation-reopened"]);
   assert.equal(flowPayload.policy.debounceMs, 300);
-  assert.equal(flowPayload.policy.settings.runner.label, "CLI");
+  assert.equal("runner" in flowPayload.policy.settings, false);
   assert.equal(flowPayload.policy.settings.maxParallel.max, 10);
   assert.match(flowPayload.policy.settings.autoRun.label, /自動/);
 });
@@ -206,12 +206,22 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     const url = `http://127.0.0.1:${address.port}`;
     assert.equal((await fetch(`${url}/settings/plugins`)).status, 200);
     const listed = await (await fetch(`${url}/api/settings/plugins`)).json() as { revision: string; plugins: Array<{ id: string; title: string; enabled: boolean; has_readme: boolean }> };
-    const custom = listed.plugins.find(({ id }) => id === "custom-command");
-    assert.equal(custom?.title, "外部AIコマンド");
-    assert.equal(custom?.enabled, true);
-    assert.equal(custom?.has_readme, true);
-    const readme = await (await fetch(`${url}/api/settings/plugins/custom-command/readme`)).json() as { readme: string };
-    assert.match(readme.readme, /custom-command plugin/);
+    const ai = listed.plugins.find(({ id }) => id === "ai");
+    assert.equal(ai?.title, "AI");
+    assert.equal(ai?.enabled, true);
+    assert.equal(ai?.has_readme, true);
+    const readme = await (await fetch(`${url}/api/settings/plugins/ai/readme`)).json() as { readme: string };
+    assert.match(readme.readme, /@visual-review\/ai/);
+    const aiSettingsResponse = await fetch(`${url}/api/plugin-host/v1/plugins/ai/queries/ai.settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", origin: url },
+      body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: "ai-settings-query", input: {} }),
+    });
+    assert.equal(aiSettingsResponse.status, 200);
+    const aiSettings = await aiSettingsResponse.json() as { ok: boolean; data: { method_id: string; available: boolean; options: Array<{ value: string; label: string }> } };
+    assert.equal(aiSettings.ok, true);
+    assert.equal(aiSettings.data.available, true);
+    assert.equal(aiSettings.data.options.some(({ value }) => value === "claude"), true);
 
     const probeScript = `require("node:fs").writeFileSync(".visual-review-command-test","VISUAL_REVIEW_OK");process.stdout.write("VISUAL_REVIEW_OK")`;
     const addedResponse = await fetch(`${url}/api/jobs/custom-commands`, {
@@ -223,7 +233,7 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     assert.equal(typeof added.duration_ms, "number");
     const verifiedEnqueue = await fetch(`${url}/api/jobs/batch`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cli: "custom", runner_id: added.runner_id, max_parallel: 1 }),
+      body: JSON.stringify({ max_parallel: 1 }),
     });
     assert.equal(verifiedEnqueue.status, 200);
     const failedRegistration = await fetch(`${url}/api/jobs/custom-commands`, {
@@ -237,24 +247,21 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     assert.equal("command" in runnersPayload.runners[0]! || "template" in runnersPayload.runners[0]!, false);
     assert.equal((await fetch(`${url}/api/jobs/custom-commands/${encodeURIComponent(added.runner_id)}`, { method: "DELETE" })).status, 200);
 
-    const updated = await fetch(`${url}/api/settings/plugins/custom-command`, {
+    const updated = await fetch(`${url}/api/settings/plugins/ai`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ revision: listed.revision, enabled: false, configuration: {} }),
     });
     assert.equal(updated.status, 200);
     const payload = await updated.json() as { revision: string; plugins: Array<{ id: string; enabled: boolean }> };
-    assert.equal(payload.plugins.find(({ id }) => id === "custom-command")?.enabled, false);
-    const customDisabledFlow = await (await fetch(`${url}/api/plugins/annotation-flow`)).json() as { enabled: boolean; custom_command_enabled: boolean };
-    assert.equal(customDisabledFlow.enabled, true);
-    assert.equal(customDisabledFlow.custom_command_enabled, false);
+    assert.equal(payload.plugins.find(({ id }) => id === "ai")?.enabled, false);
+    const aiDisabledFlow = await (await fetch(`${url}/api/plugins/annotation-flow`)).json() as { enabled: boolean; custom_command_enabled: boolean };
+    assert.equal(aiDisabledFlow.enabled, true);
+    assert.equal(aiDisabledFlow.custom_command_enabled, false);
     assert.equal((await fetch(`${url}/api/jobs/custom-commands`)).status, 409);
     assert.equal((await fetch(`${url}/api/jobs/batch`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "custom", runner_id: "unknown", max_parallel: 1 }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ max_parallel: 1 }),
     })).status, 409);
-    assert.equal((await fetch(`${url}/api/jobs/batch`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "claude", max_parallel: 1 }),
-    })).status, 200);
 
     const annotationUpdated = await fetch(`${url}/api/settings/plugins/annotation-workflow`, {
       method: "PUT",
@@ -267,7 +274,7 @@ test("plugin management is visible by default and can be explicitly hidden", asy
     const disabledFlow = await disabledFlowResponse.json() as { enabled: boolean; reason: string; policy: unknown };
     assert.deepEqual(disabledFlow, { enabled: false, reason: "disabled", policy: null, custom_command_enabled: false });
     assert.equal((await fetch(`${url}/api/jobs/batch`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cli: "claude", max_parallel: 1 }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ max_parallel: 1 }),
     })).status, 409);
   } finally {
     await server.close();
@@ -469,7 +476,7 @@ test("trusted script mode disables every jobs API without explicit AI consent", 
     const address = trusted.server.address();
     assert.ok(address && typeof address !== "string");
     const url = `http://127.0.0.1:${address.port}`;
-    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["GET", "/api/jobs/custom-commands"], ["POST", "/api/issues/request"], ["POST", "/api/issues"], ["POST", "/api/jobs/anything/cancel"]] as const) {
+    for (const [method, route] of [["GET", "/api/jobs"], ["POST", "/api/jobs/batch"], ["GET", "/api/jobs/custom-commands"], ["POST", "/api/issues/request"], ["POST", "/api/issues"], ["POST", "/api/jobs/anything/cancel"], ["POST", "/api/plugin-host/v1/plugins/annotation-workflow/commands/jobs.enqueue"], ["POST", "/api/plugin-host/v1/plugins/github-issue/commands/issue.draft"], ["POST", "/api/plugin-host/v1/plugins/ai/commands/runner.add"]] as const) {
       const response = await fetch(`${url}${route}`, { method });
       assert.equal(response.status, 403, `${method} ${route}`);
     }
@@ -516,16 +523,16 @@ test("returns an installation instruction when the GitHub Issue plugin is absent
     target: ".code/htmls/index.html",
     jobManager: { executor: () => ({ result: Promise.resolve({ exitCode: 0, reason: "exit" }), cancel: () => undefined }) },
   });
-  withoutPlugin.store.createIssueRequest({
+  await withoutPlugin.store.createIssueRequest({
     comment: "Create an issue",
     page_path: ".code/htmls/index.html",
     kind: "dom",
     anchor: { selector: "h1" },
     source_hash: withoutPlugin.store.sourceHash(".code/htmls/index.html"),
   });
-  const annotation = withoutPlugin.store.load().annotations.at(-1)!;
-  withoutPlugin.store.setStatus(annotation.id, { actor: "ai", status: "in_progress" });
-  withoutPlugin.store.setIssueDraftReady(annotation.id, "Issue title", "Issue body");
+  const annotation = (await withoutPlugin.store.load()).annotations.at(-1)!;
+  await withoutPlugin.store.setStatus(annotation.id, { actor: "ai", status: "in_progress" });
+  await withoutPlugin.store.setIssueDraftReady(annotation.id, "Issue title", "Issue body");
   await new Promise<void>((resolve) => withoutPlugin.server.listen(0, "127.0.0.1", resolve));
   try {
     const address = withoutPlugin.server.address();
@@ -536,14 +543,14 @@ test("returns an installation instruction when the GitHub Issue plugin is absent
       body: JSON.stringify({ annotation_id: annotation.id, title: "Issue title", body: "Issue body" }),
     });
     assert.equal(response.status, 400);
-    assert.match(await response.text(), /github-issue.*not installed.*plugin install/i);
+    assert.match(await response.text(), /github-issue.*not installed.*npm install/i);
   } finally {
     await withoutPlugin.close();
   }
 });
 
 test("stores an Issue request, then creates and archives the AI-authored draft", async () => {
-  const before = visualReview.store.load().annotations.length;
+  const before = (await visualReview.store.load()).annotations.length;
   const annotation = {
     comment: "大きめに整理してほしい",
     page_path: ".code/htmls/pages/index.html",
@@ -565,10 +572,10 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   const requested = (await requestResponse.json() as { annotations: Array<{ id: string; status: string; issue_state: string }> }).annotations.at(-1)!;
   assert.equal(requested.status, "open");
   assert.equal(requested.issue_state, "requested");
-  assert.equal(visualReview.store.load().annotations.length, before + 1);
-  visualReview.store.setStatus(requested.id, { actor: "ai", status: "in_progress" });
-  visualReview.store.setIssueDraftReady(requested.id, "整理されたIssue", "## 期待結果\n正しく表示する");
-  const ready = visualReview.store.load().annotations.find(({ id }) => id === requested.id)!;
+  assert.equal((await visualReview.store.load()).annotations.length, before + 1);
+  await visualReview.store.setStatus(requested.id, { actor: "ai", status: "in_progress" });
+  await visualReview.store.setIssueDraftReady(requested.id, "整理されたIssue", "## 期待結果\n正しく表示する");
+  const ready = (await visualReview.store.load()).annotations.find(({ id }) => id === requested.id)!;
   assert.equal(ready.status, "addressed");
   assert.equal(ready.issue_state, "ready");
 
@@ -605,7 +612,7 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   const laterDuplicateResponse = await fetch(`${baseUrl}/api/issues`, issuePayload);
   assert.equal(laterDuplicateResponse.status, 200);
   assert.equal(createdIssueDrafts.length, issueCountBefore + 1);
-  const archived = visualReview.store.load().annotations.find(({ id }) => id === requested.id)!;
+  const archived = (await visualReview.store.load()).annotations.find(({ id }) => id === requested.id)!;
   assert.equal(archived.status, "resolved");
   assert.equal(archived.issue_url, "https://github.com/example/project/issues/42");
   assert.equal(archived.issue_title, "編集後のIssue");
@@ -614,56 +621,44 @@ test("stores an Issue request, then creates and archives the AI-authored draft",
   assert.equal(archived.thread.length, preservedThreadLength);
 });
 
-test("the issue.request bridge command persists an Issue request annotation", async () => {
-  const before = visualReview.store.load().annotations.length;
-  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.request`, {
+test("the issue.create bridge command rejects direct creation without an AI-generated draft", async () => {
+  const before = (await visualReview.store.load()).annotations.length;
+  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.create`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: baseUrl },
     body: JSON.stringify({
       protocol: "plugin-bridge/1",
-      request_id: "issue-request-bridge",
-      idempotency_key: "issue-request-bridge",
-      input: { anchor: { selector: "h1", kind: "dom" }, comment: "GitHub Issue として整理してほしい" },
-    }),
-  });
-  assert.equal(response.status, 200);
-  const result = await response.json() as {
-    ok: boolean;
-    data: { annotation_id: string };
-    effects: Array<{ type: string; resources: string[] }>;
-  };
-  assert.equal(result.ok, true);
-  assert.ok(result.data.annotation_id);
-  assert.deepEqual(result.effects, [{ type: "resource.invalidate", resources: ["session", "annotations", "history"] }]);
-  assert.equal(visualReview.store.load().annotations.length, before + 1);
-
-  const requested = visualReview.store.load().annotations.find(({ id }) => id === result.data.annotation_id)!;
-  assert.equal(requested.status, "open");
-  assert.equal(requested.issue_state, "requested");
-  assert.equal(requested.kind, "dom");
-  assert.equal(requested.page_path, ".code/htmls/pages/index.html");
-  assert.equal(requested.comment, "GitHub Issue として整理してほしい");
-  assert.deepEqual(requested.anchor, { selector: "h1" });
-});
-
-test("the issue.request bridge command rejects an invalid payload", async () => {
-  const before = visualReview.store.load().annotations.length;
-  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.request`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: baseUrl },
-    body: JSON.stringify({
-      protocol: "plugin-bridge/1",
-      request_id: "issue-request-invalid",
-      idempotency_key: "issue-request-invalid",
-      input: { anchor: { selector: "h1", kind: "dom" }, comment: "" },
+      request_id: "issue-create-bridge",
+      idempotency_key: "issue-create-bridge",
+      input: { title: "手入力Issue", body: "手入力した本文" },
     }),
   });
   assert.equal(response.status, 422);
-  assert.deepEqual(await response.json(), {
-    ok: false,
-    error: { code: "VALIDATION_FAILED", message: "annotation input is invalid", retryable: false, request_id: "issue-request-invalid" },
+  const result = await response.json() as { ok: boolean; error: { code: string; request_id: string } };
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "VALIDATION_FAILED");
+  assert.equal(result.error.request_id, "issue-create-bridge");
+  assert.equal((await visualReview.store.load()).annotations.length, before);
+});
+
+test("the issue.create bridge command rejects invalid manual input", async () => {
+  const before = (await visualReview.store.load()).annotations.length;
+  const response = await fetch(`${baseUrl}/api/plugin-host/v1/plugins/github-issue/commands/issue.create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: baseUrl },
+    body: JSON.stringify({
+      protocol: "plugin-bridge/1",
+      request_id: "issue-create-invalid",
+      idempotency_key: "issue-create-invalid",
+      input: { anchor: { selector: "h1", kind: "dom" }, title: "", body: "Body" },
+    }),
   });
-  assert.equal(visualReview.store.load().annotations.length, before);
+  assert.equal(response.status, 422);
+  const payload = await response.json() as { ok: boolean; error: { code: string; request_id: string } };
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, "VALIDATION_FAILED");
+  assert.equal(payload.error.request_id, "issue-create-invalid");
+  assert.equal((await visualReview.store.load()).annotations.length, before);
 });
 
 test("supports file-state and annotation/message/status APIs through ReviewStore", async () => {
@@ -865,7 +860,7 @@ test("exposes batch, list, and cancel job APIs and treats exit zero as success",
   const batchResponse = await fetch(`${baseUrl}/api/jobs/batch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cli: "opencode", max_parallel: 2, session_id: "api-session", opencode_attach: "http://127.0.0.1:4096" }),
+    body: JSON.stringify({ max_parallel: 2 }),
   });
   const batch = await batchResponse.json() as { batch_id: string; jobs: Array<{ id: string }> };
   assert.equal(batchResponse.status, 200);

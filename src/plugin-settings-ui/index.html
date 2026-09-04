@@ -10,7 +10,7 @@
 </head>
 <body>
   <header class="settings-header">
-    <a class="back-link" href="/" aria-label="レビューへ戻る">←</a>
+    <a class="back-link" href="/settings" aria-label="設定へ戻る">←</a>
     <div><span class="eyebrow">VISUAL REVIEW SETTINGS</span><h1>プラグイン</h1></div>
   </header>
   <main class="settings-layout">
@@ -65,26 +65,6 @@
           <h3 id="plugin-configuration-heading">設定</h3>
           <form id="plugin-configuration-form" class="plugin-form"></form>
           <div class="dialog-section-actions"><button id="plugin-configuration-save" type="button" class="primary-button">設定を保存</button></div>
-        </section>
-
-        <section id="workflow-settings" class="dialog-section workflow-settings" aria-labelledby="workflow-settings-heading" hidden>
-          <h3 id="workflow-settings-heading">AI修正設定</h3>
-          <p class="storage-note">このブラウザに自動保存されます。</p>
-          <div class="field-grid">
-            <label>CLI<select name="workflow-cli"></select></label>
-            <label>最大並列数<select name="workflow-parallel"></select></label>
-          </div>
-          <label class="plugin-toggle workflow-auto-toggle"><input name="workflow-auto-run" type="checkbox" role="switch"><span>注釈を保存したら自動でAI修正を開始</span></label>
-          <p class="workflow-status" role="status" aria-live="polite"></p>
-        </section>
-
-        <section id="custom-command-manager" class="dialog-section custom-command-manager" aria-labelledby="custom-command-heading" hidden>
-          <h3 id="custom-command-heading">外部AIコマンド</h3>
-          <p class="storage-note">このブラウザに保存されます。shellを経由せず実行し、<code>{prompt}</code>を1回だけ含めてください。</p>
-          <div class="field-grid"><label>表示名<input name="custom-name" maxlength="80"></label><label>コマンド<input name="custom-command" maxlength="2000"></label></div>
-          <button type="button" data-add-command>テストして登録</button>
-          <p class="command-status" role="status" aria-live="polite"></p>
-          <ul class="command-list"></ul>
         </section>
 
         <section class="dialog-section readme-section" aria-labelledby="readme-heading">

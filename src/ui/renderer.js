@@ -14,6 +14,30 @@ let settingsRenderPromise = null;
 let activeToast = null;
 let deferredReviewRender = false;
 const reviewSelection = { annotation_id: null, page_path: null, anchor: null };
+let activeSelection = null;
+const DISCLOSURE_SEEN_KEY = "visual-review.disclosure-seen/v1";
+const disclosureSeenValues = (() => {
+  try {
+    const value = JSON.parse(localStorage.getItem(DISCLOSURE_SEEN_KEY) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+})();
+function disclosureAttentionValue(value) {
+  if (value === undefined || value === null || value === "" || value === 0 || value === false) return "";
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+function markDisclosureSeen(node) {
+  const key = node.dataset.attentionKey;
+  const value = node.dataset.attentionValue;
+  if (!key || !value) return;
+  disclosureSeenValues[key] = value;
+  try { localStorage.setItem(DISCLOSURE_SEEN_KEY, JSON.stringify(disclosureSeenValues)); } catch {}
+  const indicator = node.querySelector(":scope > summary .vr-attention-indicator");
+  if (indicator) indicator.hidden = true;
+  node.classList.remove("has-unread-attention");
+  const summary = node.querySelector(":scope > summary");
+  if (summary?.dataset.baseLabel) summary.setAttribute("aria-label", summary.dataset.baseLabel);
+}
 const THEME_TOKENS = new Map([
   ["canvas", "--vr-color-canvas"], ["surface", "--vr-color-surface"], ["surface_subtle", "--vr-color-surface-subtle"],
   ["surface_strong", "--vr-color-surface-strong"], ["text", "--vr-color-text"], ["text_muted", "--vr-color-text-muted"],
@@ -37,7 +61,9 @@ function pointer(value, path = "") {
 function binding(value, scope) {
   if (!value || typeof value !== "object") return undefined;
   if ("literal" in value) return value.literal;
-  if ("resource" in value) return pointer(resourceStores.get(`${scope.plugin}:${value.resource}`)?.data, value.path || "");
+  if (value.generated === "uuid") return crypto.randomUUID();
+  if (value.generated === "timestamp") return new Date().toISOString();
+  if ("resource" in value) return pointer(resourceStores.get(`${value.plugin || scope.plugin}:${value.resource}`)?.data, value.path || "");
   if ("local" in value) return pointer(scope.state, value.local);
   if ("item" in value) return pointer(scope.item, value.item);
   if ("event" in value) return pointer(scope.event, value.event);
@@ -281,7 +307,8 @@ function renderSingle(definition, scope) {
   if (["app-shell", "stack", "row", "panel", "toolbar", "split-panel", "slot"].includes(type)) node = element(type === "toolbar" ? "div" : "div", className);
   else if (["header", "section"].includes(type)) node = element(type, className);
   else if (type === "heading") node = element(`h${Math.min(6, Math.max(1, Number(binding(definition.props?.level, scope) || 2)))}`, className);
-  else if (["text", "status", "count", "badge", "time", "code", "live-status", "empty-state"].includes(type)) node = element(type === "code" ? "code" : "p", className);
+  else if (["text", "status", "count", "badge", "time", "code", "live-status"].includes(type)) node = element(type === "code" ? "code" : "p", className);
+  else if (type === "empty-state") node = element("div", className);
   else if (type === "button" || type === "load-more") { node = element("button", className); node.type = "button"; }
   else if (type === "link") node = element("a", className);
   else if (type === "input") node = element("input", className);
@@ -307,7 +334,10 @@ function renderSingle(definition, scope) {
   }
   const values = props(node, definition.props, scope);
   if (["text", "heading", "badge", "status", "time", "code", "legend", "live-status"].includes(type)) node.textContent = String(values.text ?? values.value ?? values.message ?? values.label ?? "");
-  if (type === "empty-state") node.textContent = String(values.message ?? values.title ?? "");
+  if (type === "empty-state") {
+    if (values.title) { const title = element("h3", "vr-empty-state-title"); title.textContent = String(values.title); node.append(title); }
+    if (values.message) { const message = element("p", "vr-empty-state-message"); message.textContent = String(values.message); node.append(message); }
+  }
   if (type === "status" && values.label) node.textContent = String(values.label);
   if (type === "status" && values.value !== undefined) node.dataset.status = String(values.value);
   if (type === "time" && values.value) { node.dateTime = String(values.value); const date = new Date(values.value); if (!Number.isNaN(date.getTime())) node.textContent = new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date); }
@@ -316,6 +346,7 @@ function renderSingle(definition, scope) {
   if ((type === "section" || type === "panel") && values.title) { const title = element(type === "section" ? "h2" : "h3", "vr-section-title"); title.textContent = String(values.title); node.append(title); if (values.description) { const description = element("p", "vr-section-description"); description.textContent = String(values.description); node.append(description); } }
   if (type === "panel" && values.aria_label) node.setAttribute("aria-label", String(values.aria_label));
   if (type === "button" || type === "load-more") { node.textContent = String(values.label || ""); if (values.type) node.type = String(values.type); }
+  if (type === "button" && (definition.on?.click || []).some((instruction) => instruction.type === "selection.activate")) node.setAttribute("aria-pressed", "false");
   if (type === "link") { node.textContent = String(values.label || ""); if (typeof values.href === "string") node.href = values.href; if (values.external) { node.target = "_blank"; node.rel = "noopener noreferrer"; } }
   if (["input", "textarea"].includes(type)) { if (type === "input" && values.type) node.type = String(values.type); control(node, values, { ...scope, valuePath: definition.props?.value?.local }); if (values.label) node.setAttribute("aria-label", String(values.label)); }
   if (["select", "viewport-selector"].includes(type)) {
@@ -340,7 +371,29 @@ function renderSingle(definition, scope) {
   if (["switch", "checkbox"].includes(type)) { control(node, values, { ...scope, valuePath: definition.props?.checked?.local }); node.checked = Boolean(values.checked); if (values.label) node.setAttribute("aria-label", String(values.label)); }
   if (type === "checkbox-group") renderCheckboxGroup(node, values, definition, scope);
   if (type.includes("dialog")) prepareDialog(node, values, definition, scope);
-  if (type === "disclosure") node.open = Boolean(values.expanded);
+  if (type === "disclosure") {
+    node.open = Boolean(values.expanded);
+    node.__committedOpen = node.open;
+    const summary = node.querySelector(":scope > summary");
+    const label = String(values.label || "");
+    if (summary) summary.dataset.baseLabel = label;
+    const attentionKey = String(values.attention_key || "");
+    const attentionValue = disclosureAttentionValue(values.attention_value);
+    if (summary && attentionKey && attentionValue) {
+      const scopedKey = `${scope.plugin}:${attentionKey}`;
+      node.dataset.attentionKey = scopedKey;
+      node.dataset.attentionValue = attentionValue;
+      const unread = !node.open && disclosureSeenValues[scopedKey] !== attentionValue;
+      const indicator = element("span", "vr-attention-indicator");
+      indicator.hidden = !unread;
+      node.classList.toggle("has-unread-attention", unread);
+      indicator.setAttribute("aria-hidden", "true");
+      summary.append(indicator);
+      summary.setAttribute("aria-label", unread ? `${label}、未確認の更新あり` : label);
+      if (node.open) queueMicrotask(() => markDisclosureSeen(node));
+      node.addEventListener("toggle", () => { if (node.open) markDisclosureSeen(node); });
+    }
+  }
   if (type === "annotation-mark-layer") { node.setAttribute("aria-hidden", "true"); node.__marks = Array.isArray(values.marks) ? values.marks : []; node.__selectedId = values.selected_id ?? reviewSelection.annotation_id; }
   bindEvents(node, definition, scope);
   for (const child of definition.children || []) (node.__content || node).append(renderNode(child, scope));
@@ -387,11 +440,18 @@ function bindEvents(node, definition, scope) {
   for (const [name, instructions] of Object.entries(definition.on || {})) {
     const eventName = ({ change: "change", input: "input", click: "click", submit: "submit", toggle: "toggle", close: "close", cancel: "cancel", confirm: "click" })[name] || name;
     node.addEventListener(eventName, (event) => {
+      if (definition.type === "disclosure" && eventName === "toggle") {
+        if (node.__committedOpen === node.open) return;
+        node.__committedOpen = node.open;
+      }
       if (definition.type === "panel" && eventName === "click" && event.target !== node && event.target.closest("button,a,input,textarea,select,form,[role='button']")) return;
-      if (eventName === "submit") event.preventDefault();
+      if (eventName === "submit") {
+        event.preventDefault();
+        if (!node.checkValidity()) { node.reportValidity(); return; }
+      }
       if (name === "selection-commit" && event.detail?.selection) { reviewSelection.anchor = event.detail.selection; reviewSelection.page_path = event.detail.selection.page_path ?? null; scope.slotContext.review = { selection: reviewSelection }; }
       const eventData = event.detail ?? (name === "toggle" ? { expanded: node.open } : { value: node.__optionValues?.get(node.value) ?? controlValue(node) });
-      void execute(instructions, { ...scope, event: eventData, form: formValues(node) });
+      void execute(instructions, { ...scope, event: eventData, form: formValues(node), trigger: node, preserveDisclosureDom: definition.type === "disclosure" && eventName === "toggle" });
     });
   }
   if (definition.type === "panel" && definition.on?.click) {
@@ -471,51 +531,105 @@ async function focusTarget(pagePath, anchor, restoreContext) {
     stage.focus(); redrawMarks(); stage.dispatchEvent(new CustomEvent("target.focus.completed", { detail: { anchor } }));
   } catch (error) { stage?.dispatchEvent(new CustomEvent("target.focus.failed", { detail: { anchor, message: error.message } })); announceFocusFailure(`対象を表示できませんでした：${error.message}`); }
 }
-async function execute(instructions, scope) {
+async function execute(instructions, scope, strictRefresh = false) {
   for (const instruction of instructions) {
-    if (instruction.type === "local.set") { setPointer(scope.state, instruction.path, binding(instruction.value, scope)); scope.persist(); await refreshLocalDependencies(scope, instruction.path); rerender(); }
-    else if (instruction.type === "local.toggle") { setPointer(scope.state, instruction.path, !pointer(scope.state, instruction.path)); scope.persist(); await refreshLocalDependencies(scope, instruction.path); rerender(); }
+    if (instruction.type === "local.set") { setPointer(scope.state, instruction.path, binding(instruction.value, scope)); scope.persist(); await refreshLocalDependencies(scope, instruction.path); if (!scope.preserveDisclosureDom) rerender(); }
+    else if (instruction.type === "local.toggle") { setPointer(scope.state, instruction.path, !pointer(scope.state, instruction.path)); scope.persist(); await refreshLocalDependencies(scope, instruction.path); if (!scope.preserveDisclosureDom) rerender(); }
     else if (instruction.type === "dialog.open") { const dialog = dialogFor(scope, instruction.dialog); showDialog(dialog, scope, findNodeDefinition(scope.contribution.document.root, instruction.dialog)); }
     else if (instruction.type === "dialog.close") closeDialog(instruction.dialog ? dialogFor(scope, instruction.dialog) : document.querySelector("dialog[open]"));
-    else if (instruction.type === "resource.refresh") await loadResource(scope.contribution, instruction.resource, scope);
+    else if (instruction.type === "resource.refresh") await refreshResourceNamed(instruction.resource, scope, strictRefresh);
+    else if (instruction.type === "resource.optimistic-append") {
+      const key = `${scope.plugin}:${instruction.resource}`;
+      const stored = resourceStores.get(key);
+      if (stored?.data) {
+        const data = structuredClone(stored.data);
+        const collection = pointer(data, instruction.collection_path);
+        const match = binding(instruction.match, scope);
+        const owner = Array.isArray(collection) ? collection.find((item) => Object.is(pointer(item, instruction.match_path), match)) : null;
+        const target = owner ? pointer(owner, instruction.target_path) : null;
+        if (Array.isArray(target)) {
+          target.push(Object.fromEntries(Object.entries(instruction.value).map(([name, value]) => [name, binding(value, scope)])));
+          resourceStores.set(key, { ...stored, data });
+          rerender();
+        }
+      }
+    }
+    else if (instruction.type === "resource.optimistic-patch") {
+      const resourcePlugin = instruction.plugin || scope.plugin;
+      const key = `${resourcePlugin}:${instruction.resource}`;
+      const stored = resourceStores.get(key);
+      if (stored?.data) {
+        const data = structuredClone(stored.data);
+        const collection = pointer(data, instruction.collection_path);
+        const match = binding(instruction.match, scope);
+        const index = Array.isArray(collection) ? collection.findIndex((item) => Object.is(pointer(item, instruction.match_path), match)) : -1;
+        const owner = index >= 0 ? collection[index] : null;
+        if (owner && typeof owner === "object") {
+          const remove = instruction.remove_when !== undefined && predicate(instruction.remove_when, scope);
+          if (remove) collection.splice(index, 1);
+          else Object.assign(owner, Object.fromEntries(Object.entries(instruction.value).map(([name, value]) => [name, binding(value, scope)])));
+          if (remove) for (const decrementPath of instruction.decrement_paths || []) {
+            const current = pointer(data, decrementPath);
+            if (typeof current === "number") setPointer(data, decrementPath, Math.max(0, current - 1));
+          }
+          resourceStores.set(key, { ...stored, data });
+          rerender();
+        }
+      }
+    }
+    else if (instruction.type === "resource.optimistic-remove") {
+      const resourcePlugin = instruction.plugin || scope.plugin;
+      const key = `${resourcePlugin}:${instruction.resource}`;
+      const stored = resourceStores.get(key);
+      if (stored?.data) {
+        const data = structuredClone(stored.data);
+        const collection = pointer(data, instruction.collection_path);
+        const match = binding(instruction.match, scope);
+        const index = Array.isArray(collection) ? collection.findIndex((item) => Object.is(pointer(item, instruction.match_path), match)) : -1;
+        if (index >= 0) {
+          collection.splice(index, 1);
+          for (const decrementPath of instruction.decrement_paths || []) {
+            const current = pointer(data, decrementPath);
+            if (typeof current === "number") setPointer(data, decrementPath, Math.max(0, current - 1));
+          }
+          resourceStores.set(key, { ...stored, data });
+          rerender();
+        }
+      }
+    }
+    else if (instruction.type === "selection.activate") activateSelection(instruction, scope);
     else if (instruction.type === "target.reload") document.querySelector(".vr-target-stage iframe")?.contentWindow?.location.reload();
     else if (instruction.type === "target.focus") { reviewSelection.annotation_id = binding(instruction.annotation_id, scope) ?? null; const layer = document.querySelector(".vr-annotation-mark-layer"); if (layer) layer.__selectedId = reviewSelection.annotation_id; await focusTarget(binding(instruction.target, scope), binding(instruction.anchor, scope), instruction.restore_context); }
     else if (instruction.type === "navigate.internal") location.assign(String(binding(instruction.path, scope)));
     else if (instruction.type === "navigate.external") { const url = String(binding(instruction.url, scope)); if ((!instruction.confirmation || confirm(String(instruction.confirmation))) && /^https?:\/\//.test(url)) open(url, "_blank", "noopener"); }
     else if (instruction.type === "toast.show") toast(String(binding(instruction.message, scope)), instruction.variant);
-    else if (instruction.type === "command.execute") await command(instruction, scope);
+    else if (instruction.type === "command.execute" && (instruction.when === undefined || predicate(instruction.when, scope))) await command(instruction, scope);
     else if (instruction.type === "slot.emit") {
       const host = scope.slotHost;
       if (!host || !(instruction.event in (host.point.events || {}))) { console.warn("slot.emit target unavailable", instruction.event); continue; }
       const payload = Object.fromEntries(Object.entries(instruction.payload || {}).map(([key, value]) => [key, binding(value, scope)]));
       const eventSchema = host.point.events[instruction.event];
       if (eventSchema && !matchesSchema(payload, eventSchema)) { console.warn("slot.emit payload is invalid", instruction.event); continue; }
-      await execute(host.definition.on?.[instruction.event] || [], { ...host.scope, event: payload });
+      await execute(host.definition.on?.[instruction.event] || [], { ...host.scope, event: payload }, strictRefresh);
     }
   }
 }
-async function autoRunNewAnnotation(scope) {
-  const settings = resourceStores.get("annotation-workflow:workflow-settings")?.data;
-  if (settings?.auto_run !== true) return;
-  try {
-    const response = await fetch("/api/plugin-host/v1/plugins/annotation-workflow/commands/jobs.enqueue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), input: { runner: settings.runner, max_parallel: settings.max_parallel } }) });
-    const result = await response.json().catch(() => null);
-    if (!result?.ok) throw new Error(result?.error?.message || `${response.status} ${response.statusText}`);
-    await Promise.all([refreshResourceNamed("annotations", scope), refreshResourceNamed("jobs", scope)]);
-    toast("注釈を保存し、AI修正を開始しました", "success");
-  } catch (error) {
-    toast(`注釈は保存されましたが、AI修正を開始できませんでした：${error instanceof Error ? error.message : String(error)}`, "error");
-  }
-}
-async function command(instruction, scope) {
-  const key = `${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:${instruction.command}`;
+function command(instruction, scope) {
+  const commandPlugin = instruction.plugin || scope.plugin;
+  const key = `${commandPlugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:${instruction.command}`;
   if (instruction.pending?.deduplicate && pending.has(key)) return pending.get(key);
+  const operation = runCommand(instruction, scope, commandPlugin, key);
+  if (instruction.pending?.deduplicate) pending.set(key, operation);
+  return operation;
+}
+async function runCommand(instruction, scope, commandPlugin, key) {
   const input = Object.fromEntries(Object.entries(instruction.input).map(([name, value]) => [name, binding(value, scope)]));
   const disableId = instruction.pending?.disable ? instanceId(scope, instruction.pending.disable) : null;
   const disabledControl = disableId ? document.getElementById(disableId) : null;
-  if (disabledControl) { disabledControl.disabled = true; disabledControl.setAttribute("aria-busy", "true"); }
+  await execute(instruction.on_start || [], scope);
+  if (disabledControl?.isConnected) { disabledControl.disabled = true; disabledControl.setAttribute("aria-busy", "true"); }
   const requestCommand = async () => {
-    const endpoint = `/api/plugin-host/v1/plugins/${encodeURIComponent(scope.plugin)}/commands/${encodeURIComponent(instruction.command)}`;
+    const endpoint = `/api/plugin-host/v1/plugins/${encodeURIComponent(commandPlugin)}/commands/${encodeURIComponent(instruction.command)}`;
     const envelope = { protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID(), expected_revision: binding(instruction.expected_revision, scope) ?? null, input };
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -526,26 +640,22 @@ async function command(instruction, scope) {
       } catch (error) { if (attempt === 1) throw error; }
     }
   };
-  const operation = (async () => {
+  try {
     let result = await requestCommand();
     const revisionResource = instruction.expected_revision?.resource;
     if (!result.ok && result.error?.code === "CONFLICT" && typeof revisionResource === "string") {
       await refreshResourceNamed(revisionResource, scope);
       result = await requestCommand();
     }
-    return result;
-  })();
-  pending.set(key, operation);
-  try {
-    const result = await operation; if (!result.ok) throw result.error;
-    for (const effect of result.effects || []) if (effect.type === "resource.invalidate") for (const resource of effect.resources || []) await refreshResourceNamed(resource, scope);
-    await execute(instruction.on_success || [], { ...scope, result: result.data });
-    if (scope.plugin === "review" && instruction.command === "annotation.create") await autoRunNewAnnotation(scope);
+    if (!result.ok) throw result.error;
+    const invalidated = [...new Set((result.effects || []).filter((effect) => effect.type === "resource.invalidate").flatMap((effect) => effect.resources || []))];
+    await Promise.all(invalidated.map((resource) => refreshResourceNamed(resource, scope)));
+    await execute(instruction.on_success || [], { ...scope, result: result.data }, true);
     for (const declaration of declarationsFor(scope)) if (declaration.reset_on_success) scope.state[declaration.key] = structuredClone(declaration.default);
     for (const draftKey of [...formDrafts.keys()]) if (draftKey.startsWith(`${scope.plugin}:${scope.contribution.id}:${scope.instanceKey || "root"}:`)) formDrafts.delete(draftKey);
   }
   catch (error) { await execute(instruction.on_error || [], { ...scope, error: error instanceof Error ? { message: error.message } : error }); }
-  finally { pending.delete(key); if (disabledControl?.isConnected) { disabledControl.disabled = false; disabledControl.removeAttribute("aria-busy"); } await execute(instruction.on_settled || [], scope); rerender(); }
+  finally { if (instruction.pending?.deduplicate) pending.delete(key); if (disabledControl?.isConnected) { disabledControl.disabled = false; disabledControl.removeAttribute("aria-busy"); } await execute(instruction.on_settled || [], scope); rerender(); }
 }
 function dismissToast(token) {
   if (activeToast?.token !== token) return;
@@ -587,12 +697,60 @@ function safeMarkdown(markdown) {
 function documentSize(doc) { const root = doc.documentElement; const body = doc.body; return { width: Math.max(1, root?.scrollWidth || 0, body?.scrollWidth || 0), height: Math.max(1, root?.scrollHeight || 0, body?.scrollHeight || 0) }; }
 function pagePathForFrame(stage, frame) { try { const location = frame.contentWindow.location; const pathname = location.pathname; if (pathname.startsWith("/target/")) return decodeURIComponent(pathname.slice(8)); if (pathname.startsWith("/live")) { const proxiedPath = `${pathname.slice(5) || "/"}${location.search}`; return stage.__target?.live_url ? new URL(proxiedPath, stage.__target.live_url).toString() : proxiedPath; } return `${pathname}${location.search}`; } catch { return stage.__target?.entry_path || "/"; } }
 function domSelector(selected, doc) { if (selected.id) { const value = `#${CSS.escape(selected.id)}`; if (doc.querySelectorAll(value).length === 1) return value; } const parts = []; for (let item = selected; item && item !== doc.documentElement && parts.length < 16; item = item.parentElement) { const siblings = item.parentElement ? [...item.parentElement.children].filter((child) => child.localName === item.localName) : []; parts.unshift(`${item.localName}${siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(item) + 1})` : ""}`); } return parts.join(" > "); }
+function restoreActivatedSelection(selection) {
+  const stage = document.querySelector(".vr-target-stage");
+  selection.trigger?.setAttribute?.("aria-pressed", "false");
+  if (!stage || activeSelection === selection) return;
+  stage.__mode = selection.previousMode;
+  stage.dataset.mode = selection.previousMode;
+  const frame = stage.querySelector("iframe");
+  if (frame) installHtmlSelection(stage, frame, selection.previousMode);
+}
+function activateSelection(instruction, scope) {
+  const stage = document.querySelector(".vr-target-stage");
+  if (!stage) return announceFocusFailure("選択できる対象がありません");
+  if (activeSelection) {
+    const previous = activeSelection;
+    activeSelection = null;
+    restoreActivatedSelection(previous);
+  }
+  const selection = { mode: instruction.mode, onCommit: instruction.on_commit, scope, trigger: scope.trigger, previousMode: stage.__mode || "browse" };
+  activeSelection = selection;
+  selection.trigger?.setAttribute?.("aria-pressed", "true");
+  stage.__mode = instruction.mode;
+  stage.dataset.mode = instruction.mode;
+  const frame = stage.querySelector("iframe");
+  if (frame) installHtmlSelection(stage, frame, instruction.mode);
+  stage.focus();
+}
+function commitStageSelection(container, anchor) {
+  if (!activeSelection) {
+    container.dispatchEvent(new CustomEvent("selection-commit", { detail: { selection: anchor } }));
+    return;
+  }
+  const selection = activeSelection;
+  activeSelection = null;
+  reviewSelection.anchor = anchor;
+  reviewSelection.page_path = anchor.page_path ?? null;
+  reviewSelection.annotation_id = null;
+  selection.scope.slotContext.review = { selection: reviewSelection };
+  restoreActivatedSelection(selection);
+  void execute(selection.onCommit, { ...selection.scope, event: { selection: anchor } });
+}
+function cancelStageSelection(container) {
+  if (activeSelection) {
+    const selection = activeSelection;
+    activeSelection = null;
+    restoreActivatedSelection(selection);
+  }
+  container.dispatchEvent(new CustomEvent("selection-cancel", { detail: {} }));
+}
 function installHtmlSelection(container, frame, mode) {
   const doc = frame.contentDocument; const win = frame.contentWindow; if (!doc || !win) return;
   if (doc.__vrSelectionInstalled === mode && typeof doc.__vrSelectionCleanup === "function") return;
   doc.__vrSelectionCleanup?.();
   doc.__vrSelectionInstalled = mode;
-  const commit = (anchor) => container.dispatchEvent(new CustomEvent("selection-commit", { detail: { selection: anchor } }));
+  const commit = (anchor) => commitStageSelection(container, anchor);
   let drag = null;
   const click = (event) => { if (mode !== "node") return; event.preventDefault(); event.stopImmediatePropagation(); const selected = event.target; if (!(selected instanceof win.Element)) return; const rect = selected.getBoundingClientRect(); const size = documentSize(doc); commit({ kind: "dom", selector: domSelector(selected, doc), page_path: pagePathForFrame(container, frame), text_excerpt: String(selected.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200), rect: { x: (rect.left + win.scrollX) / size.width, y: (rect.top + win.scrollY) / size.height, width: rect.width / size.width, height: rect.height / size.height } }); };
   const pointerdown = (event) => { if (mode !== "region") return; event.preventDefault(); event.stopImmediatePropagation(); drag = { x: event.pageX, y: event.pageY, endX: event.pageX, endY: event.pageY }; container.__preview = drag; redrawMarks(); };
@@ -637,10 +795,10 @@ function targetStage(definition, scope) {
   container.__viewportHeight = viewportDimension(binding(definition.props?.viewport_height, scope), 240, 2160, 720);
   const target = binding(definition.props?.target, scope); const mode = String(binding(definition.props?.selection_mode, scope) || "browse"); container.__target = target; container.__mode = mode;
   if (!target) { container.textContent = "対象を読み込んでいます…"; return container; }
-  const commit = (anchor) => container.dispatchEvent(new CustomEvent("selection-commit", { detail: { selection: anchor } }));
+  const commit = (anchor) => commitStageSelection(container, anchor);
   if (target.kind === "image") {
     const image = element("img"); image.alt = "レビュー対象画像"; image.src = target.url; container.append(image); let start = null;
-    image.addEventListener("load", redrawMarks); image.addEventListener("pointerdown", (event) => { if (mode !== "region") return; event.preventDefault(); const rect = image.getBoundingClientRect(); start = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; image.setPointerCapture?.(event.pointerId); });
+    image.addEventListener("load", redrawMarks); image.addEventListener("pointerdown", (event) => { if (container.__mode !== "region") return; event.preventDefault(); const rect = image.getBoundingClientRect(); start = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; image.setPointerCapture?.(event.pointerId); });
     image.addEventListener("pointerup", (event) => { if (!start) return; const rect = image.getBoundingClientRect(); const end = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; const bounds = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }; start = null; if (bounds.width * rect.width < 5 || bounds.height * rect.height < 5) return announceFocusFailure("範囲が小さすぎます。もう一度ドラッグしてください。"); commit({ kind: "region", space: "image", bounds, natural: { width: image.naturalWidth, height: image.naturalHeight }, page_path: target.entry_path }); });
   } else {
     const frame = element("iframe"); frame.title = "レビュー対象ページ";
@@ -651,47 +809,54 @@ function targetStage(definition, scope) {
     container.append(frame); frame.addEventListener("load", () => { try { installTargetDiagnostics(container, frame); installHtmlSelection(container, frame, container.__mode ?? mode); redrawMarks(); container.dispatchEvent(new CustomEvent("load")); } catch (error) { container.dispatchEvent(new CustomEvent("error", { detail: { code: "TARGET_UNAVAILABLE", message: error.message } })); announceFocusFailure(`対象ページを操作できません：${error.message}`); } });
   }
   applyTargetViewport(container, container.querySelector("iframe")); container.dataset.mode = mode;
-  container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); container.dispatchEvent(new CustomEvent("selection-cancel", { detail: {} })); } });
+  container.addEventListener("keydown", (event) => { if (event.key === "Escape") { container.__preview = null; redrawMarks(); cancelStageSelection(container); } });
   return container;
 }
 function redrawMarks() {
   const stage = document.querySelector(".vr-target-stage"); const layer = document.querySelector(".vr-annotation-mark-layer"); if (!stage || !layer) return; layer.replaceChildren(); const frame = stage.querySelector("iframe"); const image = stage.querySelector("img"); const stageRect = stage.getBoundingClientRect();
   const add = (bounds, index, className = "", status = "") => { const mark = element("div", `vr-annotation-mark ${className}`); if (status) mark.dataset.status = status; mark.style.left = `${bounds.left}px`; mark.style.top = `${bounds.top}px`; mark.style.width = `${Math.max(2, bounds.width)}px`; mark.style.height = `${Math.max(2, bounds.height)}px`; if (index) { const pin = element("span", "vr-annotation-pin"); pin.textContent = String(index); mark.append(pin); } layer.append(mark); };
-  const filteredItems = resourceStores.get("annotation-workflow:annotations")?.data?.items;
-  const visibleAnnotations = Array.isArray(filteredItems) ? filteredItems : [];
-  for (const [index, annotation] of visibleAnnotations.entries()) { if (annotation.issue_state) continue; const currentPath = frame ? pagePathForFrame(stage, frame) : stage.__target?.entry_path; if (annotation.page_path && String(annotation.page_path).replace(/^\//, "") !== String(currentPath).replace(/^\//, "")) continue; try { let box = null; if (frame && annotation.kind === "dom") { const selected = annotation.anchor?.selector ? frame.contentDocument?.querySelector(annotation.anchor.selector) : null; if (selected) { const rect = selected.getBoundingClientRect(); const frameRect = frame.getBoundingClientRect(); box = { left: frameRect.left - stageRect.left + rect.left, top: frameRect.top - stageRect.top + rect.top, width: rect.width, height: rect.height }; } else if (annotation.anchor?.rect) { const doc = frame.contentDocument; const win = frame.contentWindow; const size = documentSize(doc); const frameRect = frame.getBoundingClientRect(); const b = annotation.anchor.rect; box = { left: frameRect.left - stageRect.left + b.x * size.width - win.scrollX, top: frameRect.top - stageRect.top + b.y * size.height - win.scrollY, width: b.width * size.width, height: b.height * size.height }; } } else if (frame && annotation.anchor?.bounds) { const doc = frame.contentDocument; const win = frame.contentWindow; const size = documentSize(doc); const frameRect = frame.getBoundingClientRect(); const b = annotation.anchor.bounds; box = { left: frameRect.left - stageRect.left + b.x * size.width - win.scrollX, top: frameRect.top - stageRect.top + b.y * size.height - win.scrollY, width: b.width * size.width, height: b.height * size.height }; } else if (image && annotation.anchor?.bounds) { const rect = image.getBoundingClientRect(); const b = annotation.anchor.bounds; box = { left: rect.left - stageRect.left + b.x * rect.width, top: rect.top - stageRect.top + b.y * rect.height, width: b.width * rect.width, height: b.height * rect.height }; } if (box) add(box, index + 1, annotation.id === layer.__selectedId ? "is-selected" : "", annotation.status); } catch {}
+  const visibleAnnotations = Array.isArray(layer.__marks) ? layer.__marks : [];
+  for (const [index, annotation] of visibleAnnotations.entries()) { const currentPath = frame ? pagePathForFrame(stage, frame) : stage.__target?.entry_path; if (annotation.page_path && String(annotation.page_path).replace(/^\//, "") !== String(currentPath).replace(/^\//, "")) continue; try { let box = null; if (frame && annotation.kind === "dom") { const selected = annotation.anchor?.selector ? frame.contentDocument?.querySelector(annotation.anchor.selector) : null; if (selected) { const rect = selected.getBoundingClientRect(); const frameRect = frame.getBoundingClientRect(); box = { left: frameRect.left - stageRect.left + rect.left, top: frameRect.top - stageRect.top + rect.top, width: rect.width, height: rect.height }; } else if (annotation.anchor?.rect) { const doc = frame.contentDocument; const win = frame.contentWindow; const size = documentSize(doc); const frameRect = frame.getBoundingClientRect(); const b = annotation.anchor.rect; box = { left: frameRect.left - stageRect.left + b.x * size.width - win.scrollX, top: frameRect.top - stageRect.top + b.y * size.height - win.scrollY, width: b.width * size.width, height: b.height * size.height }; } } else if (frame && annotation.anchor?.bounds) { const doc = frame.contentDocument; const win = frame.contentWindow; const size = documentSize(doc); const frameRect = frame.getBoundingClientRect(); const b = annotation.anchor.bounds; box = { left: frameRect.left - stageRect.left + b.x * size.width - win.scrollX, top: frameRect.top - stageRect.top + b.y * size.height - win.scrollY, width: b.width * size.width, height: b.height * size.height }; } else if (image && annotation.anchor?.bounds) { const rect = image.getBoundingClientRect(); const b = annotation.anchor.bounds; box = { left: rect.left - stageRect.left + b.x * rect.width, top: rect.top - stageRect.top + b.y * rect.height, width: b.width * rect.width, height: b.height * rect.height }; } if (box) add(box, index + 1, annotation.id === layer.__selectedId ? "is-selected" : "", annotation.status); } catch {}
   }
   if (stage.__preview && frame) { const drag = stage.__preview; const win = frame.contentWindow; const frameRect = frame.getBoundingClientRect(); add({ left: frameRect.left - stageRect.left + Math.min(drag.x, drag.endX) - win.scrollX, top: frameRect.top - stageRect.top + Math.min(drag.y, drag.endY) - win.scrollY, width: Math.abs(drag.endX - drag.x), height: Math.abs(drag.endY - drag.y) }, null, "is-preview"); }
 }
 function isActiveStageOrNonStage(contribution) {
+  if (root.dataset.page === "review" && contribution.slot === "settings.detail") return false;
   return contribution.slot !== "review.stage" || `${contribution.plugin_id}/${contribution.id}` === surface?.layout?.active_stage;
 }
-async function refreshResourceNamed(id, fallbackScope) {
+async function refreshResourceNamed(id, fallbackScope, strict = false) {
   const owners = (surface?.contributions || []).filter((contribution) => isActiveStageOrNonStage(contribution) && (contribution.document.resources || []).some((resource) => resource.id === id));
-  if (!owners.length) return loadResource(fallbackScope.contribution, id, fallbackScope, false);
-  await Promise.all(owners.map((contribution) => { const runtime = runtimeFor(contribution, ""); const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} }; return loadResource(contribution, id, scope, false); }));
+  const results = !owners.length
+    ? [await loadResource(fallbackScope.contribution, id, fallbackScope, false)]
+    : await Promise.all(owners.map((contribution) => { const runtime = runtimeFor(contribution, ""); const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} }; return loadResource(contribution, id, scope, false); }));
+  if (strict && results.some((result) => result === false)) throw new Error(`${id}を更新できませんでした`);
 }
 async function loadResource(contribution, id, scope, shouldRender = true) {
   const declaration = (contribution.document.resources || []).find((item) => item.id === id); if (!declaration) return;
   const key = `${contribution.plugin_id}:${id}`;
   const generation = (resourceRequestGenerations.get(key) || 0) + 1;
   resourceRequestGenerations.set(key, generation);
-  resourceStores.set(key, { ...resourceStores.get(key), state: "loading" });
+  const previousStore = resourceStores.get(key);
+  resourceStores.set(key, { ...previousStore, state: previousStore?.data === undefined ? "loading" : "refreshing" });
   const input = Object.fromEntries(Object.entries(declaration.input).map(([name, value]) => [name, binding(value, scope)]));
   try {
     const response = await fetch(`/api/plugin-host/v1/plugins/${encodeURIComponent(contribution.plugin_id)}/queries/${encodeURIComponent(declaration.query)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "plugin-bridge/1", request_id: crypto.randomUUID(), input }) });
     const result = await response.json(); if (!result.ok) throw result.error;
-    if (resourceRequestGenerations.get(key) !== generation) return;
+    if (resourceRequestGenerations.get(key) !== generation) return false;
     const previous = resourceStores.get(key)?.data;
     const data = Number(input.offset) > 0 && Array.isArray(previous?.events) && Array.isArray(result.data?.events)
       ? { ...result.data, events: [...previous.events, ...result.data.events] }
       : result.data;
     resourceStores.set(key, { state: "ready", data, revision: result.revision });
   } catch (error) {
-    if (resourceRequestGenerations.get(key) !== generation) return;
-    resourceStores.set(key, { state: "error", error });
+    if (resourceRequestGenerations.get(key) !== generation) return false;
+    const current = resourceStores.get(key);
+    resourceStores.set(key, current?.data === undefined ? { state: "error", error } : { ...current, state: "ready", refresh_error: error });
+    if (shouldRender) rerender();
+    return false;
   }
   if (shouldRender) rerender();
+  return true;
 }
 function renderContribution(contribution, slotContext = {}, parentInstanceKey = "", slotHost = null) {
   const runtime = runtimeFor(contribution, parentInstanceKey);
@@ -926,7 +1091,7 @@ async function renderSettings() {
   const header = element("header", "vr-header vr-settings-header");
   const brand = element("div", "vr-brand-copy"); const eyebrow = element("span", "vr-eyebrow"); eyebrow.textContent = "VISUAL REVIEW"; const heading = element("h1"); heading.textContent = "プラグイン設定"; brand.append(eyebrow, heading);
   const generalSettings = element("a", "vr-link"); generalSettings.href = "/settings"; generalSettings.textContent = "設定へ戻る";
-  const back = element("a", "vr-link"); back.href = "/"; back.textContent = "レビューへ戻る"; header.append(brand, generalSettings, back); shell.append(header);
+  header.append(brand, generalSettings); shell.append(header);
   const page = element("main", "vr-settings-page");
   const intro = element("section", "vr-settings-intro"); const introHeading = element("h2"); introHeading.textContent = "インストール済みプラグイン"; const introCopy = element("p"); introCopy.textContent = "機能の有効状態を切り替え、プラグインごとの説明と設定を確認できます。"; intro.append(introHeading, introCopy); page.append(intro);
   if (surface.diagnostics?.length) { const warning = element("p", "vr-settings-error"); warning.textContent = `${surface.diagnostics.length}件のプラグインUIを読み込めませんでした。詳細は各プラグインを確認してください。`; page.append(warning); }
@@ -941,7 +1106,7 @@ async function renderSettings() {
       const previous = !toggle.checked; row.setAttribute("aria-busy", "true"); toggle.disabled = true;
       try {
         const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: management.revision, enabled: toggle.checked, configuration: Object.fromEntries((plugin.configuration || []).filter((field) => field.source === "workspace" && field.value !== null).map((field) => [field.key, field.value])) }) });
-        if (!response.ok) throw new Error("設定を保存できませんでした。");
+        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || "設定を保存できませんでした。");
         location.reload();
       } catch (error) { toggle.checked = previous; toast(error instanceof Error ? error.message : "設定を保存できませんでした。", "error"); }
       finally { toggle.disabled = false; row.removeAttribute("aria-busy"); }
@@ -949,7 +1114,7 @@ async function renderSettings() {
     const details = element("button", "vr-button"); details.type = "button"; details.textContent = "詳細"; details.setAttribute("aria-haspopup", "dialog");
     details.addEventListener("click", () => { location.hash = plugin.id; void openSettingsDetail(plugin, details); });
     row.append(copy, toggleLabel, details);
-    if (!plugin.bundled) {
+    if (!plugin.bundled && !plugin.package_managed) {
       const remove = element("button", "vr-button"); remove.type = "button"; remove.textContent = "削除";
       remove.addEventListener("click", () => void removeInstalledPlugin(plugin, remove, row));
       row.append(remove);
@@ -1083,6 +1248,85 @@ function renderPluginConfigurationForm(plugin, refreshConfigSection) {
   }
   return wrapper;
 }
+function storageTransferKeyList(label, keys, total) {
+  const wrap = element("div", "vr-storage-transfer-keys");
+  const heading = element("span", "vr-field-label"); heading.textContent = label; wrap.append(heading);
+  const list = element("ul");
+  const shown = keys.slice(0, 20);
+  for (const key of shown) { const item = element("li"); item.textContent = key; list.append(item); }
+  wrap.append(list);
+  if (total > shown.length) { const more = element("span", "vr-field-description"); more.textContent = `ほか ${total - shown.length} 件`; wrap.append(more); }
+  return wrap;
+}
+function renderStorageTransferSection(plugin) {
+  const section = element("section", "vr-settings-card vr-storage-transfer-section");
+  const heading = element("h2", "vr-section-title"); heading.textContent = "データの上書き"; section.append(heading);
+  const description = element("p"); description.textContent = "選んだ方向のデータで、もう一方を完全に置き換えます。宛先にしかないデータは削除されます。"; section.append(description);
+  const directionField = element("label", "vr-field vr-field-select");
+  const directionLabel = element("span", "vr-field-label"); directionLabel.textContent = "方向"; directionField.append(directionLabel);
+  const directionSelect = element("select", "vr-select");
+  const localToPlugin = element("option"); localToPlugin.value = "local-to-plugin"; localToPlugin.textContent = `ローカル（.vreview） → ${plugin.title}`;
+  const pluginToLocal = element("option"); pluginToLocal.value = "plugin-to-local"; pluginToLocal.textContent = `${plugin.title} → ローカル（.vreview）`;
+  directionSelect.append(localToPlugin, pluginToLocal);
+  directionField.append(directionSelect);
+  section.append(directionField);
+  const blocked = !plugin.enabled || (plugin.missing || []).length > 0;
+  if (blocked) { const note = element("p", "vr-field-description"); note.textContent = "上書きを実行するには、このプラグインを有効にして必要な設定を保存してください。"; section.append(note); }
+  const actions = element("div", "vr-row");
+  const dryRunButton = element("button", "vr-button"); dryRunButton.type = "button"; dryRunButton.textContent = "差分を確認";
+  const executeButton = element("button", "vr-button"); executeButton.type = "button"; executeButton.dataset.variant = "primary"; executeButton.textContent = "上書きを実行"; executeButton.disabled = blocked;
+  actions.append(dryRunButton, executeButton);
+  section.append(actions);
+  const confirmPanel = element("div", "vr-storage-transfer-confirm"); confirmPanel.hidden = true;
+  const confirmText = element("p"); confirmPanel.append(confirmText);
+  const confirmActions = element("div", "vr-row");
+  const confirmRun = element("button", "vr-button"); confirmRun.type = "button"; confirmRun.dataset.variant = "primary"; confirmRun.textContent = "実行する";
+  const confirmCancel = element("button", "vr-button"); confirmCancel.type = "button"; confirmCancel.textContent = "キャンセル";
+  confirmActions.append(confirmRun, confirmCancel); confirmPanel.append(confirmActions);
+  section.append(confirmPanel);
+  const resultSummary = element("p", "vr-field-description vr-storage-transfer-summary"); resultSummary.hidden = true;
+  const resultDetail = element("div", "vr-storage-transfer-detail");
+  section.append(resultSummary, resultDetail);
+  let lastDryRun = null;
+  async function runTransfer(dryRun) {
+    const busyButton = dryRun ? dryRunButton : executeButton;
+    dryRunButton.disabled = true; executeButton.disabled = true; confirmRun.disabled = true; confirmCancel.disabled = true;
+    busyButton.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(`/api/settings/plugins/${encodeURIComponent(plugin.id)}/storage-transfer`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ direction: directionSelect.value, dry_run: dryRun }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "処理に失敗しました。");
+      if (dryRun) lastDryRun = body;
+      resultSummary.hidden = false;
+      resultSummary.textContent = `書き込み ${body.written_total} 件 / 削除 ${body.deleted_total} 件 / 変更なし ${body.unchanged} 件`;
+      resultDetail.replaceChildren();
+      if ((body.written || []).length) resultDetail.append(storageTransferKeyList("書き込み対象", body.written, body.written_total));
+      if ((body.deleted || []).length) resultDetail.append(storageTransferKeyList("削除対象", body.deleted, body.deleted_total));
+      toast(dryRun ? "差分を確認しました。" : "上書きを実行しました。", "info");
+      confirmPanel.hidden = true;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "処理に失敗しました。", "error");
+    } finally {
+      busyButton.removeAttribute("aria-busy");
+      dryRunButton.disabled = false; confirmCancel.disabled = false; confirmRun.disabled = false;
+      executeButton.disabled = blocked;
+    }
+  }
+  dryRunButton.addEventListener("click", () => void runTransfer(true));
+  executeButton.addEventListener("click", () => {
+    const directionLabelText = directionSelect.selectedOptions[0]?.textContent || "";
+    const unconfirmedNote = lastDryRun ? "" : " まだ差分を確認していません。";
+    const deletionWarning = lastDryRun && lastDryRun.deleted_total > 0 ? ` 削除される ${lastDryRun.deleted_total} 件のデータは復元できません。` : "";
+    confirmText.textContent = `${directionLabelText} の方向でデータを上書きします。${unconfirmedNote}${deletionWarning}`;
+    confirmPanel.hidden = false;
+  });
+  confirmCancel.addEventListener("click", () => { confirmPanel.hidden = true; });
+  confirmRun.addEventListener("click", () => void runTransfer(false));
+  return section;
+}
 async function openSettingsDetail(plugin, opener) {
   document.querySelectorAll("#plugin-detail-renderer").forEach((existing) => existing.remove());
   const dialog = element("dialog", "vr-dialog"); dialog.id = "plugin-detail-renderer"; dialog.dataset.mobilePresentation = "fullscreen"; dialog.setAttribute("aria-labelledby", "plugin-detail-title"); dialog.setAttribute("aria-describedby", "plugin-detail-description");
@@ -1108,6 +1352,7 @@ async function openSettingsDetail(plugin, opener) {
   };
   configSection.append(renderPluginConfigurationForm(plugin, refreshConfigSection));
   if ((plugin.configuration || []).length) body.append(configSection);
+  if ((plugin.capabilities || []).includes("storage")) body.append(renderStorageTransferSection(plugin));
   const content = element("div", "vr-plugin-detail-content");
   for (const contribution of contributions) {
     const runtime = runtimeFor(contribution, "");
@@ -1115,7 +1360,7 @@ async function openSettingsDetail(plugin, opener) {
     await Promise.all((contribution.document.resources || []).map(({ id }) => loadResource(contribution, id, scope, false)));
     content.append(renderContribution(contribution, { plugin, readme }));
   }
-  if (!contributions.length && !(plugin.configuration || []).length) { const empty = element("p", "vr-empty-state"); empty.textContent = "このプラグインに固有設定はありません。"; content.append(empty); }
+  if (!contributions.length && !(plugin.configuration || []).length && !(plugin.capabilities || []).includes("storage")) { const empty = element("p", "vr-empty-state"); empty.textContent = "このプラグインに固有設定はありません。"; content.append(empty); }
   body.append(content);
   const footer = element("footer", "vr-dialog-footer"); const close = element("button", "vr-button"); close.type = "button"; close.textContent = "閉じる"; close.addEventListener("click", () => dialog.close()); footer.append(close);
   dialog.append(closeIcon, header, body, footer); document.body.append(dialog);
@@ -1124,7 +1369,7 @@ async function openSettingsDetail(plugin, opener) {
 async function synchronizeResources(resources, announce = false) {
   const unique = [...new Set(resources)];
   const fallback = surface?.contributions?.[0];
-  if (!fallback || !unique.length) return;
+  if (!fallback || !unique.length) return false;
   const before = new Map([...resourceStores].map(([key, store]) => [key, store.revision ?? JSON.stringify(store.data)]));
   const runtime = runtimeFor(fallback, "");
   const scope = { plugin: fallback.plugin_id, contribution: fallback, state: runtime.state, persist: runtime.persist, slotContext: {} };
@@ -1135,6 +1380,7 @@ async function synchronizeResources(resources, announce = false) {
     const labels = unique.map((resource) => ({ session: "レビュー", annotations: "注釈", history: "変更履歴", jobs: "AI修正状況", "workflow-settings": "設定" })[resource] || resource);
     toast(`別の画面での変更を同期しました：${[...new Set(labels)].join("・")}`, "info");
   }
+  return changed;
 }
 function layoutOrderSection(title, items, layoutPayload, kind) {
   const section = element("section", "vr-settings-card");
@@ -1245,20 +1491,21 @@ async function start() {
   }
   const response = await fetch("/api/plugin-host/v1/surfaces/review"); surface = await response.json(); applyTheme(surface.theme);
   const resourceLoads = [];
+  const activeStageLoads = [];
   const activeStageKey = surface.layout.active_stage;
   const activeStage = surface.contributions.find((contribution) => `${contribution.plugin_id}/${contribution.id}` === activeStageKey);
   const isInactiveStage = (contribution) => contribution.slot === "review.stage" && contribution !== activeStage;
   for (const contribution of surface.contributions) {
-    if (isInactiveStage(contribution)) continue;
+    if (contribution.slot === "settings.detail" || isInactiveStage(contribution)) continue;
     const runtime = runtimeFor(contribution, "");
     const scope = { plugin: contribution.plugin_id, contribution, state: runtime.state, persist: runtime.persist, instanceKey: "", slotContext: {} };
     const loads = (contribution.document.resources || []).map((resource) => loadResource(contribution, resource.id, scope, false));
-    if (contribution === activeStage) await Promise.all(loads);
-    else resourceLoads.push(...loads);
+    (contribution === activeStage ? activeStageLoads : resourceLoads).push(...loads);
   }
+  await Promise.all(activeStageLoads);
   rerender();
   if (resourceLoads.length) void Promise.all(resourceLoads).then(() => rerender());
-  const allResources = [...new Set(surface.contributions.filter((contribution) => !isInactiveStage(contribution)).flatMap((contribution) => (contribution.document.resources || []).map(({ id }) => id)))];
+  const allResources = [...new Set(surface.contributions.filter((contribution) => contribution.slot !== "settings.detail" && !isInactiveStage(contribution)).flatMap((contribution) => (contribution.document.resources || []).map(({ id }) => id)))];
   const eventPlugin = surface.contributions[0]?.plugin_id;
   if (eventPlugin) {
     const stream = new EventSource(`/api/plugin-host/v1/plugins/${encodeURIComponent(eventPlugin)}/events`);
@@ -1268,8 +1515,10 @@ async function start() {
   const fallbackSync = async () => {
     if (fallbackSyncRunning || document.visibilityState === "hidden") return;
     fallbackSyncRunning = true;
-    try { await synchronizeResources(["session", "annotations", "history", "jobs"]); }
-    finally { fallbackSyncRunning = false; }
+    try {
+      const reviewChanged = await synchronizeResources(["session", "jobs"]);
+      if (reviewChanged) await synchronizeResources(allResources.filter((resource) => resource !== "session" && resource !== "jobs"));
+    } finally { fallbackSyncRunning = false; }
   };
   const fallbackTimer = setInterval(() => { void fallbackSync(); }, 2000);
   window.addEventListener("focus", () => { void fallbackSync(); });

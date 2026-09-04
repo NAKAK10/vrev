@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -14,6 +15,8 @@ test("page-map.get returns the fixture site analysis through the bridge adapter"
   const adapter = createPageMapBridgeAdapter({ projectRoot: fixturesRoot, entryPath: "site/index.html", kind: "html" });
   const result = await adapter.query("page-map.get", { request_id: "r1", input: {} });
   assert.equal(result.ok, true);
+  assert.equal(result.data.analysis_state, "ready");
+  assert.equal(result.data.analysis_reason, "none");
   assert.equal(result.data.entry_path, "site/index.html");
   assert.ok(result.data.stats.pages > 0);
 });
@@ -22,6 +25,8 @@ test("page-map.get on a non-html target returns an empty result with a warning",
   const adapter = createPageMapBridgeAdapter({ projectRoot: fixturesRoot, entryPath: "assets/image.png", kind: "image" });
   const result = await adapter.query("page-map.get", { request_id: "r2", input: {} });
   assert.equal(result.ok, true);
+  assert.equal(result.data.analysis_state, "unsupported");
+  assert.equal(result.data.analysis_reason, "unsupported_target");
   assert.deepEqual(result.data.pages, []);
   assert.equal(result.data.warnings[0], "静的HTML以外の対象は未対応です");
 });
@@ -30,7 +35,30 @@ test("page-map.get on a live target returns an empty result with a warning", asy
   const adapter = createPageMapBridgeAdapter({ projectRoot: fixturesRoot, entryPath: "http://localhost:4000/", kind: "html", liveUrl: "http://localhost:4000/" });
   const result = await adapter.query("page-map.get", { request_id: "r3", input: {} });
   assert.equal(result.ok, true);
+  assert.equal(result.data.analysis_state, "unsupported");
+  assert.equal(result.data.analysis_reason, "unsupported_target");
   assert.deepEqual(result.data.pages, []);
+});
+
+test("page-map.get distinguishes an empty static directory from an unsupported target", async () => {
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-page-map-empty-"));
+  mkdirSync(path.join(projectRoot, "public"));
+  const adapter = createPageMapBridgeAdapter({ projectRoot, entryPath: "public/index.html", kind: "html" });
+  const result = await adapter.query("page-map.get", { request_id: "r-empty", input: {} });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.analysis_state, "empty");
+  assert.equal(result.data.analysis_reason, "no_html_files");
+  assert.equal(result.data.stats.files, 0);
+});
+
+test("page-map.get reports an incomplete scan when the public directory is missing", async () => {
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "visual-review-page-map-missing-"));
+  const adapter = createPageMapBridgeAdapter({ projectRoot, entryPath: "public/index.html", kind: "html" });
+  const result = await adapter.query("page-map.get", { request_id: "r-missing", input: {} });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.analysis_state, "incomplete");
+  assert.equal(result.data.analysis_reason, "scan_incomplete");
+  assert.match(result.data.warnings[0], /directory/);
 });
 
 test("page-map.refresh clears the cache and invalidates the page-map resource", async () => {

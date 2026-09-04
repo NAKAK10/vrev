@@ -1,6 +1,0 @@
-{
-  "schema_version": 1,
-  "root": { "type": "stack", "children": [
-    { "id": "issue-request", "type": "button", "props": { "label": { "literal": "GitHub Issueを依頼" }, "variant": { "literal": "secondary" } }, "on": { "click": [{ "type": "command.execute", "command": "issue.request", "input": { "anchor": { "slot_context": "/anchor" }, "comment": { "form": "comment" } }, "pending": { "disable": "issue-request", "deduplicate": true }, "on_success": [{ "type": "slot.emit", "event": "completed", "payload": { "annotation_id": { "result": "/annotation_id" } } }, { "type": "toast.show", "variant": "success", "message": { "literal": "GitHub Issueの作成依頼を注釈として保存しました。AI一括修正で下書きを作成します。" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
-  ] }
-}

@@ -1,81 +1,1327 @@
 {
   "schema_version": 1,
   "local_state": [
-    { "key": "history_open", "type": "boolean", "default": false, "persist": false },
-    { "key": "history_offset", "type": "integer", "default": 0, "min": 0, "max": 100000, "persist": false },
-    { "key": "reply_drafts", "type": "keyed-text", "default": {}, "max_keys": 128, "max_value_length": 2000, "persist": false, "lifetime": "navigation" },
-    { "key": "hidden_filters", "type": "bounded-set", "default": [], "max_items": 64, "persist": true, "schema_version": 1 },
-    { "key": "kinds", "type": "bounded-set", "values": ["dom", "region"], "default": ["dom", "region"], "max_items": 2, "persist": true, "schema_version": 1, "empty_selection": "reset" },
-    { "key": "runner", "type": "enum", "values": ["opencode", "claude", "codex", "copilot", "pi", "custom"], "default": "claude", "persist": true },
-    { "key": "max_parallel", "type": "integer", "default": 2, "min": 1, "max": 10, "persist": true },
-    { "key": "auto_run", "type": "boolean", "default": false, "persist": true }
+    {
+      "key": "ai_open",
+      "type": "boolean",
+      "default": true,
+      "persist": true,
+      "schema_version": 1
+    },
+    {
+      "key": "annotations_open",
+      "type": "boolean",
+      "default": true,
+      "persist": true,
+      "schema_version": 1
+    },
+    {
+      "key": "history_open",
+      "type": "boolean",
+      "default": false,
+      "persist": true,
+      "schema_version": 1
+    },
+    {
+      "key": "history_offset",
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "max": 100000,
+      "persist": false
+    },
+    {
+      "key": "reply_drafts",
+      "type": "keyed-text",
+      "default": {},
+      "max_keys": 128,
+      "max_value_length": 2000,
+      "persist": false,
+      "lifetime": "navigation"
+    },
+    {
+      "key": "hidden_filters",
+      "type": "bounded-set",
+      "default": [],
+      "max_items": 64,
+      "persist": true,
+      "schema_version": 1
+    },
+    {
+      "key": "kinds",
+      "type": "bounded-set",
+      "values": [
+        "dom",
+        "region"
+      ],
+      "default": [
+        "dom",
+        "region"
+      ],
+      "max_items": 2,
+      "persist": true,
+      "schema_version": 1,
+      "empty_selection": "reset"
+    }
   ],
   "resources": [
-    { "id": "annotations", "query": "annotations.list", "input": { "hidden": { "local": "/hidden_filters" }, "kinds": { "local": "/kinds" } }, "refresh": "event", "dependency_policy": "immediate" },
-    { "id": "history", "query": "history.list", "input": { "offset": { "local": "/history_offset" }, "limit": { "literal": 24 } }, "refresh": "event", "dependency_policy": "immediate" },
-    { "id": "jobs", "query": "jobs.list", "input": {}, "refresh": "event" },
-    { "id": "workflow-settings", "query": "workflow.settings", "input": {}, "refresh": "event" }
+    {
+      "id": "annotations",
+      "query": "annotations.list",
+      "input": {
+        "hidden": {
+          "local": "/hidden_filters"
+        },
+        "kinds": {
+          "local": "/kinds"
+        }
+      },
+      "refresh": "event",
+      "dependency_policy": "immediate"
+    },
+    {
+      "id": "history",
+      "query": "history.list",
+      "input": {
+        "offset": {
+          "local": "/history_offset"
+        },
+        "limit": {
+          "literal": 24
+        }
+      },
+      "refresh": "event",
+      "dependency_policy": "immediate"
+    },
+    {
+      "id": "jobs",
+      "query": "jobs.list",
+      "input": {},
+      "refresh": "event"
+    },
+    {
+      "id": "workflow-settings",
+      "query": "workflow.settings",
+      "input": {},
+      "refresh": "event"
+    }
   ],
-  "root": { "type": "stack", "props": { "gap": { "literal": "none" }, "variant": { "literal": "review-sidebar" } }, "children": [
-    { "type": "section", "props": { "title": { "literal": "AI一括修正" }, "variant": { "literal": "sidebar-ai" } }, "children": [
-      { "type": "count", "props": { "value": { "resource": "annotations", "path": "/open_count" }, "label": { "literal": "未対応" } } },
-      { "type": "link", "props": { "label": { "literal": "AI修正設定" }, "href": { "literal": "/settings/plugins#annotation-workflow" }, "variant": { "literal": "settings-link" } } },
-      { "type": "panel", "when": { "exists": { "resource": "jobs", "path": "/active" } }, "props": { "variant": { "literal": "ai-run-status" } }, "children": [
-        { "type": "row", "children": [
-          { "type": "text", "props": { "text": { "literal": "開始" } } },
-          { "type": "time", "props": { "value": { "resource": "jobs", "path": "/active/started_at" }, "format": { "literal": "localized" } } }
-        ] },
-        { "type": "text", "props": { "text": { "resource": "jobs", "path": "/active/latest_info" } } },
-        { "id": "stop-ai-run", "type": "button", "props": { "label": { "literal": "AI修正を停止" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.cancel", "input": { "job_id": { "resource": "jobs", "path": "/active/job_id" } }, "pending": { "disable": "stop-ai-run", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "resource.refresh", "resource": "annotations" }, { "type": "toast.show", "variant": "success", "message": { "literal": "AI修正を停止しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
-      ] },
-      { "id": "batch-run", "type": "button", "when": { "eq": [{ "resource": "workflow-settings", "path": "/auto_run" }, { "literal": false }] }, "props": { "label": { "literal": "AIにまとめて修正依頼" }, "variant": { "literal": "primary" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.enqueue", "input": { "runner": { "resource": "workflow-settings", "path": "/runner" }, "max_parallel": { "resource": "workflow-settings", "path": "/max_parallel" } }, "pending": { "disable": "batch-run", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "toast.show", "variant": "success", "message": { "literal": "AI修正を開始しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
-    ] },
-    { "type": "section", "props": { "title": { "literal": "注釈" }, "variant": { "literal": "sidebar-annotations" } }, "children": [
-      { "type": "count", "props": { "value": { "resource": "annotations", "path": "/total" }, "label": { "literal": "注釈" } } },
-      { "type": "checkbox-group", "props": { "label": { "literal": "状態で絞り込む" }, "value": { "local": "/hidden_filters" }, "inverted": { "literal": true }, "options": { "resource": "annotations", "path": "/filters" } } },
-      { "type": "checkbox-group", "props": { "label": { "literal": "種類で絞り込む" }, "value": { "local": "/kinds" }, "options": { "literal": [{ "value": "dom", "label": "ノード" }, { "value": "region", "label": "範囲" }] } } },
-      { "type": "list", "props": { "label": { "literal": "レビュー注釈" }, "empty_message": { "literal": "注釈はまだありません。" }, "variant": { "literal": "annotation-list" } }, "children": [
-        { "type": "panel", "props": { "variant": { "literal": "annotation-card" }, "aria_label": { "item": "/comment" } }, "repeat": { "source": { "resource": "annotations", "path": "/items" }, "key": { "item": "/id" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] }, "children": [
-          { "type": "status", "props": { "value": { "item": "/status" }, "label": { "item": "/status_label" }, "tone": { "item": "/status_tone" } } },
-          { "id": "annotation-comment", "type": "button", "props": { "label": { "item": "/comment" }, "variant": { "literal": "annotation-target" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
-          { "type": "row", "props": { "variant": { "literal": "annotation-meta" } }, "children": [
-            { "type": "badge", "props": { "text": { "item": "/kind_label" } } },
-            { "type": "text", "props": { "text": { "item": "/page_path" }, "truncate": { "literal": true } } },
-            { "type": "time", "props": { "value": { "item": "/updated_at" }, "format": { "literal": "localized" }, "relative": { "literal": true } } }
-          ] },
-          { "type": "list", "props": { "label": { "literal": "コメントスレッド" }, "variant": { "literal": "annotation-thread" } }, "children": [
-            { "type": "panel", "props": { "variant": { "literal": "thread-message" } }, "repeat": { "source": { "item": "/thread" }, "key": { "item": "/id" } }, "children": [
-              { "type": "text", "props": { "text": { "item": "/actor_label" } } },
-              { "type": "time", "props": { "value": { "item": "/at" }, "format": { "literal": "localized" } } },
-              { "id": "thread-body", "type": "text", "props": { "text": { "item": "/body" }, "preserve_whitespace": { "literal": true } } }
-            ] }
-          ] },
-          { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
-          { "type": "form", "props": { "name": { "literal": "reply" }, "submit_on_enter": { "literal": true }, "variant": { "literal": "inline-reply" } }, "on": { "submit": [{ "type": "command.execute", "command": "annotation.reply", "input": { "annotation_id": { "item": "/id" }, "comment": { "form": "reply" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }] }] }, "children": [
-            { "type": "input", "props": { "name": { "literal": "reply" }, "label": { "literal": "返信" }, "max_length": { "literal": 2000 } } },
-            { "type": "button", "props": { "label": { "literal": "返信" }, "type": { "literal": "submit" } } }
-          ] },
-          { "type": "row", "props": { "variant": { "literal": "annotation-actions" } }, "children": [
-            { "type": "button", "when": { "eq": [{ "item": "/status" }, { "literal": "resolved" }] }, "props": { "label": { "literal": "再オープン" } }, "on": { "click": [{ "type": "command.execute", "command": "annotation.status", "input": { "annotation_id": { "item": "/id" }, "status": { "literal": "open" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }] }] } },
-            { "type": "button", "when": { "eq": [{ "item": "/status" }, { "literal": "failed" }] }, "props": { "label": { "literal": "再実行" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.retry", "input": { "annotation_id": { "item": "/id" }, "runner": { "resource": "workflow-settings", "path": "/runner" }, "max_parallel": { "resource": "workflow-settings", "path": "/max_parallel" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "resource.refresh", "resource": "annotations" }, { "type": "toast.show", "variant": "success", "message": { "literal": "AI修正を再実行しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } },
-            { "type": "button", "when": { "eq": [{ "item": "/status" }, { "literal": "addressed" }] }, "props": { "label": { "literal": "解決にする" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "command.execute", "command": "annotation.status", "input": { "annotation_id": { "item": "/id" }, "status": { "literal": "resolved" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "annotations" }, { "type": "resource.refresh", "resource": "history" }] }] } },
-            { "type": "button", "when": { "in": [{ "item": "/status" }, { "literal": ["open", "in_progress", "failed"] }] }, "props": { "label": { "literal": "強制的に解決" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "dialog.open", "dialog": "force-resolve-dialog" }] } },
-            { "id": "annotation-ai-run", "type": "button", "when": { "and": [{ "eq": [{ "item": "/status" }, { "literal": "open" }] }, { "eq": [{ "resource": "workflow-settings", "path": "/auto_run" }, { "literal": true }] }] }, "props": { "label": { "literal": "AI修正" }, "variant": { "literal": "primary" } }, "on": { "click": [{ "type": "command.execute", "command": "jobs.enqueue", "input": { "annotation_id": { "item": "/id" }, "runner": { "resource": "workflow-settings", "path": "/runner" }, "max_parallel": { "resource": "workflow-settings", "path": "/max_parallel" } }, "pending": { "disable": "annotation-ai-run", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "jobs" }, { "type": "resource.refresh", "resource": "annotations" }, { "type": "toast.show", "variant": "success", "message": { "literal": "この注釈のAI修正を開始しました" } }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } },
-            { "type": "slot", "props": { "name": { "literal": "annotation-workflow.annotation.actions" }, "context": { "item": "" } } }
-          ] },
-          { "id": "force-resolve-dialog", "type": "dialog", "props": { "title": { "literal": "この注釈を解決済みにしますか？" }, "description": { "literal": "AIの処理結果にかかわらず、人間の判断で解決済みに変更します。" }, "return_focus": { "literal": "" }, "dismissible": { "literal": true }, "mobile_presentation": { "literal": "fullscreen" } }, "children": [
-            { "type": "row", "children": [
-              { "type": "button", "props": { "label": { "literal": "キャンセル" } }, "on": { "click": [{ "type": "dialog.close", "dialog": "force-resolve-dialog" }] } },
-              { "type": "button", "props": { "label": { "literal": "強制的に解決する" }, "variant": { "literal": "danger" } }, "on": { "click": [{ "type": "command.execute", "command": "annotation.status", "input": { "annotation_id": { "item": "/id" }, "status": { "literal": "resolved" } }, "pending": { "deduplicate": true }, "on_success": [{ "type": "dialog.close", "dialog": "force-resolve-dialog" }, { "type": "resource.refresh", "resource": "annotations" }, { "type": "resource.refresh", "resource": "history" }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }] } }
-            ] }
-          ] }
-        ] }
-      ] }
-    ] },
-    { "type": "disclosure", "props": { "label": { "literal": "履歴" }, "expanded": { "local": "/history_open" }, "variant": { "literal": "sidebar-history" } }, "on": { "toggle": [{ "type": "local.set", "path": "/history_open", "value": { "event": "/expanded" } }] }, "children": [
-      { "type": "list", "props": { "label": { "literal": "変更履歴" }, "variant": { "literal": "history-list" } }, "children": [{ "type": "text", "props": { "text": { "item": "/summary" } }, "repeat": { "source": { "resource": "history", "path": "/events" }, "key": { "item": "/revision" } } }] },
-      { "type": "load-more", "when": { "ne": [{ "resource": "history", "path": "/remaining" }, { "literal": 0 }] }, "props": { "label": { "literal": "さらに24件読み込む" }, "remaining": { "resource": "history", "path": "/remaining" } }, "on": { "click": [{ "type": "local.set", "path": "/history_offset", "value": { "resource": "history", "path": "/next_offset" } }] } }
-    ] },
-    { "type": "live-status", "props": { "message": { "resource": "jobs", "path": "/announcement" }, "politeness": { "literal": "polite" } } }
-  ] }
+  "root": {
+    "type": "stack",
+    "props": {
+      "gap": {
+        "literal": "none"
+      },
+      "variant": {
+        "literal": "review-sidebar"
+      }
+    },
+    "children": [
+      {
+        "type": "disclosure",
+        "props": {
+          "label": {
+            "literal": "AI一括修正"
+          },
+          "expanded": {
+            "local": "/ai_open"
+          },
+          "variant": {
+            "literal": "sidebar-ai"
+          },
+          "attention_key": {
+            "literal": "ai-jobs"
+          },
+          "attention_value": {
+            "resource": "jobs",
+            "path": "/revision"
+          }
+        },
+        "on": {
+          "toggle": [
+            {
+              "type": "local.set",
+              "path": "/ai_open",
+              "value": {
+                "event": "/expanded"
+              }
+            }
+          ]
+        },
+        "children": [
+          {
+            "type": "count",
+            "props": {
+              "value": {
+                "resource": "annotations",
+                "path": "/open_count"
+              },
+              "label": {
+                "literal": "未対応"
+              }
+            }
+          },
+          {
+            "type": "link",
+            "props": {
+              "label": {
+                "literal": "AI修正設定"
+              },
+              "href": {
+                "literal": "/settings/plugins#annotation-workflow"
+              },
+              "variant": {
+                "literal": "settings-link"
+              }
+            }
+          },
+          {
+            "type": "panel",
+            "when": {
+              "exists": {
+                "resource": "jobs",
+                "path": "/active"
+              }
+            },
+            "props": {
+              "variant": {
+                "literal": "ai-run-status"
+              }
+            },
+            "children": [
+              {
+                "type": "row",
+                "children": [
+                  {
+                    "type": "text",
+                    "props": {
+                      "text": {
+                        "literal": "開始"
+                      }
+                    }
+                  },
+                  {
+                    "type": "time",
+                    "props": {
+                      "value": {
+                        "resource": "jobs",
+                        "path": "/active/started_at"
+                      },
+                      "format": {
+                        "literal": "localized"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "props": {
+                  "text": {
+                    "resource": "jobs",
+                    "path": "/active/latest_info"
+                  }
+                }
+              },
+              {
+                "id": "stop-ai-run",
+                "type": "button",
+                "props": {
+                  "label": {
+                    "literal": "AI修正を停止"
+                  },
+                  "variant": {
+                    "literal": "danger"
+                  }
+                },
+                "on": {
+                  "click": [
+                    {
+                      "type": "command.execute",
+                      "command": "jobs.cancel",
+                      "input": {
+                        "job_id": {
+                          "resource": "jobs",
+                          "path": "/active/job_id"
+                        }
+                      },
+                      "pending": {
+                        "disable": "stop-ai-run",
+                        "deduplicate": true
+                      },
+                      "on_success": [
+                        {
+                          "type": "resource.refresh",
+                          "resource": "jobs"
+                        },
+                        {
+                          "type": "resource.refresh",
+                          "resource": "annotations"
+                        },
+                        {
+                          "type": "toast.show",
+                          "variant": "success",
+                          "message": {
+                            "literal": "AI修正を停止しました"
+                          }
+                        }
+                      ],
+                      "on_error": [
+                        {
+                          "type": "toast.show",
+                          "variant": "error",
+                          "message": {
+                            "error": "/message"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "batch-run",
+            "type": "button",
+            "when": {
+              "eq": [
+                {
+                  "resource": "workflow-settings",
+                  "path": "/auto_run"
+                },
+                {
+                  "literal": false
+                }
+              ]
+            },
+            "props": {
+              "label": {
+                "literal": "AIにまとめて修正依頼"
+              },
+              "variant": {
+                "literal": "primary"
+              }
+            },
+            "on": {
+              "click": [
+                {
+                  "type": "command.execute",
+                  "command": "jobs.enqueue",
+                  "input": {
+                    "max_parallel": {
+                      "resource": "workflow-settings",
+                      "path": "/max_parallel"
+                    }
+                  },
+                  "pending": {
+                    "disable": "batch-run",
+                    "deduplicate": true
+                  },
+                  "on_success": [
+                    {
+                      "type": "resource.refresh",
+                      "resource": "jobs"
+                    },
+                    {
+                      "type": "toast.show",
+                      "variant": "success",
+                      "message": {
+                        "literal": "AI修正を開始しました"
+                      }
+                    }
+                  ],
+                  "on_error": [
+                    {
+                      "type": "toast.show",
+                      "variant": "error",
+                      "message": {
+                        "error": "/message"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "disclosure",
+        "props": {
+          "label": {
+            "literal": "注釈"
+          },
+          "expanded": {
+            "local": "/annotations_open"
+          },
+          "variant": {
+            "literal": "sidebar-annotations"
+          },
+          "attention_key": {
+            "literal": "annotations"
+          },
+          "attention_value": {
+            "resource": "annotations",
+            "path": "/revision"
+          }
+        },
+        "on": {
+          "toggle": [
+            {
+              "type": "local.set",
+              "path": "/annotations_open",
+              "value": {
+                "event": "/expanded"
+              }
+            }
+          ]
+        },
+        "children": [
+          {
+            "type": "count",
+            "props": {
+              "value": {
+                "resource": "annotations",
+                "path": "/total"
+              },
+              "label": {
+                "literal": "注釈"
+              }
+            }
+          },
+          {
+            "type": "checkbox-group",
+            "props": {
+              "label": {
+                "literal": "状態で絞り込む"
+              },
+              "value": {
+                "local": "/hidden_filters"
+              },
+              "inverted": {
+                "literal": true
+              },
+              "options": {
+                "resource": "annotations",
+                "path": "/filters"
+              }
+            }
+          },
+          {
+            "type": "checkbox-group",
+            "props": {
+              "label": {
+                "literal": "種類で絞り込む"
+              },
+              "value": {
+                "local": "/kinds"
+              },
+              "options": {
+                "literal": [
+                  {
+                    "value": "dom",
+                    "label": "ノード"
+                  },
+                  {
+                    "value": "region",
+                    "label": "範囲"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "list",
+            "props": {
+              "label": {
+                "literal": "レビュー注釈"
+              },
+              "empty_message": {
+                "literal": "注釈はまだありません。"
+              },
+              "variant": {
+                "literal": "annotation-list"
+              }
+            },
+            "children": [
+              {
+                "type": "panel",
+                "props": {
+                  "variant": {
+                    "literal": "annotation-card"
+                  },
+                  "aria_label": {
+                    "item": "/comment"
+                  }
+                },
+                "repeat": {
+                  "source": {
+                    "resource": "annotations",
+                    "path": "/items"
+                  },
+                  "key": {
+                    "item": "/id"
+                  }
+                },
+                "on": {
+                  "click": [
+                    {
+                      "type": "target.focus",
+                      "target": {
+                        "item": "/page_path"
+                      },
+                      "anchor": {
+                        "item": "/anchor"
+                      },
+                      "annotation_id": {
+                        "item": "/id"
+                      },
+                      "restore_context": true
+                    }
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "status",
+                    "props": {
+                      "value": {
+                        "item": "/status"
+                      },
+                      "label": {
+                        "item": "/status_label"
+                      },
+                      "tone": {
+                        "item": "/status_tone"
+                      }
+                    }
+                  },
+                  {
+                    "id": "annotation-comment",
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "item": "/comment"
+                      },
+                      "variant": {
+                        "literal": "annotation-target"
+                      }
+                    },
+                    "on": {
+                      "click": [
+                        {
+                          "type": "target.focus",
+                          "target": {
+                            "item": "/page_path"
+                          },
+                          "anchor": {
+                            "item": "/anchor"
+                          },
+                          "annotation_id": {
+                            "item": "/id"
+                          },
+                          "restore_context": true
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "annotation-meta"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "badge",
+                        "props": {
+                          "text": {
+                            "item": "/kind_label"
+                          }
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "item": "/page_path"
+                          },
+                          "truncate": {
+                            "literal": true
+                          }
+                        }
+                      },
+                      {
+                        "type": "time",
+                        "props": {
+                          "value": {
+                            "item": "/updated_at"
+                          },
+                          "format": {
+                            "literal": "localized"
+                          },
+                          "relative": {
+                            "literal": true
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "list",
+                    "props": {
+                      "label": {
+                        "literal": "コメントスレッド"
+                      },
+                      "variant": {
+                        "literal": "annotation-thread"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "panel",
+                        "props": {
+                          "variant": {
+                            "literal": "thread-message"
+                          }
+                        },
+                        "repeat": {
+                          "source": {
+                            "item": "/thread"
+                          },
+                          "key": {
+                            "item": "/id"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "props": {
+                              "text": {
+                                "item": "/actor_label"
+                              }
+                            }
+                          },
+                          {
+                            "type": "time",
+                            "props": {
+                              "value": {
+                                "item": "/at"
+                              },
+                              "format": {
+                                "literal": "localized"
+                              }
+                            }
+                          },
+                          {
+                            "id": "thread-body",
+                            "type": "text",
+                            "props": {
+                              "text": {
+                                "item": "/body"
+                              },
+                              "preserve_whitespace": {
+                                "literal": true
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "literal": "対象を表示"
+                      }
+                    },
+                    "on": {
+                      "click": [
+                        {
+                          "type": "target.focus",
+                          "target": {
+                            "item": "/page_path"
+                          },
+                          "anchor": {
+                            "item": "/anchor"
+                          },
+                          "annotation_id": {
+                            "item": "/id"
+                          },
+                          "restore_context": true
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "form",
+                    "props": {
+                      "name": {
+                        "literal": "reply"
+                      },
+                      "submit_on_enter": {
+                        "literal": true
+                      },
+                      "variant": {
+                        "literal": "inline-reply"
+                      }
+                    },
+                    "on": {
+                      "submit": [
+                        {
+                          "type": "command.execute",
+                          "command": "annotation.reply",
+                          "input": {
+                            "annotation_id": {
+                              "item": "/id"
+                            },
+                            "comment": {
+                              "form": "reply"
+                            }
+                          },
+                          "pending": {
+                            "deduplicate": true
+                          },
+                          "on_start": [
+                            {
+                              "type": "resource.optimistic-append",
+                              "resource": "annotations",
+                              "collection_path": "/items",
+                              "match_path": "/id",
+                              "match": {
+                                "item": "/id"
+                              },
+                              "target_path": "/thread",
+                              "value": {
+                                "id": {
+                                  "generated": "uuid"
+                                },
+                                "actor": {
+                                  "literal": "human"
+                                },
+                                "actor_label": {
+                                  "literal": "人間"
+                                },
+                                "body": {
+                                  "form": "reply"
+                                },
+                                "at": {
+                                  "generated": "timestamp"
+                                }
+                              }
+                            }
+                          ],
+                          "on_error": [
+                            {
+                              "type": "resource.refresh",
+                              "resource": "annotations"
+                            },
+                            {
+                              "type": "toast.show",
+                              "variant": "error",
+                              "message": {
+                                "error": "/message"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "children": [
+                      {
+                        "type": "input",
+                        "props": {
+                          "name": {
+                            "literal": "reply"
+                          },
+                          "label": {
+                            "literal": "返信"
+                          },
+                          "max_length": {
+                            "literal": 2000
+                          }
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "props": {
+                          "label": {
+                            "literal": "返信"
+                          },
+                          "type": {
+                            "literal": "submit"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "annotation-actions"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "button",
+                        "when": {
+                          "eq": [
+                            {
+                              "item": "/status"
+                            },
+                            {
+                              "literal": "resolved"
+                            }
+                          ]
+                        },
+                        "props": {
+                          "label": {
+                            "literal": "再オープン"
+                          }
+                        },
+                        "on": {
+                          "click": [
+                            {
+                              "type": "command.execute",
+                              "command": "annotation.status",
+                              "input": {
+                                "annotation_id": {
+                                  "item": "/id"
+                                },
+                                "status": {
+                                  "literal": "open"
+                                }
+                              },
+                              "pending": {
+                                "deduplicate": true
+                              },
+                              "on_success": [
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "annotations"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "when": {
+                          "eq": [
+                            {
+                              "item": "/status"
+                            },
+                            {
+                              "literal": "failed"
+                            }
+                          ]
+                        },
+                        "props": {
+                          "label": {
+                            "literal": "再実行"
+                          }
+                        },
+                        "on": {
+                          "click": [
+                            {
+                              "type": "command.execute",
+                              "command": "jobs.retry",
+                              "input": {
+                                "annotation_id": {
+                                  "item": "/id"
+                                },
+                                "max_parallel": {
+                                  "resource": "workflow-settings",
+                                  "path": "/max_parallel"
+                                }
+                              },
+                              "pending": {
+                                "deduplicate": true
+                              },
+                              "on_success": [
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "jobs"
+                                },
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "annotations"
+                                },
+                                {
+                                  "type": "toast.show",
+                                  "variant": "success",
+                                  "message": {
+                                    "literal": "AI修正を再実行しました"
+                                  }
+                                }
+                              ],
+                              "on_error": [
+                                {
+                                  "type": "toast.show",
+                                  "variant": "error",
+                                  "message": {
+                                    "error": "/message"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "when": {
+                          "eq": [
+                            {
+                              "item": "/status"
+                            },
+                            {
+                              "literal": "addressed"
+                            }
+                          ]
+                        },
+                        "props": {
+                          "label": {
+                            "literal": "解決にする"
+                          },
+                          "variant": {
+                            "literal": "danger"
+                          }
+                        },
+                        "on": {
+                          "click": [
+                            {
+                              "type": "command.execute",
+                              "command": "annotation.status",
+                              "input": {
+                                "annotation_id": {
+                                  "item": "/id"
+                                },
+                                "status": {
+                                  "literal": "resolved"
+                                }
+                              },
+                              "pending": {
+                                "deduplicate": true
+                              },
+                              "on_start": [
+                                {
+                                  "type": "resource.optimistic-patch",
+                                  "resource": "annotations",
+                                  "collection_path": "/items",
+                                  "match_path": "/id",
+                                  "match": {
+                                    "item": "/id"
+                                  },
+                                  "value": {
+                                    "status": {
+                                      "literal": "resolved"
+                                    },
+                                    "status_label": {
+                                      "literal": "解決済み"
+                                    },
+                                    "filter_id": {
+                                      "literal": "resolved"
+                                    }
+                                  },
+                                  "remove_when": {
+                                    "in": [
+                                      {
+                                        "literal": "resolved"
+                                      },
+                                      {
+                                        "local": "/hidden_filters"
+                                      }
+                                    ]
+                                  },
+                                  "decrement_paths": [
+                                    "/total"
+                                  ]
+                                }
+                              ],
+                              "on_error": [
+                                {
+                                  "type": "toast.show",
+                                  "variant": "error",
+                                  "message": {
+                                    "error": "/message"
+                                  }
+                                },
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "annotations"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "when": {
+                          "in": [
+                            {
+                              "item": "/status"
+                            },
+                            {
+                              "literal": [
+                                "open",
+                                "in_progress",
+                                "failed"
+                              ]
+                            }
+                          ]
+                        },
+                        "props": {
+                          "label": {
+                            "literal": "強制的に解決"
+                          },
+                          "variant": {
+                            "literal": "danger"
+                          }
+                        },
+                        "on": {
+                          "click": [
+                            {
+                              "type": "dialog.open",
+                              "dialog": "force-resolve-dialog"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "id": "annotation-ai-run",
+                        "type": "button",
+                        "when": {
+                          "and": [
+                            {
+                              "eq": [
+                                {
+                                  "item": "/status"
+                                },
+                                {
+                                  "literal": "open"
+                                }
+                              ]
+                            },
+                            {
+                              "eq": [
+                                {
+                                  "resource": "workflow-settings",
+                                  "path": "/auto_run"
+                                },
+                                {
+                                  "literal": true
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "props": {
+                          "label": {
+                            "literal": "AI修正"
+                          },
+                          "variant": {
+                            "literal": "primary"
+                          }
+                        },
+                        "on": {
+                          "click": [
+                            {
+                              "type": "command.execute",
+                              "command": "jobs.enqueue",
+                              "input": {
+                                "annotation_id": {
+                                  "item": "/id"
+                                },
+                                "max_parallel": {
+                                  "resource": "workflow-settings",
+                                  "path": "/max_parallel"
+                                }
+                              },
+                              "pending": {
+                                "disable": "annotation-ai-run",
+                                "deduplicate": true
+                              },
+                              "on_success": [
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "jobs"
+                                },
+                                {
+                                  "type": "resource.refresh",
+                                  "resource": "annotations"
+                                },
+                                {
+                                  "type": "toast.show",
+                                  "variant": "success",
+                                  "message": {
+                                    "literal": "この注釈のAI修正を開始しました"
+                                  }
+                                }
+                              ],
+                              "on_error": [
+                                {
+                                  "type": "toast.show",
+                                  "variant": "error",
+                                  "message": {
+                                    "error": "/message"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "force-resolve-dialog",
+                    "type": "dialog",
+                    "props": {
+                      "title": {
+                        "literal": "この注釈を解決済みにしますか？"
+                      },
+                      "description": {
+                        "literal": "AIの処理結果にかかわらず、人間の判断で解決済みに変更します。"
+                      },
+                      "return_focus": {
+                        "literal": ""
+                      },
+                      "dismissible": {
+                        "literal": true
+                      },
+                      "mobile_presentation": {
+                        "literal": "fullscreen"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "row",
+                        "children": [
+                          {
+                            "type": "button",
+                            "props": {
+                              "label": {
+                                "literal": "キャンセル"
+                              }
+                            },
+                            "on": {
+                              "click": [
+                                {
+                                  "type": "dialog.close",
+                                  "dialog": "force-resolve-dialog"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "type": "button",
+                            "props": {
+                              "label": {
+                                "literal": "強制的に解決する"
+                              },
+                              "variant": {
+                                "literal": "danger"
+                              }
+                            },
+                            "on": {
+                              "click": [
+                                {
+                                  "type": "command.execute",
+                                  "command": "annotation.status",
+                                  "input": {
+                                    "annotation_id": {
+                                      "item": "/id"
+                                    },
+                                    "status": {
+                                      "literal": "resolved"
+                                    }
+                                  },
+                                  "pending": {
+                                    "deduplicate": true
+                                  },
+                                  "on_start": [
+                                    {
+                                      "type": "dialog.close",
+                                      "dialog": "force-resolve-dialog"
+                                    },
+                                    {
+                                      "type": "resource.optimistic-patch",
+                                      "resource": "annotations",
+                                      "collection_path": "/items",
+                                      "match_path": "/id",
+                                      "match": {
+                                        "item": "/id"
+                                      },
+                                      "value": {
+                                        "status": {
+                                          "literal": "resolved"
+                                        },
+                                        "status_label": {
+                                          "literal": "解決済み"
+                                        },
+                                        "filter_id": {
+                                          "literal": "resolved"
+                                        }
+                                      },
+                                      "remove_when": {
+                                        "in": [
+                                          {
+                                            "literal": "resolved"
+                                          },
+                                          {
+                                            "local": "/hidden_filters"
+                                          }
+                                        ]
+                                      },
+                                      "decrement_paths": [
+                                        "/total"
+                                      ]
+                                    }
+                                  ],
+                                  "on_error": [
+                                    {
+                                      "type": "toast.show",
+                                      "variant": "error",
+                                      "message": {
+                                        "error": "/message"
+                                      }
+                                    },
+                                    {
+                                      "type": "resource.refresh",
+                                      "resource": "annotations"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "disclosure",
+        "props": {
+          "label": {
+            "literal": "履歴"
+          },
+          "expanded": {
+            "local": "/history_open"
+          },
+          "variant": {
+            "literal": "sidebar-history"
+          },
+          "attention_key": {
+            "literal": "history"
+          },
+          "attention_value": {
+            "resource": "history",
+            "path": "/latest_revision"
+          }
+        },
+        "on": {
+          "toggle": [
+            {
+              "type": "local.set",
+              "path": "/history_open",
+              "value": {
+                "event": "/expanded"
+              }
+            }
+          ]
+        },
+        "children": [
+          {
+            "type": "list",
+            "props": {
+              "label": {
+                "literal": "変更履歴"
+              },
+              "variant": {
+                "literal": "history-list"
+              }
+            },
+            "children": [
+              {
+                "type": "text",
+                "props": {
+                  "text": {
+                    "item": "/summary"
+                  }
+                },
+                "repeat": {
+                  "source": {
+                    "resource": "history",
+                    "path": "/events"
+                  },
+                  "key": {
+                    "item": "/revision"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "load-more",
+            "when": {
+              "ne": [
+                {
+                  "resource": "history",
+                  "path": "/remaining"
+                },
+                {
+                  "literal": 0
+                }
+              ]
+            },
+            "props": {
+              "label": {
+                "literal": "さらに24件読み込む"
+              },
+              "remaining": {
+                "resource": "history",
+                "path": "/remaining"
+              }
+            },
+            "on": {
+              "click": [
+                {
+                  "type": "local.set",
+                  "path": "/history_offset",
+                  "value": {
+                    "resource": "history",
+                    "path": "/next_offset"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "live-status",
+        "props": {
+          "message": {
+            "resource": "jobs",
+            "path": "/announcement"
+          },
+          "politeness": {
+            "literal": "polite"
+          }
+        }
+      }
+    ]
+  }
 }

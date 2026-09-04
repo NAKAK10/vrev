@@ -24,7 +24,7 @@ for (const name of ["index.html", "settings.css", "settings.js"]) {
 }
 
 mkdirSync(bundledPluginsDestination, { recursive: true });
-for (const id of ["review", "github-issue", "custom-command", "annotation-workflow", "page-map"]) {
+for (const id of ["review", "ai", "firestore", "annotation-workflow", "page-map", "github-issue"]) {
   const pluginSource = fileURLToPath(new URL(`../plugins/${id}`, import.meta.url));
   const pluginDestination = path.join(bundledPluginsDestination, id);
   cpSync(pluginSource, pluginDestination, {

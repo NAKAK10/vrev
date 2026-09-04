@@ -1,0 +1,609 @@
+{
+  "schema_version": 1,
+  "local_state": [
+    {
+      "key": "draft_annotation_id",
+      "type": "string",
+      "default": "",
+      "max_length": 128,
+      "persist": false
+    },
+    {
+      "key": "draft_title",
+      "type": "string",
+      "default": "",
+      "max_length": 256,
+      "persist": false
+    },
+    {
+      "key": "draft_body",
+      "type": "text",
+      "default": "",
+      "max_length": 6000,
+      "persist": false
+    }
+  ],
+  "resources": [
+    {
+      "id": "issue-target",
+      "query": "issue.target",
+      "input": {},
+      "refresh": "event"
+    }
+  ],
+  "root": {
+    "type": "toolbar",
+    "props": {
+      "label": {
+        "literal": "GitHub Issue"
+      },
+      "overflow": {
+        "literal": "menu"
+      },
+      "variant": {
+        "literal": "issue-selection-mode"
+      }
+    },
+    "children": [
+      {
+        "id": "issue-node",
+        "type": "button",
+        "props": {
+          "label": {
+            "literal": "Issueノード"
+          },
+          "variant": {
+            "literal": "secondary"
+          }
+        },
+        "on": {
+          "click": [
+            {
+              "type": "selection.activate",
+              "mode": "node",
+              "on_commit": [
+                {
+                  "type": "resource.refresh",
+                  "resource": "issue-target"
+                },
+                {
+                  "type": "dialog.open",
+                  "dialog": "issue-request-dialog"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "issue-region",
+        "type": "button",
+        "props": {
+          "label": {
+            "literal": "Issue範囲"
+          },
+          "variant": {
+            "literal": "secondary"
+          }
+        },
+        "on": {
+          "click": [
+            {
+              "type": "selection.activate",
+              "mode": "region",
+              "on_commit": [
+                {
+                  "type": "resource.refresh",
+                  "resource": "issue-target"
+                },
+                {
+                  "type": "dialog.open",
+                  "dialog": "issue-request-dialog"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "issue-request-dialog",
+        "type": "dialog",
+        "props": {
+          "title": {
+            "literal": "AIでGitHub Issue案を作成"
+          },
+          "description": {
+            "literal": "選択した対象への簡潔な依頼を入力してください。AIパッケージで選択したAIがIssue案を作成します。"
+          },
+          "initial_focus": {
+            "literal": "issue-request"
+          },
+          "dismissible": {
+            "literal": true
+          },
+          "mobile_presentation": {
+            "literal": "fullscreen"
+          }
+        },
+        "children": [
+          {
+            "type": "form",
+            "props": {
+              "name": {
+                "literal": "issue-draft-request"
+              },
+              "submit_on_enter": {
+                "literal": false
+              }
+            },
+            "on": {
+              "submit": [
+                {
+                  "type": "command.execute",
+                  "command": "issue.draft",
+                  "input": {
+                    "anchor": {
+                      "slot_context": "/review/selection/anchor"
+                    },
+                    "request": {
+                      "form": "request"
+                    }
+                  },
+                  "pending": {
+                    "deduplicate": true
+                  },
+                  "on_start": [
+                    {
+                      "type": "dialog.close",
+                      "dialog": "issue-request-dialog"
+                    },
+                    {
+                      "type": "toast.show",
+                      "variant": "info",
+                      "message": {
+                        "literal": "AIがIssue案を作成しています（最大120秒）"
+                      }
+                    }
+                  ],
+                  "on_success": [
+                    {
+                      "type": "local.set",
+                      "path": "/draft_annotation_id",
+                      "value": {
+                        "result": "/annotation_id"
+                      }
+                    },
+                    {
+                      "type": "local.set",
+                      "path": "/draft_title",
+                      "value": {
+                        "result": "/title"
+                      }
+                    },
+                    {
+                      "type": "local.set",
+                      "path": "/draft_body",
+                      "value": {
+                        "result": "/body"
+                      }
+                    },
+                    {
+                      "type": "dialog.open",
+                      "dialog": "issue-create-dialog"
+                    }
+                  ],
+                  "on_error": [
+                    {
+                      "type": "dialog.open",
+                      "dialog": "issue-request-dialog"
+                    },
+                    {
+                      "type": "toast.show",
+                      "variant": "error",
+                      "message": {
+                        "error": "/message"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "children": [
+              {
+                "type": "stack",
+                "props": {
+                  "variant": {
+                    "literal": "issue-target"
+                  },
+                  "gap": {
+                    "literal": "none"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "issue-target-line"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "literal": "repo:"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "resource": "issue-target",
+                            "path": "/repo"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "issue-target-line"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "literal": "account:"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "resource": "issue-target",
+                            "path": "/account"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "issue-request",
+                "type": "textarea",
+                "props": {
+                  "name": {
+                    "literal": "request"
+                  },
+                  "label": {
+                    "literal": "依頼内容"
+                  },
+                  "placeholder": {
+                    "literal": "例：未対応時の案内を分かりやすくしてほしい"
+                  },
+                  "required": {
+                    "literal": true
+                  },
+                  "max_length": {
+                    "literal": 1000
+                  },
+                  "rows": {
+                    "literal": 4
+                  }
+                }
+              },
+              {
+                "type": "row",
+                "props": {
+                  "variant": {
+                    "literal": "dialog-actions"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "literal": "キャンセル"
+                      }
+                    },
+                    "on": {
+                      "click": [
+                        {
+                          "type": "dialog.close",
+                          "dialog": "issue-request-dialog"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "literal": "Issue案を生成"
+                      },
+                      "variant": {
+                        "literal": "primary"
+                      },
+                      "type": {
+                        "literal": "submit"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "issue-create-dialog",
+        "type": "dialog",
+        "props": {
+          "title": {
+            "literal": "GitHub Issue案を確認"
+          },
+          "description": {
+            "literal": "AIが生成したタイトルと本文を編集し、内容を確認してから明示的に作成してください。"
+          },
+          "initial_focus": {
+            "literal": "issue-title"
+          },
+          "dismissible": {
+            "literal": true
+          },
+          "mobile_presentation": {
+            "literal": "fullscreen"
+          }
+        },
+        "children": [
+          {
+            "type": "form",
+            "props": {
+              "name": {
+                "literal": "issue-create"
+              },
+              "submit_on_enter": {
+                "literal": false
+              }
+            },
+            "on": {
+              "submit": [
+                {
+                  "type": "command.execute",
+                  "command": "issue.create",
+                  "input": {
+                    "annotation_id": {
+                      "local": "/draft_annotation_id"
+                    },
+                    "title": {
+                      "form": "title"
+                    },
+                    "body": {
+                      "form": "body"
+                    }
+                  },
+                  "pending": {
+                    "deduplicate": true
+                  },
+                  "on_success": [
+                    {
+                      "type": "dialog.close",
+                      "dialog": "issue-create-dialog"
+                    },
+                    {
+                      "type": "resource.refresh",
+                      "resource": "issues"
+                    },
+                    {
+                      "type": "toast.show",
+                      "variant": "success",
+                      "message": {
+                        "literal": "GitHubにIssueを追加しました"
+                      }
+                    }
+                  ],
+                  "on_error": [
+                    {
+                      "type": "toast.show",
+                      "variant": "error",
+                      "message": {
+                        "error": "/message"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "children": [
+              {
+                "type": "stack",
+                "props": {
+                  "variant": {
+                    "literal": "issue-target"
+                  },
+                  "gap": {
+                    "literal": "none"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "issue-target-line"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "literal": "repo:"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "resource": "issue-target",
+                            "path": "/repo"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "row",
+                    "props": {
+                      "variant": {
+                        "literal": "issue-target-line"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "literal": "account:"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "props": {
+                          "text": {
+                            "resource": "issue-target",
+                            "path": "/account"
+                          },
+                          "variant": {
+                            "literal": "form-help"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "issue-title",
+                "type": "input",
+                "props": {
+                  "name": {
+                    "literal": "title"
+                  },
+                  "label": {
+                    "literal": "タイトル"
+                  },
+                  "value": {
+                    "local": "/draft_title"
+                  },
+                  "required": {
+                    "literal": true
+                  },
+                  "max_length": {
+                    "literal": 256
+                  }
+                }
+              },
+              {
+                "id": "issue-body",
+                "type": "textarea",
+                "props": {
+                  "name": {
+                    "literal": "body"
+                  },
+                  "label": {
+                    "literal": "本文"
+                  },
+                  "value": {
+                    "local": "/draft_body"
+                  },
+                  "required": {
+                    "literal": true
+                  },
+                  "max_length": {
+                    "literal": 6000
+                  },
+                  "rows": {
+                    "literal": 12
+                  }
+                }
+              },
+              {
+                "type": "row",
+                "props": {
+                  "variant": {
+                    "literal": "dialog-actions"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "literal": "キャンセル"
+                      }
+                    },
+                    "on": {
+                      "click": [
+                        {
+                          "type": "dialog.close",
+                          "dialog": "issue-create-dialog"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "button",
+                    "props": {
+                      "label": {
+                        "literal": "GitHubにIssueを作成"
+                      },
+                      "variant": {
+                        "literal": "primary"
+                      },
+                      "type": {
+                        "literal": "submit"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

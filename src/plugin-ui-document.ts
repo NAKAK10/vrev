@@ -55,7 +55,7 @@ const COMPONENT_PROPS: Readonly<Record<string, readonly string[]>> = {
   dialog: ["open", "title", "description", "initial_focus", "return_focus", "dismissible", "mobile_presentation", "busy"],
   "confirmation-dialog": ["open", "title", "message", "confirm_label", "cancel_label", "variant", "initial_focus", "return_focus", "busy"],
   "toast-region": ["label"],
-  disclosure: ["label", "expanded", "disabled"],
+  disclosure: ["label", "expanded", "disabled", "attention_key", "attention_value"],
   "live-status": ["message", "value", "variant", "politeness"],
   "target-stage": ["target", "target_kind", "trust_mode", "viewport_mode", "viewport_width", "viewport_height", "selection_mode", "enabled"],
   "annotation-mark-layer": ["marks", "selected_id", "resolved_policy", "stale_policy", "enabled"],
@@ -143,8 +143,9 @@ function binding(value: unknown, label: string): void {
   const tags = Object.keys(item);
   if (tags.length === 0) throw new Error(`${label} must be a binding`);
   if ("resource" in item) {
-    exactKeys(item, ["resource", "path"], label);
+    exactKeys(item, ["resource", "plugin", "path"], label);
     identifier(item.resource, `${label}.resource`);
+    if (item.plugin !== undefined) identifier(item.plugin, `${label}.plugin`);
     if (item.path !== undefined) jsonPointer(item.path, `${label}.path`);
     return;
   }
@@ -153,6 +154,10 @@ function binding(value: unknown, label: string): void {
   const source = item[tag];
   if (tag === "literal") {
     assertJsonSafe(source, `${label}.literal`);
+    return;
+  }
+  if (tag === "generated") {
+    if (source !== "uuid" && source !== "timestamp") throw new Error(`${label}.generated must be uuid or timestamp`);
     return;
   }
   if (["local", "event", "item", "slot", "slot_context", "slot-context", "result", "error", "command"].includes(tag)) {
@@ -261,9 +266,46 @@ function instruction(value: unknown, label: string, depth: number): void {
       exactKeys(item, ["type", "dialog"], label); if (item.dialog !== undefined) identifier(item.dialog, `${label}.dialog`); break;
     case "resource.refresh":
       exactKeys(item, ["type", "resource"], label); identifier(item.resource, `${label}.resource`); break;
+    case "resource.optimistic-append":
+      exactKeys(item, ["type", "resource", "collection_path", "match_path", "match", "target_path", "value"], label);
+      identifier(item.resource, `${label}.resource`);
+      jsonPointer(item.collection_path, `${label}.collection_path`);
+      jsonPointer(item.match_path, `${label}.match_path`);
+      binding(item.match, `${label}.match`);
+      jsonPointer(item.target_path, `${label}.target_path`);
+      bindingMap(item.value, `${label}.value`);
+      break;
+    case "resource.optimistic-patch":
+      exactKeys(item, ["type", "plugin", "resource", "collection_path", "match_path", "match", "value", "remove_when", "decrement_paths"], label);
+      if (item.plugin !== undefined) identifier(item.plugin, `${label}.plugin`);
+      identifier(item.resource, `${label}.resource`);
+      jsonPointer(item.collection_path, `${label}.collection_path`);
+      jsonPointer(item.match_path, `${label}.match_path`);
+      binding(item.match, `${label}.match`);
+      bindingMap(item.value, `${label}.value`);
+      if (item.remove_when !== undefined) predicate(item.remove_when, `${label}.remove_when`);
+      if (item.decrement_paths !== undefined) {
+        if (!Array.isArray(item.decrement_paths) || item.decrement_paths.length > 16) throw new Error(`${label}.decrement_paths is invalid`);
+        item.decrement_paths.forEach((entry, index) => jsonPointer(entry, `${label}.decrement_paths[${index}]`));
+      }
+      break;
+    case "resource.optimistic-remove":
+      exactKeys(item, ["type", "plugin", "resource", "collection_path", "match_path", "match", "decrement_paths"], label);
+      if (item.plugin !== undefined) identifier(item.plugin, `${label}.plugin`);
+      identifier(item.resource, `${label}.resource`);
+      jsonPointer(item.collection_path, `${label}.collection_path`);
+      jsonPointer(item.match_path, `${label}.match_path`);
+      binding(item.match, `${label}.match`);
+      if (item.decrement_paths !== undefined) {
+        if (!Array.isArray(item.decrement_paths) || item.decrement_paths.length > 16) throw new Error(`${label}.decrement_paths is invalid`);
+        item.decrement_paths.forEach((entry, index) => jsonPointer(entry, `${label}.decrement_paths[${index}]`));
+      }
+      break;
     case "command.execute": {
-      exactKeys(item, ["type", "command", "input", "expected_revision", "pending", "on_success", "on_error", "on_settled"], label);
+      exactKeys(item, ["type", "plugin", "command", "when", "input", "expected_revision", "pending", "on_start", "on_success", "on_error", "on_settled"], label);
+      if (item.plugin !== undefined) identifier(item.plugin, `${label}.plugin`);
       identifier(item.command, `${label}.command`);
+      if (item.when !== undefined) predicate(item.when, `${label}.when`);
       if (item.input === undefined) throw new Error(`${label}.input is required`);
       bindingMap(item.input, `${label}.input`);
       if (item.expected_revision !== undefined) binding(item.expected_revision, `${label}.expected_revision`);
@@ -273,9 +315,15 @@ function instruction(value: unknown, label: string, depth: number): void {
         if (pending.disable !== undefined) identifier(pending.disable, `${label}.pending.disable`);
         if (pending.deduplicate !== undefined && typeof pending.deduplicate !== "boolean") throw new Error(`${label}.pending.deduplicate must be boolean`);
       }
-      for (const branch of ["on_success", "on_error", "on_settled"] as const) if (item[branch] !== undefined) instructions(item[branch], `${label}.${branch}`, depth + 1);
+      for (const branch of ["on_start", "on_success", "on_error", "on_settled"] as const) if (item[branch] !== undefined) instructions(item[branch], `${label}.${branch}`, depth + 1);
       break;
     }
+    case "selection.activate":
+      exactKeys(item, ["type", "mode", "on_commit"], label);
+      if (item.mode !== "node" && item.mode !== "region") throw new Error(`${label}.mode must be node or region`);
+      if (item.on_commit === undefined) throw new Error(`${label}.on_commit is required`);
+      instructions(item.on_commit, `${label}.on_commit`, depth + 1);
+      break;
     case "target.focus":
       exactKeys(item, ["type", "target", "anchor", "annotation_id", "restore_context"], label);
       if (item.target !== undefined) binding(item.target, `${label}.target`);

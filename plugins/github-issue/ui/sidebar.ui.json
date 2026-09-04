@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "local_state": [
+    { "key": "issues_open", "type": "boolean", "default": true, "persist": true, "schema_version": 1 },
+    { "key": "hidden_filters", "type": "bounded-set", "default": [], "max_items": 64, "persist": true, "schema_version": 1 }
+  ],
+  "resources": [
+    { "id": "issues", "query": "issues.list", "input": { "hidden": { "local": "/hidden_filters" } }, "refresh": "event", "dependency_policy": "immediate" },
+    { "id": "issue-target", "query": "issue.target", "input": {}, "refresh": "event" }
+  ],
+  "root": {
+    "type": "disclosure",
+    "props": { "label": { "literal": "GitHub Issues" }, "expanded": { "local": "/issues_open" }, "variant": { "literal": "sidebar-issues" }, "attention_key": { "literal": "github-issues" }, "attention_value": { "resource": "issues", "path": "/latest_id" } },
+    "on": { "toggle": [{ "type": "local.set", "path": "/issues_open", "value": { "event": "/expanded" } }] },
+    "children": [
+      { "type": "count", "props": { "value": { "resource": "issues", "path": "/total" }, "label": { "literal": "Issues" } } },
+      { "type": "checkbox-group", "props": { "label": { "literal": "状態で絞り込む" }, "value": { "local": "/hidden_filters" }, "inverted": { "literal": true }, "options": { "resource": "issues", "path": "/filters" } } },
+      { "type": "list", "props": { "label": { "literal": "GitHub Issue一覧" }, "empty_message": { "literal": "作成したIssueはまだありません。" }, "variant": { "literal": "issue-list" } }, "children": [
+        { "type": "panel", "props": { "variant": { "literal": "issue-card" }, "aria_label": { "item": "/title" } }, "repeat": { "source": { "resource": "issues", "path": "/items" }, "key": { "item": "/id" } }, "children": [
+          { "type": "row", "children": [
+            { "type": "heading", "props": { "text": { "item": "/title" }, "level": { "literal": 3 } } },
+            { "type": "status", "props": { "value": { "item": "/filter_id" }, "label": { "item": "/status_label" }, "tone": { "item": "/status_tone" } } }
+          ] },
+          { "type": "text", "props": { "text": { "item": "/request" }, "variant": { "literal": "form-help" } } },
+          { "type": "row", "props": { "variant": { "literal": "issue-card-actions" } }, "children": [
+            { "type": "button", "props": { "label": { "literal": "対象を表示" } }, "on": { "click": [{ "type": "target.focus", "target": { "item": "/page_path" }, "anchor": { "item": "/anchor" }, "annotation_id": { "item": "/id" }, "restore_context": true }] } },
+            { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "retry" }] }, "props": { "label": { "literal": "再作成" }, "variant": { "literal": "primary" } }, "on": { "click": [
+              {
+                "type": "command.execute",
+                "command": "issue.draft.retry",
+                "input": { "annotation_id": { "item": "/id" } },
+                "pending": { "deduplicate": true },
+                "on_start": [
+                  { "type": "toast.show", "variant": "info", "message": { "literal": "AIがIssue案を再作成しています（最大120秒）" } }
+                ],
+                "on_success": [
+                  { "type": "resource.refresh", "resource": "issues" },
+                  { "type": "dialog.open", "dialog": "issue-confirm-dialog" }
+                ],
+                "on_error": [
+                  { "type": "toast.show", "variant": "error", "message": { "error": "/message" } }
+                ]
+              }
+            ] } },
+            { "type": "button", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "drafted" }] }, "props": { "label": { "literal": "確認する" }, "variant": { "literal": "primary" } }, "on": { "click": [
+              { "type": "dialog.open", "dialog": "issue-confirm-dialog" }
+            ] } },
+            { "type": "link", "when": { "eq": [{ "item": "/filter_id" }, { "literal": "resolved" }] }, "props": { "label": { "literal": "Issueを開く" }, "href": { "item": "/url" }, "external": { "literal": true } } }
+          ] },
+          {
+            "id": "issue-confirm-dialog",
+            "type": "dialog",
+            "props": {
+              "title": { "literal": "GitHub Issue案を確認" },
+              "description": { "literal": "AIが生成したタイトルと本文を編集し、内容を確認してから明示的に作成してください。" },
+              "initial_focus": { "literal": "issue-confirm-title" },
+              "dismissible": { "literal": true },
+              "mobile_presentation": { "literal": "fullscreen" }
+            },
+            "children": [
+              {
+                "type": "form",
+                "props": { "name": { "literal": "issue-confirm" }, "submit_on_enter": { "literal": false } },
+                "on": {
+                  "submit": [
+                    {
+                      "type": "command.execute",
+                      "command": "issue.create",
+                      "input": {
+                        "annotation_id": { "item": "/id" },
+                        "title": { "form": "title" },
+                        "body": { "form": "body" }
+                      },
+                      "pending": { "deduplicate": true },
+                      "on_success": [
+                        { "type": "dialog.close", "dialog": "issue-confirm-dialog" },
+                        { "type": "resource.refresh", "resource": "issues" },
+                        { "type": "toast.show", "variant": "success", "message": { "literal": "GitHubにIssueを追加しました" } }
+                      ],
+                      "on_error": [
+                        { "type": "toast.show", "variant": "error", "message": { "error": "/message" } }
+                      ]
+                    }
+                  ]
+                },
+                "children": [
+                  { "type": "stack", "props": { "variant": { "literal": "issue-target" }, "gap": { "literal": "none" } }, "children": [
+                    { "type": "row", "props": { "variant": { "literal": "issue-target-line" } }, "children": [
+                      { "type": "text", "props": { "text": { "literal": "repo:" }, "variant": { "literal": "form-help" } } },
+                      { "type": "text", "props": { "text": { "resource": "issue-target", "path": "/repo" }, "variant": { "literal": "form-help" } } }
+                    ] },
+                    { "type": "row", "props": { "variant": { "literal": "issue-target-line" } }, "children": [
+                      { "type": "text", "props": { "text": { "literal": "account:" }, "variant": { "literal": "form-help" } } },
+                      { "type": "text", "props": { "text": { "resource": "issue-target", "path": "/account" }, "variant": { "literal": "form-help" } } }
+                    ] }
+                  ] },
+                  { "id": "issue-confirm-title", "type": "input", "props": { "name": { "literal": "title" }, "label": { "literal": "タイトル" }, "value": { "item": "/title" }, "required": { "literal": true }, "max_length": { "literal": 256 } } },
+                  { "id": "issue-confirm-body", "type": "textarea", "props": { "name": { "literal": "body" }, "label": { "literal": "本文" }, "value": { "item": "/body" }, "required": { "literal": true }, "max_length": { "literal": 6000 }, "rows": { "literal": 12 } } },
+                  { "type": "row", "props": { "variant": { "literal": "dialog-actions" } }, "children": [
+                    { "type": "button", "props": { "label": { "literal": "キャンセル" } }, "on": { "click": [{ "type": "dialog.close", "dialog": "issue-confirm-dialog" }] } },
+                    { "type": "button", "props": { "label": { "literal": "GitHubにIssueを作成" }, "variant": { "literal": "primary" }, "type": { "literal": "submit" } } }
+                  ] }
+                ]
+              }
+            ]
+          }
+        ] }
+      ] }
+    ]
+  }
+}

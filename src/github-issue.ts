@@ -6,9 +6,9 @@ import {
 } from "../plugins/github-issue/server/index.js";
 import { loadPluginIssueProvider } from "./plugin-runtime.js";
 
-/** @deprecated Import from @nakak10/visual-review/github-issue or use IssueTaskCapabilityV1. */
+/** @deprecated Import from @visual-review/github-issue or use IssueTaskCapabilityV1. */
 export { createIssueTaskCapability, normalizeGitHubIssueDraft };
-/** @deprecated Import the plugin-owned types from @nakak10/visual-review/github-issue. */
+/** @deprecated Import the plugin-owned types from @visual-review/github-issue. */
 export type { GitHubIssueDraft, GitHubIssueResult };
 
 /** @deprecated Install the github-issue plugin and use its IssueTaskCapabilityV1. */

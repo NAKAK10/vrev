@@ -1,5 +1,5 @@
 {
-  "name": "@nakak10/visual-review",
+  "name": "@visual-review/core",
   "version": "1.3.0",
   "private": false,
   "description": "Local visual review and annotation workflow for AI-assisted UI fixes",
@@ -8,10 +8,11 @@
   "files": [
     "dist/src",
     "dist/plugins/review",
+    "dist/plugins/ai",
+    "dist/plugins/firestore",
     "dist/plugins/annotation-workflow",
-    "dist/plugins/github-issue",
-    "dist/plugins/custom-command",
-    "dist/plugins/page-map"
+    "dist/plugins/page-map",
+    "dist/plugins/github-issue"
   ],
   "bin": {
     "visual-review": "dist/src/cli.js"
@@ -21,8 +22,8 @@
     "url": "git+https://github.com/NAKAK10/visual-review.git"
   },
   "publishConfig": {
-    "access": "restricted",
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "engines": {
     "node": ">=20"
@@ -30,10 +31,12 @@
   "exports": {
     ".": "./dist/src/index.js",
     "./review": "./dist/plugins/review/server/review-capability.js",
+    "./ai": "./dist/plugins/ai/server/index.js",
     "./annotation-workflow": "./dist/plugins/annotation-workflow/server/index.js",
     "./github-issue": "./dist/plugins/github-issue/server/index.js",
     "./page-map": "./dist/plugins/page-map/server/index.js",
-    "./process-supervisor": "./dist/src/process-supervisor.js"
+    "./process-supervisor": "./dist/src/process-supervisor.js",
+    "./runner-registry": "./dist/src/runner-registry.js"
   },
   "types": "./dist/src/index.d.ts",
   "scripts": {
@@ -42,7 +45,7 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "pretest": "npm run check:secrets",
     "test": "npm run build && node --test dist/test/*.test.js && npm run test:plugins",
-    "test:plugins": "npm --prefix plugins/firebase-storage test && npm --prefix plugins/custom-command test && npm --prefix plugins/page-map test",
+    "test:plugins": "npm --prefix plugins/firestore test && npm --prefix plugins/ai test && npm --prefix plugins/page-map test",
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
   },
   "devDependencies": {

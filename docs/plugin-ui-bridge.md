@@ -130,16 +130,7 @@ hostは自分のextension pointだけを`slot` nodeで配置できる。`slot` n
 
 ### contributor側
 
-manifest `ui.contributions[].slot`にextension point idを指定する。documentからはhost contextを`{ "slot_context": "/path" }`、host formを`{ "form": name }`で読み、完了時は`slot.emit`でhostへ通知する。
-
-```json
-{ "type": "command.execute", "command": "issue.request",
-  "input": { "anchor": { "slot_context": "/anchor" }, "comment": { "form": "comment" } },
-  "on_success": [
-    { "type": "slot.emit", "event": "completed", "payload": { "annotation_id": { "result": "/annotation_id" } } },
-    { "type": "toast.show", "variant": "success", "message": { "literal": "GitHub Issueの作成依頼を注釈として保存しました。" } }
-  ] }
-```
+manifest `ui.contributions[].slot`にextension point idを指定する。documentからはhost contextを`{ "slot_context": "/path" }`、host formを`{ "form": name }`で読み、完了時は`slot.emit`でhostへ通知する。GitHub Issueはこのextension pointを利用せず、独立した選択tool、modal、Sidebar contributionから`issue.draft`と`issue.create`を実行する。
 
 ### Coreの検証
 
@@ -157,13 +148,11 @@ manifest `ui.contributions[].slot`にextension point idを指定する。documen
 
 ### 注釈cardの状態ラベル
 
-annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI対応済み・解決済み）だけを知り、Issueなどの外部taskの概念を持たない。外部taskを所有するplugin（同梱では`github-issue`）は`issue-task` capability（`WorkflowTaskCapabilityV1`）の任意method `label(annotation)`で`{ text, tone }`を返し、annotation-workflowは`annotations.list`の`status_label`/`status_tone`としてcardのbadgeへ反映する。`tone`は`pending`/`active`/`ready`/`done`/`failed`のいずれかで、`text`は32文字以内。`null`または不正な値なら既定labelへfallbackする。github-issueは「Issueラフ作成中」「AI Issueラフ作成中」「Issueラフ作成失敗」「Issueラフ確認待ち」「Issue作成済み」を返し、pluginを無効化するとcardは既定labelに戻る。Issue固有のfield（`issue_state`、`issue_url`）はextension point contextの`additionalProperties: true`経由でcontributorだけが読む。
-
-同じcapabilityの任意method `filters()`は注釈一覧の絞り込みchipに追加する分類（`{ id, label }`、idは`^[a-z][a-z0-9-]{0,31}$`でworkflow statusと衝突不可、最大16件）を返し、`filter(annotation)`はその注釈が属する分類idを返す。分類が返された注釈はstatus chipではなくその分類chipで絞り込まれる。`annotations.list`は既定5 status + task分類を`filters`として返し、sidebarのchipは`hidden`（未checkのid集合）で絞り込む。github-issueはbadgeと同じ5つのcategoryをchipとして返す。badgeとchipを単一のcategory表から導出することで、表示labelと絞り込みchipが常に1対1で一致する。
+annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI対応済み・解決済み）だけを表示し、Issueなどの外部taskの概念を持たない。GitHub Issueは独立したSidebar Accordionで作成済みIssueを表示する。新しいIssue draftは注釈として保存せず、作成成功後だけ解決済みrecordとして記録する。
 
 ### 型
 
-plugin開発者は`@nakak10/visual-review`から`VisualReviewPluginManifest`、`PluginUiExtensionPointV1`、`PluginUiContributionV1`、`PluginUiDocumentV1`、`PluginUiSurfaceExtensionPointV1`、`PluginServerProviderV1`、`PluginBridgeContractV1`をimportできる。`visual-review plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
+plugin開発者は`@visual-review/plugin-sdk`からmanifest、UI contribution、server lifecycle、bridge、capabilityのversioned contractをimportできる。Core runtime helperが必要なlegacy integrationだけ`@visual-review/core`を利用する。`visual-review plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
 
 ## 3. Limits
 
@@ -298,7 +287,7 @@ Allowed use:
 - viewport/mode
 - filters
 - reply/comment draft
-- runner selection
+- AI package settings内のCLI selection
 - max parallel
 - auto-run preference
 
@@ -325,6 +314,9 @@ Allowed:
 - `dialog.open`
 - `dialog.close`
 - `resource.refresh`
+- `resource.optimistic-append`
+- `resource.optimistic-patch`
+- `resource.optimistic-remove`
 - `command.execute`
 - `target.focus`
 - `target.reload`
@@ -358,6 +350,8 @@ Each instruction is a tagged exact-schema object. Example:
 }
 ```
 
+`resource.optimistic-*`はcommandの`on_start`で既存resource projectionだけを一時更新する。失敗時は`on_error`から`resource.refresh`してauthoritative stateへ戻す。
+
 Query/command name、input/output schema、permission、resourceはserver moduleとは別のstatic bridge contractに宣言する。Instruction sequencingはarray order、failure時は明示したbranchだけを実行する。Command/result/error/event scopeはJSON-safe read-only bindingとしてbranch中だけ利用できる。Form controlsはexplicit two-way local/form bindingを持ち、resource stateは`idle | loading | ready | stale | error`、command stateは`idle | pending | succeeded | failed`をCoreが提供する。
 
 Forbidden:
@@ -384,6 +378,8 @@ Additional semantic controls:
 - `legend`
 - `disclosure`
 - `live-status`
+
+`disclosure`は任意の`attention_key`とresource由来の`attention_value`を受け取れる。Baseは閉じたsectionの値が最後に開いた時点から変化した場合だけ未確認dotを表示し、headerへdomain notification UIを追加しない。
 
 Multi-selectはbounded setとして扱い、empty selection/default/reset policyをdeclarationに必須とする。
 
@@ -663,8 +659,8 @@ Browser `required`、`maxlength`、disabled controlはUX補助でありsecurity 
 |---|---|---|
 | plugin enabled | Core `.vreview/plugin-settings.json` revision/CAS | Core plugin list toggle |
 | manifest configuration | Core `.vreview/plugin-settings.json`; secret value禁止 | selected plugin `settings.detail` |
-| auto-run/max parallel/runner selection | annotation-workflow server（workspace non-secret settings） | annotation-workflow `settings.detail` |
-| external runner definition/verified state | custom-command server registry | custom-command `settings.detail` |
+| auto-run/max parallel | annotation-workflow server（workspace non-secret settings） | annotation-workflow `settings.detail` |
+| CLI selection / external AI command definition and verified state | AI server package | AI `settings.detail` |
 | transient filter/viewport/drafts | Core renderer local-state namespace | owning contribution |
 | credentials | environment変数（値をCoreへ渡さない）、またはCore管理のcredential store `.vreview/credentials/<plugin-id>.json`（directory mode `0700`、file mode `0600`、`.vreview/plugin-settings.json`や`.vreview/.gitignore`外へ漏らさない）; `PUT`/`DELETE /api/settings/plugins/:id/credentials/:key`で登録・削除 | selected plugin `settings.detail`内のcredential field UI（presence/updated_at/fingerprintのみ表示、値は表示・保存しない） |
 
@@ -676,7 +672,7 @@ Core publishes a reserved static `host.settings/1` bridge contract:
 - `plugin-settings.update-enabled`
 - `plugin-settings.update-configuration`
 
-These operations own `.vreview/plugin-settings.json` revision/CAS and exact manifest-configuration validation. A `settings.detail` document may call them through the same renderer instruction path without a plugin server contribution; Core assigns the selected plugin ID from slot context and rejects a body-supplied override. Plugin-specific save/test/retest/delete（workflow settings、runner registry等）はeach plugin static bridge contractでpermission付きcommandとして宣言する。これによりCore persistence authorityを維持しつつCore ID-specific logicを作らない。
+These operations own `.vreview/plugin-settings.json` revision/CAS and exact manifest-configuration validation. A `settings.detail` document may call them through the same renderer instruction path without a plugin server contribution; Core assigns the selected plugin ID from slot context and rejects a body-supplied override. Plugin-specific save/test/retest/delete（workflow settings、AI packageのexternal-command registry等）はeach plugin static bridge contractでpermission付きcommandとして宣言する。これによりCore persistence authorityを維持しつつCore ID-specific logicを作らない。
 
 ## 20. Permissions
 
@@ -688,8 +684,8 @@ Initial capability permissions:
 - `jobs.enqueue`
 - `settings.read`
 - `settings.write`
-- `runner.resolve`
-- `runner.manage`
+- `ai.invoke`
+- `ai.manage`
 - `issue.create`
 - `external.open-url`
 
@@ -721,7 +717,7 @@ Mitigations:
 - session capability + origin check + CSRF protection
 - idempotency/revision
 - route-level permission
-- server-side runner ID registry
+- AI package-owned method resolution and external-command registry
 - path/digest validation
 - stable redacted errors
 - public target script blocking
@@ -742,6 +738,6 @@ Residual risk: Node server pluginはuser権限で動くtrusted code。真の隔�
 9. Unsafe Markdown/linkをtextとして描画。
 10. Disabled pluginはschema/action/eventを公開しない。
 11. Raw executable/custom templateをjob actionで拒否。
-12. Unverified runner IDを拒否。
+12. Feature requestのAI選択値と未検証external commandを拒否。
 13. SSE overflowをsilent dropしない。
 14. Plugin errorにstack/absolute path/secretを含めない。

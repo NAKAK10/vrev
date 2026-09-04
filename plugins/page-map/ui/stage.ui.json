@@ -10,10 +10,10 @@
     "children": [
       { "type": "row", "props": { "variant": { "literal": "page-map-header" } }, "children": [
         { "type": "heading", "props": { "text": { "literal": "画面遷移マップ" }, "level": { "literal": 2 } } },
-        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/pages" }, "label": { "literal": "ページ" } } },
-        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/edges" }, "label": { "literal": "遷移" } } },
-        { "type": "count", "props": { "value": { "resource": "page-map", "path": "/stats/unknown" }, "label": { "literal": "解析できなかった遷移" } } },
-        { "type": "button", "props": { "label": { "literal": "再解析" } }, "on": { "click": [
+        { "type": "count", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "ready" }] }, "props": { "value": { "resource": "page-map", "path": "/stats/pages" }, "label": { "literal": "ページ" } } },
+        { "type": "count", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "ready" }] }, "props": { "value": { "resource": "page-map", "path": "/stats/edges" }, "label": { "literal": "遷移" } } },
+        { "type": "count", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "ready" }] }, "props": { "value": { "resource": "page-map", "path": "/stats/unknown" }, "label": { "literal": "解析できなかった遷移" } } },
+        { "type": "button", "when": { "in": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": ["ready", "empty", "incomplete"] }] }, "props": { "label": { "literal": "再解析" } }, "on": { "click": [
           { "type": "command.execute", "command": "page-map.refresh", "input": {}, "pending": { "disable": "page-map-refresh", "deduplicate": true },
             "on_success": [
               { "type": "resource.refresh", "resource": "page-map" },
@@ -24,9 +24,16 @@
             ] }
         ] }, "id": "page-map-refresh" }
       ] },
-      { "type": "text", "props": { "text": { "item": "" }, "tone": { "literal": "warning" } }, "repeat": { "source": { "resource": "page-map", "path": "/warnings" }, "key": { "item": "" } } },
-      { "type": "empty-state", "when": { "eq": [{ "resource": "page-map", "path": "/stats/pages" }, { "literal": 0 }] }, "props": { "title": { "literal": "解析できるページがありません" }, "message": { "literal": "対象の公開directory配下にHTMLファイルが見つかりませんでした。" } } },
-      { "id": "page-map-canvas", "type": "panel", "props": { "variant": { "literal": "page-map-canvas" }, "aria_label": { "literal": "遷移グラフ" } }, "children": [] }
+      { "type": "text", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "ready" }] }, "props": { "text": { "item": "" }, "tone": { "literal": "warning" } }, "repeat": { "source": { "resource": "page-map", "path": "/warnings" }, "key": { "item": "" } } },
+      { "type": "empty-state", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "empty" }] }, "props": { "variant": { "literal": "page-map-state" }, "title": { "literal": "HTMLファイルがありません" }, "message": { "literal": "対象の公開ディレクトリ配下に .html / .htm が見つかりませんでした。出力先を確認してから再解析してください。" } } },
+      { "type": "empty-state", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "unsupported" }] }, "props": { "variant": { "literal": "page-map-state-unsupported" }, "title": { "literal": "この対象は画面遷移マップに対応していません" }, "message": { "literal": "現在は静的HTMLのみ解析できます。ビルド後の .html / .htm を対象に指定してください。" } } },
+      { "type": "empty-state", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "incomplete" }] }, "props": { "variant": { "literal": "page-map-state-error" }, "title": { "literal": "解析を完了できませんでした" }, "message": { "literal": "対象ディレクトリを読み取れないか、解析の制限に達しました。出力先とアクセス権を確認して再解析してください。" } } },
+      { "type": "empty-state", "when": { "not": { "exists": { "resource": "page-map", "path": "/analysis_state" } } }, "props": { "variant": { "literal": "page-map-state-error" }, "title": { "literal": "画面遷移マップを取得できませんでした" }, "message": { "literal": "一時的な問題が発生しました。再解析をお試しください。" } }, "children": [
+        { "id": "page-map-error-refresh", "type": "button", "props": { "label": { "literal": "再解析" } }, "on": { "click": [
+          { "type": "command.execute", "command": "page-map.refresh", "input": {}, "pending": { "disable": "page-map-error-refresh", "deduplicate": true }, "on_success": [{ "type": "resource.refresh", "resource": "page-map" }], "on_error": [{ "type": "toast.show", "variant": "error", "message": { "error": "/message" } }] }
+        ] } }
+      ] },
+      { "id": "page-map-canvas", "type": "panel", "when": { "eq": [{ "resource": "page-map", "path": "/analysis_state" }, { "literal": "ready" }] }, "props": { "variant": { "literal": "page-map-canvas" }, "aria_label": { "literal": "遷移グラフ" } }, "children": [] }
     ]
   }
 }

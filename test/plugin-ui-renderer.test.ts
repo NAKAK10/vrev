@@ -55,7 +55,7 @@ test("review.main is deprecated and dropped with an UNAVAILABLE diagnostic even 
   assert.equal(surface.diagnostics.some((diagnostic) => diagnostic.code === "UNAVAILABLE" && /review\.stage/.test(diagnostic.message)), true);
 });
 
-test("disabled workflow contribution is absent and expands the target stage", async () => {
+test("disabled workflow leaves the independent Issue sidebar available", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
   const initial = loadPluginUiSurface(root);
@@ -65,12 +65,13 @@ test("disabled workflow contribution is absent and expands the target stage", as
     revision: pluginSettingsRevision(readPluginSettings(root)), enabled: false, configuration: {},
   }, root);
   const disabled = loadPluginUiSurface(root);
-  assert.equal(disabled.contributions.some(({ slot }) => slot === "review.sidebar"), false);
-  assert.equal(disabled.layout.sidebar, "absent");
-  assert.equal(disabled.layout.stage, "expanded");
+  assert.equal(disabled.contributions.some(({ plugin_id, slot }) => plugin_id === "annotation-workflow" && slot === "review.sidebar"), false);
+  assert.equal(disabled.contributions.some(({ plugin_id, slot }) => plugin_id === "github-issue" && slot === "review.sidebar"), true);
+  assert.equal(disabled.layout.sidebar, "present");
+  assert.equal(disabled.layout.stage, "split");
   assert.equal(typeof disabled.layout.revision, "string");
   assert.equal(disabled.layout.stage_switcher_position, "bottom-right");
-  assert.deepEqual(disabled.layout.sidebar_items, []);
+  assert.deepEqual(disabled.layout.sidebar_items.map(({ key }) => key), ["github-issue/issue-sidebar"]);
   assert.equal(disabled.layout.header_items.some((item) => item.key === "review/review-header"), true);
   assert.equal(disabled.layout.active_stage, "review/review-stage");
   assert.deepEqual(disabled.layout.stage_views.map((item) => item.key), ["review/review-stage", "page-map/page-map-stage"]);
@@ -81,6 +82,41 @@ test("renderer documents reject executable and unknown component properties", ()
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", props: { arbitrary: { literal: true } } } }), /unsupported field/);
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "text", props: { line_clamp: { literal: 3 } } } }), /unsupported field/);
   assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: Array.from({ length: 17 }, () => ({ type: "local.toggle", path: "/open" })) } } }), /at most 16/);
+  assert.doesNotThrow(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: [{ type: "selection.activate", mode: "node", on_commit: [{ type: "dialog.open", dialog: "editor" }] }] } } }));
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: [{ type: "selection.activate", mode: "browse", on_commit: [] }] } } }), /mode must be node or region/);
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: [{ type: "selection.activate", mode: "region" }] } } }), /on_commit is required/);
+});
+
+test("command start effects support validated dialog dismissal and declarative cross-plugin background work", () => {
+  assert.doesNotThrow(() => parsePluginUiDocument({
+    schema_version: 1,
+    root: {
+      type: "form",
+      on: { submit: [{
+        type: "command.execute", plugin: "worker", command: "work.start", when: { eq: [{ resource: "settings", plugin: "worker", path: "/enabled" }, { literal: true }] }, input: {},
+        on_start: [{ type: "dialog.close", dialog: "editor" }],
+      }] },
+    },
+  }));
+  assert.throws(() => parsePluginUiDocument({ schema_version: 1, root: { type: "button", on: { click: [{ type: "command.execute", command: "work", input: {}, on_start: [{ type: "unknown" }] }] } } }), /unsupported/);
+
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  assert.match(source, /if \(!node\.checkValidity\(\)\) \{ node\.reportValidity\(\); return; \}/);
+  assert.match(source, /await execute\(instruction\.on_start \|\| \[\], scope\)/);
+  assert.match(source, /const commandPlugin = instruction\.plugin \|\| scope\.plugin/);
+  assert.match(source, /resource\.optimistic-append/);
+  assert.match(source, /resource\.optimistic-patch/);
+  assert.match(source, /Object\.assign\(owner, Object\.fromEntries/);
+  assert.match(source, /Promise\.all\(invalidated\.map/);
+  assert.doesNotMatch(source, /autoRunNewAnnotation|scope\.plugin === "review" && instruction\.command === "annotation\.create"/);
+
+  const stage = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/stage.ui.json"), "utf8"));
+  const sidebar = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8"));
+  const text = JSON.stringify(stage);
+  assert.match(text, /"on_start":\[\{"type":"dialog\.close","dialog":"comment-dialog"\}\]/);
+  assert.match(text, /"plugin":"annotation-workflow","command":"jobs\.enqueue"/);
+  assert.match(JSON.stringify(sidebar), /"type":"resource\.optimistic-append"/);
+  assert.match(JSON.stringify(sidebar), /"type":"resource\.optimistic-patch"/);
 });
 
 test("browser runtime keeps declarative DOM Core-owned and mounts only declared plugin modules", () => {
@@ -188,6 +224,7 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.match(css, /\.vr-target-diagnostic-close[^}]*pointer-events: auto/s);
   assert.match(css, /\.vr-target-stage\[data-viewport="custom"\] iframe[^}]*max-width: none/s);
   assert.match(css, /custom-viewport-size/);
+  assert.match(css, /\.vr-toolbar\[data-variant="issue-selection-mode"\][^}]*border-radius/s);
   assert.doesNotMatch(css, /workflow-expandable|workflow-expanded|vr-line-clamp/);
   assert.match(css, /\.vr-node-hover-mark[^}]*border: 2px solid #2563eb/s);
   assert.match(css, /\.vr-annotation-mark\.is-preview[^}]*#7c3aed/s);
@@ -200,17 +237,22 @@ test("Core styles plugin documents through semantic renderer tokens", () => {
   assert.doesNotMatch(source, /style\.cssText|insertRule|adoptedStyleSheets/);
 });
 
-test("bundled review documents bind localized annotation content, filters, overlays, and scoped Issue dialogs", () => {
+test("bundled review and independent Issue documents bind selection, lists, and target focus", () => {
   const header = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/header.ui.json"), "utf8")) as unknown;
   const stage = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/review/ui/stage.ui.json"), "utf8")) as unknown;
   const rendererSource = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
   const reviewRuntime = readFileSync(path.join(process.cwd(), "plugins/review/ui/review.js"), "utf8");
-  const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
+  const sidebarText = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8").replace(/\s+/g, " ");
   const workflowRuntime = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.js"), "utf8");
   const workflowManifest = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/visual-review.plugin.json"), "utf8")) as { ui: { contributions: Array<{ id: string; browser_module?: string }> } };
-  const issueText = readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/issue.ui.json"), "utf8");
+  const issueHeader = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/header.ui.json"), "utf8")) as unknown;
+  const issueSidebar = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/sidebar.ui.json"), "utf8")) as unknown;
+  const issueText = JSON.stringify({ issueHeader, issueSidebar });
+  const aiSettingsText = readFileSync(path.join(process.cwd(), "plugins/ai/ui/settings.ui.json"), "utf8");
   assert.doesNotThrow(() => parsePluginUiDocument(header));
   assert.doesNotThrow(() => parsePluginUiDocument(stage));
+  assert.doesNotThrow(() => parsePluginUiDocument(issueHeader));
+  assert.doesNotThrow(() => parsePluginUiDocument(issueSidebar));
   const headerDocument = header as { local_state: Array<{ key: string; default: unknown; persist?: boolean }>; root: unknown };
   const stageDocument = stage as { root: unknown };
   assert.equal(headerDocument.local_state.find(({ key }) => key === "viewport_width")?.default, 1280);
@@ -242,9 +284,24 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(sidebarText, /"variant": \{ "literal": "annotation-target" \}/);
   assert.match(sidebarText, /"annotation_id": \{ "item": "\/id" \}/);
   assert.match(sidebarText, /"id": "force-resolve-dialog"/);
-  assert.match(issueText, /"id": "issue-dialog"/);
-  assert.match(issueText, /"label": \{ "literal": "キャンセル" \}/);
+  assert.match(issueText, /"id":"issue-request-dialog"/);
+  assert.match(issueText, /"id":"issue-create-dialog"/);
+  assert.match(issueText, /"command":"issue.draft"/);
+  assert.match(issueText, /"literal":"repo:"/);
+  assert.match(issueText, /"literal":"account:"/);
+  assert.match(issueText, /"type":"selection.activate","mode":"node","on_commit"/);
+  assert.match(issueText, /"type":"selection.activate","mode":"region","on_commit"/);
+  assert.match(issueText, /"variant":\{"literal":"issue-selection-mode"\}/);
+  assert.match(issueText, /"query":"issues.list"/);
+  assert.match(issueText, /"type":"target.focus"/);
+  assert.match(issueText, /"attention_key":\{"literal":"github-issues"\}/);
+  assert.doesNotMatch(issueText, /ai_method_id|method_id|ai-method/);
+  assert.doesNotMatch(sidebarText, /runner|method_id/);
+  assert.match(aiSettingsText, /"type": "select"/);
+  assert.match(aiSettingsText, /"path": "\/method_id"/);
+  assert.match(aiSettingsText, /"method_id": \{/);
   assert.match(rendererSource, /vr-selection-mode-button/);
+  assert.match(rendererSource, /selection\.trigger\?\.setAttribute\?\.\("aria-pressed", "true"\)/);
   assert.match(reviewRuntime, /function installCustomViewportFit\(root, stage, frame, layer\)/);
   assert.match(reviewRuntime, /Math\.min\(1, availableWidth \/ width, availableHeight \/ height\)/);
   assert.match(reviewRuntime, /frame\.style\.setProperty\("transform", `scale\(\$\{scale\}\)`\)/);
@@ -252,14 +309,16 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(reviewRuntime, /scaleAnnotationMarks\(layer, stage, frame, frameScale\)/);
   assert.match(rendererSource, /stage\.__target\?\.live_url \? new URL\(proxiedPath, stage\.__target\.live_url\)\.toString\(\)/);
   assert.match(rendererSource, /reviewSelection\.annotation_id = binding\(instruction\.annotation_id, scope\)/);
-  assert.match(rendererSource, /resourceStores\.get\("annotation-workflow:annotations"\)\?\.data\?\.items/);
+  assert.match(rendererSource, /Array\.isArray\(layer\.__marks\)/);
+  assert.doesNotMatch(rendererSource, /resourceStores\.get\("annotation-workflow:annotations"\)|issue_state/);
   assert.match(rendererSource, /anchor\?\.bounds \|\| anchor\?\.rect/);
   assert.match(rendererSource, /else if \(annotation\.anchor\?\.rect\)/);
   assert.match(rendererSource, /if \(status\) mark\.dataset\.status = status/);
   assert.match(rendererSource, /definition\.type === "panel" && eventName === "click"/);
-  assert.match(rendererSource, /resourceStores\.get\("annotation-workflow:workflow-settings"\)\?\.data/);
-  assert.match(rendererSource, /commands\/jobs\.enqueue/);
-  assert.match(rendererSource, /instruction\.command === "annotation\.create"\) await autoRunNewAnnotation\(scope\)/);
+  assert.match(JSON.stringify(stageDocument.root), /"plugin":"annotation-workflow","command":"jobs\.enqueue"/);
+  assert.match(JSON.stringify(stageDocument.root), /"resource":"workflow-settings","plugin":"annotation-workflow"/);
+  assert.match(rendererSource, /const commandPlugin = instruction\.plugin \|\| scope\.plugin/);
+  assert.doesNotMatch(rendererSource, /autoRunNewAnnotation/);
   assert.match(rendererSource, /node\.classList\.add\("is-clickable"\); node\.tabIndex = 0/);
   assert.match(rendererSource, /aria-keyshortcuts/);
   assert.match(reviewRuntime, /\{ v: "browse", n: "node", r: "region" \}/);
@@ -269,6 +328,31 @@ test("bundled review documents bind localized annotation content, filters, overl
   assert.match(reviewRuntime, /node\.setAttribute\("inert", ""\)/);
   assert.match(reviewRuntime, /if \(!doc\.documentElement\)/);
   assert.match(reviewRuntime, /window\.setTimeout\(install, 16\)/);
+});
+
+test("Base marks unseen updates on the owning sidebar disclosure instead of adding a header notification center", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  const css = readFileSync(path.join(process.cwd(), "src/ui/renderer.css"), "utf8");
+  const workflow = readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8");
+  assert.match(source, /visual-review\.disclosure-seen\/v1/);
+  assert.match(source, /has-unread-attention/);
+  assert.match(source, /if \(node\.open\) markDisclosureSeen\(node\)/);
+  assert.match(source, /node\.__committedOpen = node\.open/);
+  assert.match(source, /if \(node\.__committedOpen === node\.open\) return/);
+  assert.match(source, /previousStore\?\.data === undefined \? "loading" : "refreshing"/);
+  assert.match(source, /current\?\.data === undefined \? \{ state: "error", error \} : \{ \.\.\.current, state: "ready", refresh_error: error \}/);
+  assert.match(source, /await Promise\.all\(activeStageLoads\)/);
+  assert.doesNotMatch(source, /通知センター|review\.notifications|notificationButton/);
+  assert.match(css, /\.vr-attention-indicator/);
+  const workflowDocument = JSON.parse(workflow) as { root: { children: Array<{ props?: { attention_key?: { literal?: string } } }> } };
+  assert.deepEqual(workflowDocument.root.children.slice(0, 3).map(({ props }) => props?.attention_key?.literal), ["ai-jobs", "annotations", "history"]);
+});
+
+test("all default sidebar sections use the same Base disclosure primitive", () => {
+  const workflow = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/annotation-workflow/ui/sidebar.ui.json"), "utf8")) as { root: { children: Array<{ type: string }> } };
+  const issue = JSON.parse(readFileSync(path.join(process.cwd(), "plugins/github-issue/ui/sidebar.ui.json"), "utf8")) as { root: { type: string } };
+  assert.deepEqual(workflow.root.children.slice(0, 3).map(({ type }) => type), ["disclosure", "disclosure", "disclosure"]);
+  assert.equal(issue.root.type, "disclosure");
 });
 
 test("base shell owns the review header/stage/sidebar layout and plugin-scoped local state", () => {
@@ -317,16 +401,45 @@ test("renderer resolves plugin-hosted extension points, validates context/event 
   assert.match(source, /instruction\.event in \(host\.point\.events \|\| \{\}\)/);
   assert.match(source, /slot\.emit target unavailable/);
   assert.match(source, /slot\.emit payload is invalid/);
-  assert.match(source, /await execute\(host\.definition\.on\?\.\[instruction\.event\] \|\| \[\], \{ \.\.\.host\.scope, event: payload \}\)/);
+  assert.match(source, /await execute\(host\.definition\.on\?\.\[instruction\.event\] \|\| \[\], \{ \.\.\.host\.scope, event: payload \}, strictRefresh\)/);
   assert.match(css, /\.vr-row\[data-variant="dialog-actions"\] > \.vr-slot \{ display: contents/);
   assert.match(css, /\.vr-row\[data-variant="dialog-actions"\] > \.vr-slot > \[data-slot\] \{ display: flex; flex-direction: row/);
+});
+
+test("storage-transfer section renders for storage-capable plugins with a two-step confirm and no unsafe DOM APIs", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/ui/renderer.js"), "utf8");
+  // Gated on the plugin's declared "storage" capability.
+  assert.match(source, /\(plugin\.capabilities \|\| \[\]\)\.includes\("storage"\)/);
+  assert.match(source, /function renderStorageTransferSection\(plugin\)/);
+  // Direction options are built dynamically from plugin.title.
+  assert.match(source, /`ローカル（\.vreview） → \$\{plugin\.title\}`/);
+  assert.match(source, /`\$\{plugin\.title\} → ローカル（\.vreview）`/);
+  // Correct API contract.
+  assert.match(source, /`\/api\/settings\/plugins\/\$\{encodeURIComponent\(plugin\.id\)\}\/storage-transfer`/);
+  assert.match(source, /direction: directionSelect\.value, dry_run: dryRun/);
+  // Two-step confirmation: the primary button only opens a confirm panel; a second,
+  // distinct control ("実行する") performs the actual dry_run:false request.
+  assert.match(source, /confirmPanel\.hidden = false/);
+  assert.match(source, /confirmRun\.addEventListener\("click", \(\) => void runTransfer\(false\)\)/);
+  assert.match(source, /executeButton\.addEventListener\("click", \(\) => \{/);
+  assert.doesNotMatch(source, /executeButton\.addEventListener\("click", \(\) => void runTransfer\(false\)\)/);
+  // Result summary text and truncated key lists.
+  assert.match(source, /書き込み \$\{body\.written_total\} 件 \/ 削除 \$\{body\.deleted_total\} 件 \/ 変更なし \$\{body\.unchanged\} 件/);
+  assert.match(source, /keys\.slice\(0, 20\)/);
+  assert.match(source, /`ほか \$\{total - shown\.length\} 件`/);
+  // Disabled when the plugin is not enabled or has missing configuration.
+  assert.match(source, /const blocked = !plugin\.enabled \|\| \(plugin\.missing \|\| \[\]\)\.length > 0/);
+  assert.match(source, /上書きを実行するには、このプラグインを有効にして必要な設定を保存してください。/);
+  // Busy state during the request.
+  assert.match(source, /busyButton\.setAttribute\("aria-busy", "true"\)/);
+  assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|DOMParser|document\.write|\beval\s*\(|new Function/);
 });
 
 test("bundled plugin UI documents stay JSON while declared browser modules are explicit local assets", async () => {
   const root = workspace();
   await ensureDefaultPlugins(root);
   const pluginsRoot = path.join(root, ".vreview/plugins");
-  for (const id of ["review", "annotation-workflow", "github-issue", "custom-command"]) {
+  for (const id of ["review", "annotation-workflow", "github-issue", "ai"]) {
     const manifest = JSON.parse(readFileSync(path.join(pluginsRoot, id, "visual-review.plugin.json"), "utf8")) as { ui?: { contributions: Array<{ document: string; browser_module?: string }> } };
     for (const contribution of manifest.ui?.contributions ?? []) {
       assert.match(contribution.document, /^\.\/ui\/.*\.json$/);

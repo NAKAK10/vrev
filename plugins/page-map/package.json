@@ -1,6 +1,6 @@
 {
-  "name": "@nakak10/visual-review-plugin-page-map",
-  "version": "1.3.0",
+  "name": "@visual-review/page-map",
+  "version": "1.3.1",
   "description": "Static HTML transition map for Visual Review",
   "license": "UNLICENSED",
   "type": "module",
@@ -19,10 +19,14 @@
     "node": ">=20"
   },
   "publishConfig": {
-    "access": "restricted",
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "scripts": {
     "test": "node --test test/*.test.js"
+  },
+  "visualReview": {
+    "apiVersion": 1,
+    "manifest": "./visual-review.plugin.json"
   }
 }

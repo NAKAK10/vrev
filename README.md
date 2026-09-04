@@ -19,18 +19,24 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 
 ## インストール
 
-このprivate GitHub Packageへのアクセス権と、`read:packages`を持つGitHub tokenが必要です。
+各packageはpublic npm registryから取得できます。標準構成を対象workspaceの直接依存として追加すると、Coreが`package.json` metadataから検出します。
 
-```ini
-# ~/.npmrc またはプロジェクトの .npmrc
-@nakak10:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```bash
+npm install --save-dev \
+  @visual-review/core \
+  @visual-review/ai \
+  @visual-review/storage-firestore \
+  @visual-review/review \
+  @visual-review/annotation-workflow \
+  @visual-review/page-map \
+  @visual-review/github-issue
 ```
 
 ```bash
-export NODE_AUTH_TOKEN=YOUR_GITHUB_TOKEN
-npm install --global @nakak10/visual-review@beta
+npx visual-review serve --target .code/htmls/example/index.html
 ```
+
+first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@visual-review/storage-firestore`を省略できます。plugin開発用contractは`@visual-review/plugin-sdk`からimportできます。
 
 sourceから利用する場合:
 
@@ -100,7 +106,7 @@ visual-review serve \
 - `N`: DOMノード選択
 - `R`: 矩形範囲指定
 - `⌘+Enter` / `Ctrl+Enter`: 注釈・返信・Issueの送信
-- AI設定: CLI、並列数、自動実行、外部AIコマンドを設定
+- AI設定: AI packageでCLI選択と外部AIコマンドを設定し、annotation-workflowで並列数と自動実行を設定
 - `GitHub Issueにする`: AIが編集可能なIssueラフを作成し、確認後にGitHubへ追加
 
 外部AIコマンドには依頼文を渡す`{prompt}`を1回だけ記述します。commandはshellを介さず実行され、登録前にtool利用能力を検証します。
@@ -113,9 +119,11 @@ API keyやtokenはcommandへ記載せず、各CLIの認証設定または環境�
 
 ## プラグイン
 
-schema v4のPlugin Hostが現在の既定architectureです。Coreの宣言的rendererが、公式pluginの検証済みJSON UI documentを描画し、browserでplugin JavaScriptや任意HTMLを実行しません。`review`が注釈・履歴・永続化、`annotation-workflow`がAI job、`custom-command`が検証済みrunner、`github-issue`がIssue workflowを所有します。
+schema v4のPlugin Hostが現在の既定architectureです。Coreの宣言的rendererが、pluginの検証済みJSON UI documentを描画します。first-party feature packageは`ai`、`firestore`、`review`、`annotation-workflow`、`page-map`、`github-issue`の6つです。`ai`がCLI選択と外部AIコマンドを含むAI method管理、`review`が注釈・履歴・永続化、`annotation-workflow`がAI job、`page-map`が画面遷移解析、`firestore`がremote storage、`github-issue`が専用のIssue選択・modal・sidebar・GitHub処理を所有します。feature package同士は実装に依存せず、versioned host capabilityだけで接続します。
 
-プラグインは対象workspaceの`.vreview/plugins/<plugin-id>/`で一段ずつ管理します。`visual-review serve`は、未導入の公式`review`、`github-issue`、`custom-command`、`annotation-workflow`を本体packageから自動installします。同じbundled source由来でmanifestの一致を確認できるtrusted copyだけは、同梱schemaまたはSemVerが新しい場合にatomic upgradeします。local/third-partyの同一IDや改変済みcopyは自動で上書き・実行しません。
+Coreは対象workspaceの`dependencies`、`devDependencies`、`optionalDependencies`に列挙された直接依存だけを検出します。packageは`visualReview.apiVersion: 1`とmanifest pathを宣言し、検出時にcodeを評価しません。`node_modules`全体や推移依存は走査しません。
+
+従来の`.vreview/plugins/<plugin-id>/`と`.vreview/plugins.json`は移行用compatibility layerとしてnpm packageと統合されます。同じplugin IDが両方に存在する場合は曖昧な実装を選ばずエラーにします。`.vreview`には設定、credential、review/runtime状態だけを置き、npm package本体はコピーしません。global Coreだけで利用する既存workspace向けには標準packageのbundled copyもone-beta互換として維持します。
 
 ローカルdirectoryと公開npm package specによる手動追加や、新規pluginのbase生成もできます。`plugin create`はprovider/command互換のschema v3 manifest、title/summary、README、設定項目テンプレート、example command、testを生成します。server capabilityや宣言的UIを提供するpluginは[`docs/plugins.md`](docs/plugins.md)のschema v4 contractへ更新してください。
 
@@ -126,7 +134,7 @@ visual-review plugin create my-plugin \
   --summary "レビュー処理を拡張します" \
   --install
 visual-review plugin run my-plugin hello world
-visual-review plugin install ./plugins/firebase-storage
+visual-review plugin install ./plugins/firestore
 visual-review plugin list
 ```
 
@@ -139,7 +147,7 @@ visual-review plugin list
 }
 ```
 
-有効/無効、manifestで宣言した必要情報、README、外部AIコマンド登録は左上の設定画面へ集約されます。workspace値はGit管理外の`.vreview/plugin-settings.json`へ保存し、token/passwordは保存せず環境変数項目として存在だけを表示します。
+有効/無効、manifestで宣言した必要情報、README、AI packageが所有するCLI選択と外部AIコマンド登録は左上の設定画面へ集約されます。workspace値はGit管理外の`.vreview/plugin-settings.json`へ保存し、token/passwordは保存せず環境変数項目として存在だけを表示します。
 
 `/settings/plugins`からもnpm specやGitHubリンクでpluginをinstall・removeできます。npm specはexactなversionを、GitHub specはtag/commit SHAを`#`で固定してください（未固定のGitHub specは拒否します）。install時にplugin codeは実行されず、追加直後は無効状態で始まるため、内容を確認してから有効化してください。認証情報を含むURLは拒否します。同梱pluginはUIから削除できず、無効化だけができます。
 
@@ -149,13 +157,14 @@ visual-review plugin list
 visual-review plugin run <plugin-id> <command> [args...]
 ```
 
-このrepositoryには作成例とデバッグ用実装として次を収録しています。
+このrepositoryには次の6つのfirst-party feature packageを収録しています。
 
+- [`plugins/ai/`](plugins/ai/README.md): CLI選択、外部AIコマンド管理、共通AI実行
+- [`plugins/firestore/`](plugins/firestore/README.md): Firestore RESTをworkspace storage backendとして使うprovider
+- [`plugins/review/`](plugins/review/README.md): reviewの保存・検証・表示
 - [`plugins/annotation-workflow/`](plugins/annotation-workflow/README.md): 注釈保存・再オープン後の自動実行ポリシー
-- [`plugins/custom-command/`](plugins/custom-command/README.md): shellを介さないカスタムagent command管理・実行
-- [`plugins/firebase-storage/`](plugins/firebase-storage/README.md): Firestore RESTを使うレビューJSONのpush/pull
-- [`plugins/github-issue/`](plugins/github-issue/README.md): `gh`を使うGitHub Issue provider
 - [`plugins/page-map/`](plugins/page-map/README.md): 静的HTMLの画面遷移マップ
+- [`plugins/github-issue/`](plugins/github-issue/README.md): `gh`を使うGitHub Issue provider
 
 GitHub Issue作成は自動導入された`github-issue`プラグインを使います。`gh`認証は自動化せず、対象repositoryに合う利用者で事前に認証してください。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。
 
@@ -218,10 +227,10 @@ npm run build
 
 ## リリース
 
-GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、GitHub Packagesへpublishします。release tagは`v` + `package.json`のversionに一致させます。
+GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、npm trusted publishing（OIDC）で全packageをpublic npm registryへpublishします。release tagは`v` + `package.json`のversionに一致させます。
 
 ```bash
-npm version 1.1.9 --no-git-tag-version
+npm version 1.3.0 --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check

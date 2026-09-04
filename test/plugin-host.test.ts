@@ -10,6 +10,7 @@ import {
   PLUGIN_BRIDGE_PROTOCOL_V1,
   createPluginHostRuntime,
   createProcessSupervisor,
+  createRunnerRegistry,
   installPlugin,
   listPlugins,
   pluginSettingsRevision,
@@ -99,6 +100,26 @@ test("capability registry resolves only exact registered API versions", () => {
   assert.throws(() => registry.resolve("review", 1), CapabilityUnavailableError);
 });
 
+test("host runner registry is workspace-scoped and validates multi-provider results", async () => {
+  const root = pluginWorkspace();
+  const registry = createRunnerRegistry(root);
+  const unregister = registry.register("fixture.ai", {
+    list: () => [{ runner_id: "fixture", name: "Fixture", verified: true, profiles: ["text-only"] }],
+    resolve: (_id, context) => ({ command: "agent", args: [context.prompt], cwd: root, env: {} }),
+  });
+  registry.register("other.ai", { list: () => [{ runner_id: "other", name: "Other", verified: false }], resolve: () => ({ command: "other", args: [] }) });
+  assert.deepEqual(await registry.list(), [
+    { runner_id: "fixture", name: "Fixture", provider_id: "fixture.ai", verified: true, profiles: ["text-only"] },
+    { runner_id: "other", name: "Other", provider_id: "other.ai", verified: false },
+  ]);
+  assert.deepEqual(await registry.resolve("fixture", { workspaceRoot: root, prompt: "fix", options: { profile: "text-only" } }), { command: "agent", args: ["fix"], cwd: root, env: {} });
+  await assert.rejects(registry.resolve("fixture", { workspaceRoot: root, prompt: "fix", options: { profile: "workspace-write" } }), /does not support/);
+  await assert.rejects(registry.resolve("other", { workspaceRoot: root, prompt: "fix" }), /verified runner is unavailable/);
+  await assert.rejects(registry.list({ workspaceRoot: `${root}-other` }), /workspace/);
+  unregister();
+  assert.equal((await registry.list()).some(({ runner_id }) => runner_id === "fixture"), false);
+});
+
 test("disabled and capability-blocked v4 servers are never imported", async () => {
   const root = pluginWorkspace();
   const disabledDirectory = await installServerFixture(root, "disabled-server");
@@ -125,13 +146,46 @@ test("disabled and capability-blocked v4 servers are never imported", async () =
   await blocked.stop();
 });
 
+test("plugin host starts capability dependencies independently of package order", async () => {
+  const root = pluginWorkspace();
+  await installServerFixture(root, "a-dependent", "late.port");
+  const source = path.join(root, "sources", "z-provider");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(path.join(source, "README.md"), "# Provider\n");
+  writeFileSync(path.join(source, "contract.json"), JSON.stringify({ schema_version: 1, queries: [], commands: [] }));
+  writeFileSync(path.join(source, "server.js"), `export default { apiVersion: 1, create() { return { start() {}, query() {}, command() {}, capabilities() { return [{ id: "late.port", apiVersion: 1, implementation: { ready: true } }]; }, stop() {} }; } };`);
+  writeFileSync(path.join(source, "visual-review.plugin.json"), JSON.stringify({
+    schema_version: 4,
+    id: "z-provider",
+    version: "1.0.0",
+    display: { title: "Provider", summary: "Late capability provider", readme: "./README.md" },
+    configuration: [],
+    server: { api_version: 1, bridge_api_version: 1, module: "./server.js", contract: "./contract.json" },
+    provides: [{ capability: "late.port", api_version: 1 }],
+  }));
+  await installPlugin(source, root);
+  const runtime = createPluginHostRuntime({ workspaceRoot: root, workspaceId: "workspace", target: { id: "target", source: "fixture" } });
+  await runtime.start();
+  assert.equal(runtime.status("z-provider").state, "ready");
+  assert.equal(runtime.status("a-dependent").state, "ready");
+  await runtime.stop();
+});
+
 test("plugin host dispatches only contracted operations and owns lifecycle subscriptions", async () => {
   const root = pluginWorkspace();
   const directory = await installServerFixture(root, "runtime-server");
   rmSync(path.join(directory, "ui/broken.json"));
   const capabilities = new CapabilityRegistry();
   capabilities.register("fixture.port", 1, { ready: true });
-  const runtime = createPluginHostRuntime({ workspaceRoot: root, workspaceId: "workspace", target: { id: "target", source: "fixture" }, capabilities, principal: "human-ui" });
+  let allowCommands = true;
+  const runtime = createPluginHostRuntime({
+    workspaceRoot: root,
+    workspaceId: "workspace",
+    target: { id: "target", source: "fixture" },
+    capabilities,
+    principal: "human-ui",
+    authorizeOperation: ({ permission }) => permission !== "fixture.write" || allowCommands,
+  });
 
   await Promise.all([runtime.start(), runtime.start()]);
   assert.equal(runtime.status("runtime-server").state, "ready");
@@ -141,6 +195,10 @@ test("plugin host dispatches only contracted operations and owns lifecycle subsc
   assert.deepEqual(query, { ok: true, data: { value: "query" } });
   const command = await runtime.sendAction("runtime-server", "fixture.set", { protocol: PLUGIN_BRIDGE_PROTOCOL_V1, request_id: "command", idempotency_key: "once", input: {} });
   assert.deepEqual(command, { ok: true, data: { value: "command" } });
+  allowCommands = false;
+  const forbidden = await runtime.sendAction("runtime-server", "fixture.set", { protocol: PLUGIN_BRIDGE_PROTOCOL_V1, request_id: "forbidden", idempotency_key: "twice", input: {} });
+  assert.equal(forbidden.ok, false);
+  if (!forbidden.ok) assert.equal(forbidden.error.code, "FORBIDDEN");
 
   const undeclared = await runtime.query("runtime-server", "fixture.hidden", { protocol: PLUGIN_BRIDGE_PROTOCOL_V1, request_id: "hidden", input: {} });
   assert.equal(undeclared.ok, false);
@@ -167,10 +225,11 @@ test("process supervisor invokes commands without a shell and captures stdout", 
   assert.deepEqual(completed, { exitCode: 0, reason: "exit", stdout: marker });
 });
 
-test("process supervisor retains only latest stdout and enforces timeout", async () => {
+test("process supervisor enforces stdout limits and timeout", async () => {
   const outputLimited = createProcessSupervisor({ stdoutLimit: 4, timeoutMs: 2_000, killGraceMs: 20 });
   const outputResult = await outputLimited.run(nodeProcess("process.stdout.write('abcdefgh')")).result;
-  assert.deepEqual(outputResult, { exitCode: 0, reason: "exit", stdout: "efgh" });
+  assert.equal(outputResult.reason, "output-limit");
+  assert.equal(outputResult.stdout, "efgh");
 
   const timed = createProcessSupervisor({ timeoutMs: 20, killGraceMs: 20 });
   const timeoutResult = await timed.run(nodeProcess("setInterval(() => {}, 1000)")).result;
