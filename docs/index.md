@@ -9,9 +9,6 @@ hero:
       text: プラグイン開発ガイド
       link: /plugin-guide
     - theme: alt
-      text: ドキュメントサイト公開
-      link: /site-publish
-    - theme: alt
       text: GitHub
       link: https://github.com/NAKAK10/vrev
 features:

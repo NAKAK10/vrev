@@ -7,7 +7,6 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'ガイド', link: '/plugin-guide' },
-      { text: 'サイト公開', link: '/site-publish' },
       { text: 'プラグイン基盤', link: '/plugins' },
     ],
     sidebar: [
@@ -15,7 +14,6 @@ export default defineConfig({
         text: 'はじめに',
         items: [
           { text: 'プラグイン開発ガイド', link: '/plugin-guide' },
-          { text: 'ドキュメントサイト公開', link: '/site-publish' },
           { text: 'プラグイン基盤', link: '/plugins' },
         ],
       },
