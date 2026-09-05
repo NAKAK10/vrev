@@ -7,7 +7,7 @@
 
 HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVrevツールです。
 
-プラグイン開発は [`docs/plugin-guide.md`](docs/plugin-guide.md)（開発手順メイン、base plugin の画面付き）、ドキュメントサイトの公開手順は [`docs/site-publish.md`](docs/site-publish.md) を参照してください。
+プラグイン開発は [`docs/plugin-guide.md`](docs/plugin-guide.md)（開発手順メイン、base plugin の画面付き）を参照してください。
 
 ## 主な機能
 
