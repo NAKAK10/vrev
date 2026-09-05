@@ -50,6 +50,7 @@
     "test:jobs": "npm run build && node --test dist/test/jobs.test.js",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
+    "docs:test": "npm run docs:build && node --test test/docs-site.test.mjs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {

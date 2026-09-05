@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'test/docs-site.test.mjs'
       - '.github/workflows/docs.yml'
       - 'package.json'
       - 'package-lock.json'
@@ -29,7 +30,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run docs:build
+      - run: npm run docs:test
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
