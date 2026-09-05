@@ -1,6 +1,6 @@
 {
   "name": "@vrev/annotation-workflow",
-  "version": "1.0.0-beta",
+  "version": "1.0.0-beta.2",
   "description": "Default annotation post-save workflow policy for Vrev",
   "license": "MIT",
   "type": "module",

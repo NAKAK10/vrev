@@ -46,7 +46,7 @@ npx @vrev/cli plugin run my-plugin hello world
 `plugin create` 生成兼容 provider/command 的 **schema v3** manifest。如需提供 server capability 或声明式 UI，请更新为 [schema v4 contract（日语）](../plugins)。
 :::
 
-开发所需的类型和 contract 由 `@vrev/plugin-sdk@1.0.0-beta` 提供。
+开发所需的类型和 contract 由 `@vrev/plugin-sdk@1.0.0-beta.2` 提供。
 
 ## 安全安装与配置
 

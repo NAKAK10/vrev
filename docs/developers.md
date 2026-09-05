@@ -42,7 +42,7 @@ npx @vrev/cli plugin run my-plugin hello world
 `plugin create` は provider/command 互換の **schema v3** を生成します。server capability や宣言的 UI を提供する場合は、[schema v4 contract](./plugins) に更新してください。
 :::
 
-開発用の型・contract は `@vrev/plugin-sdk@1.0.0-beta` で提供されます。
+開発用の型・contract は `@vrev/plugin-sdk@1.0.0-beta.2` で提供されます。
 
 ## 安全な導入と設定
 

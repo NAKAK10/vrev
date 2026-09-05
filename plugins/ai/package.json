@@ -1,6 +1,6 @@
 {
   "name": "@vrev/ai",
-  "version": "1.0.0-beta",
+  "version": "1.0.0-beta.2",
   "description": "Reusable AI capability and integration-method facade for Vrev",
   "license": "MIT",
   "type": "module",

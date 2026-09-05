@@ -7,7 +7,7 @@ const link = (page: string) => withBase(`${locale.value === 'ja' ? '/' : `/${loc
 const copy = {
   ja: {
     badge: 'LOCAL-FIRST VISUAL REVIEW', title: '「ここを直したい」を、', accent: '次のアクションへ。',
-    lead: '画面に注釈をつける。AI に修正を依頼する。Issue として共有する。いつもの開発環境で、レビューから改善までをひとつに。', start: '使い始める', source: 'GitHub で見る', note: 'オープンソース · Node.js 20+ · v1.0.0-beta',
+    lead: '画面に注釈をつける。AI に修正を依頼する。Issue として共有する。いつもの開発環境で、レビューから改善までをひとつに。', start: '使い始める', source: 'GitHub で見る', note: 'オープンソース · Node.js 20+ · v1.0.0-beta.2',
     preview: 'レビューワークフローのイメージ', mode: 'ビジュアルレビュー', target: 'ローカルアプリ', page: 'あなたの次のアイデアを、形に。', pageSub: 'チームのための、新しいワークスペース。', button: '無料ではじめる', comment: 'このボタンを、もう少し目立たせたい。', selected: '要素を選択', annotation: '注釈 #01', status: 'レビュー中', agent: 'AI に修正を依頼', issue: 'GitHub Issue にする', ready: 'フィードバックを、実装につなげる',
     targets: 'レビューする対象を選ばない', formats: ['静的 HTML', '画像・スクリーンショット', 'localhost アプリ', 'HTTPS ステージング'],
     eyebrow: 'LESS FRICTION, MORE CLARITY', heading: '伝える、直す、共有する。', description: '曖昧な説明やツールの行き来を減らし、画面を見ながら改善を進められます。',
@@ -25,7 +25,7 @@ const copy = {
   },
   en: {
     badge: 'LOCAL-FIRST VISUAL REVIEW', title: 'From “fix this”', accent: 'to the next action.',
-    lead: 'Annotate the screen. Ask AI for a fix. Share a GitHub Issue. Connect feedback to improvements without leaving your development workflow.', start: 'Get started', source: 'View on GitHub', note: 'Open source · Node.js 20+ · v1.0.0-beta',
+    lead: 'Annotate the screen. Ask AI for a fix. Share a GitHub Issue. Connect feedback to improvements without leaving your development workflow.', start: 'Get started', source: 'View on GitHub', note: 'Open source · Node.js 20+ · v1.0.0-beta.2',
     preview: 'Illustration of the review workflow', mode: 'Visual review', target: 'Local app', page: 'Give your next idea a home.', pageSub: 'A new workspace for your team.', button: 'Start for free', comment: 'Let’s make this button stand out more.', selected: 'Select element', annotation: 'Annotation #01', status: 'In review', agent: 'Ask AI for a fix', issue: 'Create GitHub Issue', ready: 'Turn feedback into implementation',
     targets: 'REVIEW WHERE YOU BUILD', formats: ['Static HTML', 'Images & screenshots', 'Localhost apps', 'HTTPS staging'],
     eyebrow: 'LESS FRICTION, MORE CLARITY', heading: 'Show it. Fix it. Share it.', description: 'Less guesswork and tool switching. Move improvements forward with the screen as your shared context.',
@@ -43,7 +43,7 @@ const copy = {
   },
   zh: {
     badge: '本地优先的可视化审阅', title: '让「这里需要修改」', accent: '成为下一步行动。',
-    lead: '在页面上添加批注，让 AI 协助修改，或创建 GitHub Issue。从反馈到改进，在熟悉的开发环境中一气呵成。', start: '快速开始', source: '在 GitHub 上查看', note: '开源 · Node.js 20+ · v1.0.0-beta',
+    lead: '在页面上添加批注，让 AI 协助修改，或创建 GitHub Issue。从反馈到改进，在熟悉的开发环境中一气呵成。', start: '快速开始', source: '在 GitHub 上查看', note: '开源 · Node.js 20+ · v1.0.0-beta.2',
     preview: '审阅工作流示意图', mode: '可视化审阅', target: '本地应用', page: '让下一个创意，在这里成形。', pageSub: '为团队打造的全新工作空间。', button: '免费开始', comment: '让这个按钮更醒目一些。', selected: '选择元素', annotation: '批注 #01', status: '审阅中', agent: '请求 AI 修改', issue: '创建 GitHub Issue', ready: '将反馈转化为实现',
     targets: '支持多种审阅对象', formats: ['静态 HTML', '图片与截图', 'localhost 应用', 'HTTPS 预发布网站'],
     eyebrow: '减少阻力，让反馈更清晰', heading: '指出问题，修改，共享。', description: '减少模糊描述和工具切换，以页面为共同上下文，持续推动改进。',

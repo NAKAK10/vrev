@@ -3,11 +3,25 @@
 [![Docs](https://github.com/NAKAK10/vrev/actions/workflows/docs.yml/badge.svg)](https://github.com/NAKAK10/vrev/actions/workflows/docs.yml)
 [![CI](https://github.com/NAKAK10/vrev/actions/workflows/ci.yml/badge.svg)](https://github.com/NAKAK10/vrev/actions/workflows/ci.yml)
 
-📚 ドキュメントサイト: https://NAKAK10.github.io/vrev/
+[![npm beta](https://img.shields.io/npm/v/@vrev/cli/beta)](https://www.npmjs.com/package/@vrev/cli)
 
 HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVrevツールです。
 
-プラグイン開発は [`docs/plugin-guide.md`](docs/plugin-guide.md)（開発手順メイン、base plugin の画面付き）を参照してください。
+## ドキュメント / Documentation / 文档
+
+**[日本語](https://nakak10.github.io/vrev/) · [English](https://nakak10.github.io/vrev/en/) · [简体中文](https://nakak10.github.io/vrev/zh/)**
+
+図解付きの機能紹介、クイックスタート、レビューワークフロー、開発者向けガイドを公開しています。目的別ナビゲーション・検索・言語切り替えに対応し、スマートフォンやダークモードでも読めます。
+
+| ガイド / Guide / 指南 | 日本語 | English | 简体中文 |
+| --- | --- | --- | --- |
+| はじめる / Get started / 快速开始 | [クイックスタート](https://nakak10.github.io/vrev/getting-started) | [Quick start](https://nakak10.github.io/vrev/en/getting-started) | [快速入门](https://nakak10.github.io/vrev/zh/getting-started) |
+| 使い方 / Usage / 使用方法 | [レビューワークフロー](https://nakak10.github.io/vrev/workflow) | [Review workflow](https://nakak10.github.io/vrev/en/workflow) | [审阅工作流](https://nakak10.github.io/vrev/zh/workflow) |
+| 開発 / Development / 开发 | [開発者ガイド](https://nakak10.github.io/vrev/developers) | [Developer guide](https://nakak10.github.io/vrev/en/developers) | [开发者指南](https://nakak10.github.io/vrev/zh/developers) |
+
+詳細な技術リファレンスは現在日本語です。Detailed technical references are currently in Japanese. 详细技术参考目前为日语。
+
+プラグイン開発は [プラグイン開発ガイド](https://nakak10.github.io/vrev/plugin-guide)（開発手順メイン、base plugin の画面付き）を参照してください。
 
 ## 主な機能
 
@@ -30,20 +44,20 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 
 ```bash
 npm install --save-dev \
-  @vrev/cli@1.0.0-beta \
-  @vrev/ai@1.0.0-beta \
-  @vrev/storage-firestore@1.0.0-beta \
-  @vrev/review@1.0.0-beta \
-  @vrev/annotation-workflow@1.0.0-beta \
-  @vrev/page-map@1.0.0-beta \
-  @vrev/github-issue@1.0.0-beta
+  @vrev/cli@1.0.0-beta.2 \
+  @vrev/ai@1.0.0-beta.2 \
+  @vrev/storage-firestore@1.0.0-beta.2 \
+  @vrev/review@1.0.0-beta.2 \
+  @vrev/annotation-workflow@1.0.0-beta.2 \
+  @vrev/page-map@1.0.0-beta.2 \
+  @vrev/github-issue@1.0.0-beta.2
 ```
 
 ```bash
 npx @vrev/cli serve --target .code/htmls/example/index.html
 ```
 
-first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractには`@vrev/plugin-sdk@1.0.0-beta`を導入し、codeでは`@vrev/plugin-sdk`からimportできます。
+first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractには`@vrev/plugin-sdk@1.0.0-beta.2`を導入し、codeでは`@vrev/plugin-sdk`からimportできます。
 
 sourceから利用する場合:
 
@@ -234,10 +248,10 @@ npm run build
 
 ## リリース
 
-GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、npm trusted publishing（OIDC）で全packageをpublic npm registryへpublishします。このbeta releaseでは全8 packageのversionを`1.0.0-beta`に揃え、release tagを`v1.0.0-beta`、npm dist-tagを`beta`にします。
+GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、npm trusted publishing（OIDC）で全packageをpublic npm registryへpublishします。このbeta releaseでは全8 packageのversionを`1.0.0-beta.2`に揃え、release tagを`v1.0.0-beta.2`、npm dist-tagを`beta`にします。
 
 ```bash
-npm version 1.0.0-beta --no-git-tag-version
+npm version 1.0.0-beta.2 --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check

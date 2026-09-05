@@ -4,7 +4,11 @@
 
 ## Current beta release identity
 
-All eight package versions and all six plugin manifest versions are `1.0.0-beta`. The packages were published publicly with MIT licenses and provenance on 2026-09-05 from tag `v1.0.0-beta`, using `--tag beta`. Keep published versions and the published tag immutable.
+The beta 2 release uses `1.0.0-beta.2` for all eight packages and all six plugin manifests, tag `v1.0.0-beta.2`, and npm dist-tag `beta`. It updates the CLI README with Japanese, English, and Simplified Chinese documentation links and ships the redesigned documentation site. Install it explicitly with `npm install --save-dev @vrev/cli@1.0.0-beta.2` or follow the [quick start](./getting-started) for the complete package set. Do not move the stable `latest` dist-tag when publishing a prerelease.
+
+### Initial beta history
+
+The initial beta used `1.0.0-beta` for all eight packages and all six plugin manifests. The packages were published publicly with MIT licenses and provenance on 2026-09-05 from tag `v1.0.0-beta`, using `--tag beta`. Keep published versions and the published tag immutable.
 
 The registry currently also assigns `latest` to this initial beta. Attempting to remove it with the bootstrap token returned HTTP 403; tag administration is separate from publishing. Until this is adjusted through an authorized npm account, use `npx @vrev/cli@beta` explicitly. The workflow does not silently change or delete existing tags.
 

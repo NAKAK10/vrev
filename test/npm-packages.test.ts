@@ -57,6 +57,26 @@ test("the agreed package set targets public npm and feature packages expose pack
   assert.equal(existsSync(path.join(root, "plugins/custom-command")), false);
 });
 
+test("release package and manifest versions stay synchronized", () => {
+  const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+  for (const directory of packages.keys()) {
+    const metadata = JSON.parse(readFileSync(path.join(root, directory, "package.json"), "utf8"));
+    assert.equal(metadata.version, version, directory);
+  }
+  for (const directory of featurePackages.keys()) {
+    const manifest = JSON.parse(readFileSync(path.join(root, directory, "vrev.plugin.json"), "utf8"));
+    assert.equal(manifest.version, version, directory);
+  }
+  const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+  assert.equal(lock.version, version);
+  assert.equal(lock.packages[""].version, version);
+  const readme = readFileSync(path.join(root, "README.md"), "utf8");
+  assert.ok(readme.includes(`@vrev/cli@${version}`));
+  for (const locale of ["", "en/", "zh/"]) {
+    assert.ok(readme.includes(`https://nakak10.github.io/vrev/${locale}getting-started`));
+  }
+});
+
 test("release version lookup skips existing versions and fails closed on registry errors", async () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/release-package.yml"), "utf8");
   const start = workflow.indexOf("const name = process.env.PACKAGE_NAME;");

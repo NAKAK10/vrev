@@ -46,7 +46,7 @@ npx @vrev/cli plugin run my-plugin hello world
 `plugin create` generates a provider/command-compatible **schema v3** manifest. Update to the [schema v4 contract (Japanese)](../plugins) to provide server capabilities or declarative UI.
 :::
 
-Development types and contracts are provided by `@vrev/plugin-sdk@1.0.0-beta`.
+Development types and contracts are provided by `@vrev/plugin-sdk@1.0.0-beta.2`.
 
 ## Install and configure safely
 
