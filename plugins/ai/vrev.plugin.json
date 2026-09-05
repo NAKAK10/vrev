@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "ai",
-  "version": "1.0.1",
+  "version": "1.0.0-beta",
   "display": {
     "title": "AI",
     "summary": "CLI、外部コマンド、API・SDK・remote連携を共通のAI機能として提供します。",

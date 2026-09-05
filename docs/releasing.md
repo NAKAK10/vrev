@@ -2,6 +2,10 @@
 
 `.github/workflows/release-package.yml` publishes `vrev`, `@vrev/plugin-sdk`, and the six `@vrev/*` feature packages to the public npm registry when a GitHub release is published. A manual dispatch with a release tag only recovers package versions that are still missing; it does not overwrite versions already present.
 
+## Current beta release identity
+
+All eight package versions and all six plugin manifest versions must be exactly `1.0.0-beta`. Create the GitHub release from tag `v1.0.0-beta` and publish npm packages with dist-tag `beta`; do not assign this prerelease to `latest`.
+
 ## Authentication
 
 Trusted publishing is the normal authentication mode. In npm, configure a GitHub Actions trusted publisher for **each** package with these exact values:

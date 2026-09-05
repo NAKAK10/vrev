@@ -1,6 +1,6 @@
 {
   "name": "@vrev/plugin-sdk",
-  "version": "1.3.1",
+  "version": "1.0.0-beta",
   "description": "Stable plugin contracts and TypeScript types for Vrev",
   "license": "MIT",
   "type": "module",

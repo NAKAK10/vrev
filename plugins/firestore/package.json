@@ -1,6 +1,6 @@
 {
   "name": "@vrev/storage-firestore",
-  "version": "1.0.0",
+  "version": "1.0.0-beta",
   "description": "Firestore WorkspaceStorageProviderV1 backend for Vrev, one document per storage key",
   "type": "module",
   "license": "MIT",

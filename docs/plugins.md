@@ -104,7 +104,7 @@ first-party feature packageは次の6つだけで、public npm registryへ個別
 - `@vrev/github-issue` — GitHub Issue draft/create
 
 ```sh
-npm install --save-dev @vrev/ai @vrev/storage-firestore @vrev/review @vrev/annotation-workflow @vrev/page-map @vrev/github-issue
+npm install --save-dev @vrev/ai@1.0.0-beta @vrev/storage-firestore@1.0.0-beta @vrev/review@1.0.0-beta @vrev/annotation-workflow@1.0.0-beta @vrev/page-map@1.0.0-beta @vrev/github-issue@1.0.0-beta
 npm install --save-dev @scope/public-plugin@1.2.0
 npx vrev plugin list
 ```

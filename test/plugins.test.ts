@@ -401,13 +401,13 @@ test("upgrades same-schema trusted bundled UI when its SemVer is older", async (
   const uiPath = path.join(reviewRoot, "ui/stage.ui.json");
   const oldManifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { schema_version: number; version: string };
   const oldPackage = JSON.parse(readFileSync(packagePath, "utf8")) as { version: string };
-  oldManifest.version = "1.0.0";
-  oldPackage.version = "1.0.0";
+  oldManifest.version = "0.9.0";
+  oldPackage.version = "0.9.0";
   writeFileSync(manifestPath, `${JSON.stringify(oldManifest, null, 2)}\n`);
   writeFileSync(packagePath, `${JSON.stringify(oldPackage, null, 2)}\n`);
   writeFileSync(uiPath, `${JSON.stringify({ schema_version: 1, root: { type: "text", props: { text: { literal: "stale bundled UI" } } } }, null, 2)}\n`);
 
-  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@1.0.0", ...["ai", "firestore", "annotation-workflow", "page-map", "github-issue"].map((id) => `${id}@${bundledPluginVersion(id)}`)]);
+  assert.deepEqual(await ensureDefaultPlugins(root, bundledRoot), ["review@0.9.0", ...["ai", "firestore", "annotation-workflow", "page-map", "github-issue"].map((id) => `${id}@${bundledPluginVersion(id)}`)]);
   assert.match(readFileSync(path.join(root, ".vrev/plugins/review/ui/stage.ui.json"), "utf8"), /stale bundled UI/);
   assert.equal(listPlugins(root).find(({ id }) => id === "review")?.manifest.schema_version, 4);
 

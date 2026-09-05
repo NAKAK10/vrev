@@ -23,20 +23,20 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 
 ```bash
 npm install --save-dev \
-  vrev \
-  @vrev/ai \
-  @vrev/storage-firestore \
-  @vrev/review \
-  @vrev/annotation-workflow \
-  @vrev/page-map \
-  @vrev/github-issue
+  vrev@1.0.0-beta \
+  @vrev/ai@1.0.0-beta \
+  @vrev/storage-firestore@1.0.0-beta \
+  @vrev/review@1.0.0-beta \
+  @vrev/annotation-workflow@1.0.0-beta \
+  @vrev/page-map@1.0.0-beta \
+  @vrev/github-issue@1.0.0-beta
 ```
 
 ```bash
 npx vrev serve --target .code/htmls/example/index.html
 ```
 
-first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractは`@vrev/plugin-sdk`からimportできます。
+first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractには`@vrev/plugin-sdk@1.0.0-beta`を導入し、codeでは`@vrev/plugin-sdk`からimportできます。
 
 sourceから利用する場合:
 
@@ -221,10 +221,10 @@ npm run build
 
 ## リリース
 
-GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、npm trusted publishing（OIDC）で全packageをpublic npm registryへpublishします。release tagは`v` + `package.json`のversionに一致させます。
+GitHub Releaseを公開すると、GitHub Actionsがtest/buildを実行し、npm trusted publishing（OIDC）で全packageをpublic npm registryへpublishします。このbeta releaseでは全8 packageのversionを`1.0.0-beta`に揃え、release tagを`v1.0.0-beta`、npm dist-tagを`beta`にします。
 
 ```bash
-npm version 1.3.0 --no-git-tag-version
+npm version 1.0.0-beta --no-git-tag-version
 npm test
 npm pack --dry-run
 git diff --check
