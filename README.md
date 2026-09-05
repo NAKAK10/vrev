@@ -1,6 +1,13 @@
 # vrev
 
+[![Docs](https://github.com/NAKAK10/vrev/actions/workflows/docs.yml/badge.svg)](https://github.com/NAKAK10/vrev/actions/workflows/docs.yml)
+[![CI](https://github.com/NAKAK10/vrev/actions/workflows/ci.yml/badge.svg)](https://github.com/NAKAK10/vrev/actions/workflows/ci.yml)
+
+📚 ドキュメントサイト: https://NAKAK10.github.io/vrev/
+
 HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによる修正やGitHub Issue作成につなげるローカルVrevツールです。
+
+プラグイン開発は [`docs/plugin-guide.md`](docs/plugin-guide.md)（開発手順メイン、base plugin の画面付き）、ドキュメントサイトの公開手順は [`docs/site-publish.md`](docs/site-publish.md) を参照してください。
 
 ## 主な機能
 
@@ -160,7 +167,13 @@ vrev plugin run <plugin-id> <command> [args...]
 - [`plugins/page-map/`](plugins/page-map/README.md): 静的HTMLの画面遷移マップ
 - [`plugins/github-issue/`](plugins/github-issue/README.md): `gh`を使うGitHub Issue provider
 
-GitHub Issue作成は自動導入された`github-issue`プラグインを使います。`gh`認証は自動化せず、対象repositoryに合う利用者で事前に認証してください。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。
+ GitHub Issue作成は自動導入された`github-issue`プラグインを使います。`gh`認証は自動化せず、対象repositoryに合う利用者で事前に認証してください。base作成方法、第三者のnpm/GitHub pluginの導入、安全性は[`plugins/README.md`](plugins/README.md)、manifestとPlugin APIの詳細は[`docs/plugins.md`](docs/plugins.md)を参照してください。開発手順の通しガイドは[`docs/plugin-guide.md`](docs/plugin-guide.md)です。
+
+base plugin（`vrev plugin create` のscaffold）がレビュー画面のsidebarへ追加する「注釈アクション」ボタンと、`/settings/plugins` の管理画面:
+
+![注釈アクションボタン](docs/public/images/scaffold-sidebar.png)
+
+![プラグイン管理画面](docs/public/images/settings-plugins.png)
 
 beta.7では宣言的rendererが`/`、`/settings`（レイアウト設定）、`/settings/plugins`（install済みplugin）の既定です。one-beta rollback用に`/legacy`、`/settings/legacy`、`VREV_LEGACY_UI=1`と既存HTTP/CLI・manifest schema v1–v3互換を保持しています。新規integrationはschema v4を使用してください。desktop/tablet/mobileのbrowser acceptanceとlegacy route切替をrelease gateで確認済みです。
 

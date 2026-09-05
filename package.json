@@ -47,10 +47,14 @@
     "pretest": "npm run check:secrets",
     "test": "npm run test:secrets && npm run build && node --test dist/test/*.test.js && npm run test:plugins",
     "test:plugins": "npm --prefix plugins/firestore test && npm --prefix plugins/ai test && npm --prefix plugins/page-map test",
-    "test:jobs": "npm run build && node --test dist/test/jobs.test.js"
+    "test:jobs": "npm run build && node --test dist/test/jobs.test.js",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitepress": "^1.6.4"
   }
 }

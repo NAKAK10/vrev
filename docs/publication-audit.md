@@ -27,4 +27,4 @@ These are automated checks and targeted review, not proof that no sensitive info
 
 `npm run check:secrets` now scans Git-tracked and non-ignored new files, including lockfiles and tracked credential paths. It detects additional token/home-path patterns, rejects sensitive credential filenames, and no longer silently skips files above 2 MB. Regression tests run through `npm test`.
 
-Full-history and built-artifact scans remain separate release checks; see [SECURITY.md](../SECURITY.md). Reports containing potential findings should stay outside the repository and use redacted output.
+Full-history and built-artifact scans remain separate release checks; see [SECURITY.md](https://github.com/NAKAK10/vrev/blob/main/SECURITY.md). Reports containing potential findings should stay outside the repository and use redacted output.
