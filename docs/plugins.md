@@ -106,7 +106,7 @@ first-party feature packageは次の6つだけで、public npm registryへ個別
 ```sh
 npm install --save-dev @vrev/ai@1.0.0-beta @vrev/storage-firestore@1.0.0-beta @vrev/review@1.0.0-beta @vrev/annotation-workflow@1.0.0-beta @vrev/page-map@1.0.0-beta @vrev/github-issue@1.0.0-beta
 npm install --save-dev @scope/public-plugin@1.2.0
-npx vrev plugin list
+npx @vrev/cli plugin list
 ```
 
 Core runtimeとplugin author向けSDKはhost infrastructureであり、この6つのfeature packageには数えない。
@@ -166,7 +166,7 @@ import {
   type PluginCommandHandler,
   type PluginIssueProvider,
   type PluginStorageProvider,
-} from "vrev";
+} from "@vrev/cli";
 import type { VrevPluginManifestV1 } from "@vrev/plugin-sdk";
 ```
 

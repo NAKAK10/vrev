@@ -23,7 +23,7 @@ HTML・画像・ローカルWebアプリへ注釈を付け、coding agentによ�
 
 ```bash
 npm install --save-dev \
-  vrev@1.0.0-beta \
+  @vrev/cli@1.0.0-beta \
   @vrev/ai@1.0.0-beta \
   @vrev/storage-firestore@1.0.0-beta \
   @vrev/review@1.0.0-beta \
@@ -33,7 +33,7 @@ npm install --save-dev \
 ```
 
 ```bash
-npx vrev serve --target .code/htmls/example/index.html
+npx @vrev/cli serve --target .code/htmls/example/index.html
 ```
 
 first-party feature packageは **AI、Firestore、review、annotation-workflow、page-map、github-issueの6つ**です。AI packageが利用するCLIの選択、外部AIコマンドの登録・検証・実行、`ai/v1` capabilityを所有します。annotation-workflowとgithub-issueは用途に合うAIを`ai/v1`へ依頼するだけで、利用者にAIを選ばせません。Firestoreが不要なworkspaceでは`@vrev/storage-firestore`を省略できます。plugin開発用contractには`@vrev/plugin-sdk@1.0.0-beta`を導入し、codeでは`@vrev/plugin-sdk`からimportできます。

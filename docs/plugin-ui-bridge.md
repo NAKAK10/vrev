@@ -152,7 +152,7 @@ annotation-workflowは注釈の`status`（未対応・AI対応中・失敗・AI�
 
 ### 型
 
-plugin開発者は`@vrev/plugin-sdk`からmanifest、UI contribution、server lifecycle、bridge、capabilityのversioned contractをimportできる。Core runtime helperが必要なlegacy integrationだけ`vrev`を利用する。`vrev plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
+plugin開発者は`@vrev/plugin-sdk`からmanifest、UI contribution、server lifecycle、bridge、capabilityのversioned contractをimportできる。Core runtime helperが必要なlegacy integrationだけ`@vrev/cli`を利用する。`vrev plugin create`はschema v4のmanifest、server provider、UI contribution、`types.d.ts`を生成する。
 
 ## 3. Limits
 

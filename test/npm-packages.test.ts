@@ -13,7 +13,7 @@ const featurePackages = new Map([
   ["plugins/github-issue", "@vrev/github-issue"],
 ]);
 const packages = new Map([
-  [".", "vrev"],
+  [".", "@vrev/cli"],
   ["packages/plugin-sdk", "@vrev/plugin-sdk"],
   ...featurePackages,
 ]);
@@ -24,6 +24,7 @@ test("the agreed package set targets public npm and feature packages expose pack
       name: string;
       license: string;
       publishConfig?: { access?: string; registry?: string };
+      bin?: Record<string, string>;
       vrev?: { apiVersion?: number; manifest?: string };
       dependencies?: Record<string, string>;
     };
@@ -31,6 +32,7 @@ test("the agreed package set targets public npm and feature packages expose pack
     assert.equal(packageJson.license, "MIT");
     assert.equal(readFileSync(path.join(root, directory, "LICENSE"), "utf8"), readFileSync(path.join(root, "LICENSE"), "utf8"));
     assert.deepEqual(packageJson.publishConfig, { access: "public", registry: "https://registry.npmjs.org" });
+    if (directory === ".") assert.deepEqual(packageJson.bin, { vrev: "dist/src/cli.js" });
     if (directory.startsWith("plugins/")) {
       assert.deepEqual(packageJson.vrev, { apiVersion: 1, manifest: "./vrev.plugin.json" });
       assert.equal(existsSync(path.join(root, directory, "vrev.plugin.json")), true);

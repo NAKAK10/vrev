@@ -82,7 +82,7 @@ vrev plugin run firestore pull --collection team-storage
 plugin runtime APIから直接呼ぶこともできます。
 
 ```js
-import { loadPluginCommand } from "vrev";
+import { loadPluginCommand } from "@vrev/cli";
 
 const workspaceRoot = process.cwd();
 const { handler } = await loadPluginCommand("firestore", "push", workspaceRoot);

@@ -1,5 +1,5 @@
 {
-  "name": "vrev",
+  "name": "@vrev/cli",
   "version": "1.0.0-beta",
   "private": false,
   "description": "Local vrev and annotation workflow for AI-assisted UI fixes",

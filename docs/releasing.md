@@ -1,6 +1,6 @@
 # Publishing releases
 
-`.github/workflows/release-package.yml` publishes `vrev`, `@vrev/plugin-sdk`, and the six `@vrev/*` feature packages to the public npm registry when a GitHub release is published. A manual dispatch with a release tag only recovers package versions that are still missing; it does not overwrite versions already present.
+`.github/workflows/release-package.yml` publishes `@vrev/cli`, `@vrev/plugin-sdk`, and the six `@vrev/*` feature packages to the public npm registry when a GitHub release is published. A manual dispatch with a release tag only recovers package versions that are still missing; it does not overwrite versions already present.
 
 ## Current beta release identity
 
