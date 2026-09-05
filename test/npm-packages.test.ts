@@ -131,7 +131,7 @@ test("verify-only performs a fail-closed OIDC exchange for all eight packages wi
   assert.equal(output.join(" ").includes(oidcToken), false);
   assert.equal(output.join(" ").includes(npmToken), false);
   assert.doesNotMatch(script, /npm publish|npm whoami|NPM_TOKEN|claims|response\.text/);
-  assert.match(workflow, /inputs\.bootstrap && !inputs\.verify_only/);
+  assert.doesNotMatch(workflow, /inputs\.bootstrap|secrets\.NPM_TOKEN/);
   assert.match(workflow, /github\.event_name != 'workflow_dispatch' \|\| !inputs\.verify_only/);
 });
 
@@ -208,10 +208,9 @@ test("release workflow publishes built feature artifacts to npm with OIDC proven
   assert.match(workflow, /id-token: write/);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install --global npm@11\.19\.1/);
-  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.bootstrap && !inputs\.verify_only/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.verify_only/);
   assert.match(workflow, /verify_only:/);
-  assert.match(workflow, /secrets\.NPM_TOKEN/);
-  assert.match(workflow, /npm whoami --registry https:\/\/registry\.npmjs\.org/);
+  assert.doesNotMatch(workflow, /bootstrap:|inputs\.bootstrap|NPM_TOKEN|NODE_AUTH_TOKEN|_authToken|npm whoami/, "release authentication must remain OIDC-only");
   assert.doesNotMatch(workflow, /^\s+registry-url:/m, "avoid dummy credentials masking an OIDC exchange failure");
   assert.match(workflow, /--provenance/);
   assert.match(workflow, /data\.repository =/);

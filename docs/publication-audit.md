@@ -21,7 +21,7 @@ These are automated checks and targeted review, not proof that no sensitive info
 - Package metadata and documentation intentionally identify the GitHub owner and repository. npm tarballs expose this identity even if GitHub remains private.
 - Following the owner's request, the current source and all eight packages use the MIT license. Each package includes the same LICENSE notice. Previously created release tags retain their original license metadata until a new release is created.
 - Private-network URLs in examples/tests are functional fixtures, not credentials. Review them if they were copied from a real environment.
-- The free npm `@vrev` organization was created under the owner's account, and initial publication is complete. Tokenless Trusted Publishing configuration remains a follow-up; see [releasing.md](releasing.md).
+- The free npm `@vrev` organization was created under the owner's account, and initial publication is complete. All eight packages passed real tokenless Trusted Publishing authentication in Actions run `33944310011`. The temporary npm token and repository `NPM_TOKEN` secret were removed afterward; the release workflow has no token fallback. See [releasing.md](releasing.md).
 
 ## Ongoing checks
 

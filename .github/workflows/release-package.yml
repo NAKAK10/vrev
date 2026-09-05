@@ -9,11 +9,6 @@ on:
         description: Release tag to recover or republish missing packages
         required: true
         type: string
-      bootstrap:
-        description: Use NPM_TOKEN for first-time package publishing
-        required: false
-        default: false
-        type: boolean
       verify_only:
         description: Verify trusted publishing for every package without publishing
         required: false
@@ -236,19 +231,6 @@ jobs:
           // OIDC_VERIFY_SCRIPT_END
           NODE
 
-      - name: Configure first-publish authentication
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && !inputs.verify_only }}
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [[ -z "$NPM_TOKEN" ]]; then
-            echo "::error::Bootstrap requires the repository secret NPM_TOKEN with publish access to every package."
-            exit 1
-          fi
-          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          npm whoami --registry https://registry.npmjs.org
-          echo "Using bootstrap credentials. Configure trusted publishing and remove NPM_TOKEN afterward."
-
       - name: Publish missing package versions to npm
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         env:
@@ -280,7 +262,7 @@ jobs:
             else
               echo "Publishing ${name}@${version} with provenance"
               if ! npm publish "./${directory}" --tag "$DIST_TAG" --access public --provenance; then
-                echo "::error title=npm publish authorization failed::If npm returned E404, verify that this package exists, the publisher owns it, and npm trusted publishing names NAKAK10/vrev and release-package.yml exactly. New package names require a one-time token-authenticated bootstrap publish; see docs/releasing.md."
+                echo "::error title=npm publish authorization failed::If npm returned E404, verify that this package exists, the publisher owns it, and npm trusted publishing names NAKAK10/vrev and release-package.yml exactly. New package names require a separately approved first-publication procedure; this workflow has no token fallback. See docs/releasing.md."
                 return 1
               fi
             fi

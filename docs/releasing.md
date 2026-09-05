@@ -8,7 +8,7 @@ All eight package versions and all six plugin manifest versions are `1.0.0-beta`
 
 The registry currently also assigns `latest` to this initial beta. Attempting to remove it with the bootstrap token returned HTTP 403; tag administration is separate from publishing. Until this is adjusted through an authorized npm account, use `npx @vrev/cli@beta` explicitly. The workflow does not silently change or delete existing tags.
 
-The GitHub repository is now public. First publication succeeded using the temporary `NPM_TOKEN` (expires 2026-09-12). Configuring and validating Trusted Publishing on all eight packages remains necessary before removing that token. Normal release events are not yet verified without bootstrap credentials. Keep the bootstrap path and secret until the package owner completes verification.
+The GitHub repository is public. On 2026-09-05, all eight packages passed real GitHub OIDC → npm publish-scoped token exchange in [verification run 33944310011](https://github.com/NAKAK10/vrev/actions/runs/33944310011). The repository `NPM_TOKEN` secret and temporary npm token `vrev-bootstrap-beta` were then deleted. The workflow now uses OIDC only, with no bootstrap input or token fallback. Verification did not publish a new version; the next release's actual publish remains a separate operation.
 
 ## Authentication
 
@@ -18,31 +18,30 @@ Trusted publishing is the normal authentication mode. In npm, configure a GitHub
 - Repository: `vrev`
 - Workflow filename: `release-package.yml`
 - Environment: leave blank (the workflow does not use a GitHub environment)
+- Allow npm publish: enabled
 
 The workflow tests and builds released tags on the supported minimum Node 20 runtime, then switches to Node 22 and npm 11.19.1 for publishing with `id-token: write` and provenance. Main-branch CI tests both Node 20 and 22. npm tries GitHub OIDC before checking registry credentials. Omitting `registry-url` avoids setup-node v5's placeholder token masking a failed OIDC exchange as a registry `E404`; that placeholder does not itself prevent OIDC authentication. Signing provenance is separate from npm publish authorization and does not prove trusted publishing is configured.
 
-Trusted publishing cannot create a package on its first publish. Bootstrap every new package name once with an npm account that owns the name/scope. For the scoped packages, the publishing account must own or have publish access to the `@vrev` scope. Add a granular automation token as the repository Actions secret `NPM_TOKEN`, manually run the release recovery workflow with `bootstrap: true`, then configure the trusted publisher on every newly created npm package and remove `NPM_TOKEN`. The token must cover all package names and satisfy the npm account/package 2FA publishing policy.
+All eight existing package names are ready for OIDC publishing. Under the first-publication limitation encountered during this release, a new package name needs a separately approved first-publication procedure using an account that owns the name/scope, followed by trusted-publisher configuration and verification. Do not restore a persistent token fallback to the release workflow.
 
 After configuring all eight packages in npm's browser UI, verify the setup from the updated default branch:
 
 ```sh
-gh workflow run release-package.yml --ref main -f release_tag=v1.0.0-beta -f verify_only=true -f bootstrap=false
+gh workflow run release-package.yml --ref main -f release_tag=v1.0.0-beta -f verify_only=true
 ```
 
-The `verify_only` run requests a fresh GitHub OIDC ID token and performs npm's publish-scoped token exchange separately for each package. It does not load `NPM_TOKEN`, call `npm publish`, or change a registry version. A tokenless `npm whoami` is not a substitute because npm OIDC credentials are publish-scoped. Inspect the resulting Actions run and require all eight package-name success lines before removing the secret or bootstrap path.
+The `verify_only` run requests a fresh GitHub OIDC ID token and performs npm's publish-scoped token exchange separately for each package. It does not load `NPM_TOKEN`, call `npm publish`, or change a registry version. A tokenless `npm whoami` is not a substitute because npm OIDC credentials are publish-scoped. Inspect the resulting Actions run and require all eight package-name success lines. npm browser success notifications alone are insufficient: confirm the configuration persists after reload and passes this exchange.
 
 Do not assume an npm `E404` means only that a version is absent. For a publish `PUT`, npm deliberately also returns `E404` when the package or scope does not exist or the current identity lacks permission.
 
 ## Recovery checklist
 
 1. Verify all package names and the `@vrev` scope are owned by the intended npm account or organization.
-2. Bootstrap names that do not yet exist using `NPM_TOKEN` as described above.
-3. Configure the exact trusted-publisher settings on every package.
+2. If adding a new package name, arrange its separately approved first publication as described above.
+3. Configure the exact trusted-publisher settings on every package, including direct publish permission.
 4. Run the `verify_only` command above and confirm all eight real npm token exchanges succeed.
-5. Remove the fallback `NPM_TOKEN` secret and bootstrap path only after the parent has verified the npm setup.
-6. For recovery, dispatch **Publish packages to npm** from the updated branch with the existing release tag, `verify_only: false`, and `bootstrap: false`. Do not rerun an old failed run: it uses its original workflow. The updated workflow checks out the requested tag, skips versions already in the registry, and publishes only missing versions.
-
-Bootstrap credentials are only loaded for an explicitly requested manual bootstrap, after tests and package inspection. Normal release events remain tokenless.
+5. Keep the workflow OIDC-only; no long-lived npm token secret is required.
+6. For recovery, dispatch **Publish packages to npm** from the updated branch with the existing release tag and `verify_only: false`. Do not rerun an old failed run: it uses its original workflow. The updated workflow checks out the requested tag, skips versions already in the registry, and publishes only missing versions.
 
 References: [npm trusted publishers](https://docs.npmjs.com/trusted-publishers), [initial-publish limitation](https://github.com/npm/cli/issues/8544).
 
