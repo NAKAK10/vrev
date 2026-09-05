@@ -6,6 +6,7 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 
 import { atomicWriteJson, fileSha256, resolveTarget, ReviewStore, reviewDirectoryName, sanitizeAnchor, withFileLock } from "../src/index.js";
+import { createLocalReviewDocumentStorage } from "../src/review-storage-local.js";
 
 function repository(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "vrev-"));
@@ -19,6 +20,18 @@ function repository(): string {
 function payload(store: ReviewStore) {
   return { kind: "dom" as const, page_path: store.entryPath, comment: "直してください", anchor: { selector: " h1 ", attributes: { id: "title", "data-api-key": "secret" }, viewport_mode: "mobile" as const, unknown: "secret" }, source_hash: fileSha256(store.targetPath) };
 }
+
+test("local storage tolerates missing transaction files but rejects dangling symlinks", () => {
+  const root = repository();
+  const store = new ReviewStore(".code/htmls/pages/index.html", { projectRoot: root });
+  const paths = { active: path.join(root, "active.json"), resolved: path.join(root, "resolved.json"), legacy: path.join(root, "legacy.json"), transaction: path.join(root, "transaction.json"), context: path.join(root, "context.json") };
+  assert.doesNotThrow(() => createLocalReviewDocumentStorage(store.target, paths));
+  for (const candidate of [paths.legacy, paths.transaction]) {
+    symlinkSync(path.join(root, "missing.json"), candidate);
+    assert.throws(() => createLocalReviewDocumentStorage(store.target, paths), /must not be symbolic links/);
+    unlinkSync(candidate);
+  }
+});
 
 test("uses deterministic destination and stable JSON format", async () => {
   const root = repository();
