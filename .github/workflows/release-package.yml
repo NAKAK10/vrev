@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      verify_only:
+        description: Verify trusted publishing for every package without publishing
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   publish:
@@ -149,8 +154,90 @@ jobs:
       - name: Use an npm version with trusted publishing support
         run: npm install --global npm@11.19.1
 
+      - name: Verify trusted publishing for every npm package
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          // OIDC_VERIFY_SCRIPT_START
+          const packageDirectories = [
+            ".",
+            "packages/plugin-sdk",
+            "dist/plugins/review",
+            "dist/plugins/ai",
+            "dist/plugins/firestore",
+            "dist/plugins/annotation-workflow",
+            "dist/plugins/page-map",
+            "dist/plugins/github-issue",
+          ];
+          const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+          const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+          if (!requestUrl || !requestToken) {
+            throw new Error("GitHub OIDC request is unavailable");
+          }
+
+          for (const directory of packageDirectories) {
+            const { name } = JSON.parse(readFileSync(`${directory}/package.json`, "utf8"));
+            let idTokenResponse;
+            try {
+              const url = new URL(requestUrl);
+              url.searchParams.append("audience", "npm:registry.npmjs.org");
+              idTokenResponse = await fetch(url, {
+                headers: {
+                  Accept: "application/json",
+                  Authorization: `Bearer ${requestToken}`,
+                },
+                signal: AbortSignal.timeout(30_000),
+              });
+            } catch {
+              throw new Error(`${name}: GitHub OIDC request failed (status unavailable)`);
+            }
+            if (!idTokenResponse.ok) {
+              throw new Error(`${name}: GitHub OIDC request failed (HTTP ${idTokenResponse.status})`);
+            }
+            let idTokenPayload;
+            try {
+              idTokenPayload = await idTokenResponse.json();
+            } catch {
+              throw new Error(`${name}: GitHub OIDC request failed (HTTP ${idTokenResponse.status})`);
+            }
+            if (typeof idTokenPayload?.value !== "string" || !idTokenPayload.value.trim()) {
+              throw new Error(`${name}: GitHub OIDC request failed (HTTP ${idTokenResponse.status})`);
+            }
+
+            const escapedPackageName = name.startsWith("@") ? name.replace("/", "%2f") : encodeURIComponent(name);
+            let exchangeResponse;
+            try {
+              exchangeResponse = await fetch(`https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${escapedPackageName}`, {
+                method: "POST",
+                headers: {
+                  Accept: "application/json",
+                  Authorization: `Bearer ${idTokenPayload.value}`,
+                },
+                signal: AbortSignal.timeout(30_000),
+              });
+            } catch {
+              throw new Error(`${name}: npm OIDC exchange failed (status unavailable)`);
+            }
+            if (!exchangeResponse.ok) {
+              throw new Error(`${name}: npm OIDC exchange failed (HTTP ${exchangeResponse.status})`);
+            }
+            let exchangePayload;
+            try {
+              exchangePayload = await exchangeResponse.json();
+            } catch {
+              throw new Error(`${name}: npm OIDC exchange failed (HTTP ${exchangeResponse.status})`);
+            }
+            if (typeof exchangePayload?.token !== "string" || !exchangePayload.token.trim()) {
+              throw new Error(`${name}: npm OIDC exchange failed (HTTP ${exchangeResponse.status})`);
+            }
+            console.log(`${name}: trusted publishing verified`);
+          }
+          // OIDC_VERIFY_SCRIPT_END
+          NODE
+
       - name: Configure first-publish authentication
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && !inputs.verify_only }}
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -163,6 +250,7 @@ jobs:
           echo "Using bootstrap credentials. Configure trusted publishing and remove NPM_TOKEN afterward."
 
       - name: Publish missing package versions to npm
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         env:
           DIST_TAG: ${{ steps.dist-tag.outputs.value }}
         run: |

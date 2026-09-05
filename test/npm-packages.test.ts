@@ -79,6 +79,108 @@ test("release version lookup skips existing versions and fails closed on registr
   assert.deepEqual(output, ["present", "missing"], "errors must never be reported as missing versions");
 });
 
+test("verify-only performs a fail-closed OIDC exchange for all eight packages without publishing", async () => {
+  const workflow = readFileSync(path.join(root, ".github/workflows/release-package.yml"), "utf8");
+  const startMarker = "// OIDC_VERIFY_SCRIPT_START";
+  const endMarker = "// OIDC_VERIFY_SCRIPT_END";
+  const start = workflow.indexOf(startMarker);
+  const end = workflow.indexOf(endMarker, start);
+  assert.ok(start > 0 && end > start, "the inline verification script must remain extractable for tests");
+  const script = workflow.slice(start + startMarker.length, end);
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (...args: string[]) => (...values: unknown[]) => Promise<void>;
+  const verify = new AsyncFunction("process", "fetch", "console", "AbortSignal", "URL", "readFileSync", script);
+  const packageNames = ["@vrev/cli", "@vrev/plugin-sdk", ...featurePackages.values()];
+  const packageByDirectory = new Map<string, string>([
+    [".", "@vrev/cli"],
+    ["packages/plugin-sdk", "@vrev/plugin-sdk"],
+    ...[...featurePackages].map(([directory, name]): [string, string] => [directory.replace("plugins/", "dist/plugins/"), name]),
+  ]);
+  const oidcToken = "header.sensitive-claims.signature";
+  const npmToken = "npm-sensitive-token";
+  const calls: Array<{ url: string; options: RequestInit }> = [];
+  const output: string[] = [];
+  const fetchMock = async (input: URL | string, options: RequestInit = {}) => {
+    const url = String(input);
+    calls.push({ url, options });
+    if (url.startsWith("https://actions.example/id-token")) {
+      assert.equal(new URL(url).searchParams.get("audience"), "npm:registry.npmjs.org");
+      assert.equal((options.headers as Record<string, string>).Authorization, "Bearer github-request-secret");
+      return new Response(JSON.stringify({ value: oidcToken }));
+    }
+    assert.match(url, /^https:\/\/registry\.npmjs\.org\/-\/npm\/v1\/oidc\/token\/exchange\/package\//);
+    assert.equal(options.method, "POST");
+    assert.equal((options.headers as Record<string, string>).Authorization, `Bearer ${oidcToken}`);
+    return new Response(JSON.stringify({ token: npmToken }));
+  };
+  await verify(
+    { env: { ACTIONS_ID_TOKEN_REQUEST_URL: "https://actions.example/id-token?job=1", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "github-request-secret" } },
+    fetchMock,
+    { log: (message: string) => output.push(message) },
+    AbortSignal,
+    URL,
+    (file: string) => JSON.stringify({ name: packageByDirectory.get(file.replace("/package.json", "")) }),
+  );
+
+  assert.equal(packageByDirectory.size, 8);
+  assert.equal(calls.length, 16, "each package must request its own GitHub ID token and exchange it with npm");
+  assert.deepEqual(
+    calls.filter(({ url }) => url.startsWith("https://registry.npmjs.org")).map(({ url }) => url.split("/").at(-1)),
+    packageNames.map((name) => name.replace("/", "%2f")),
+  );
+  assert.deepEqual(output, packageNames.map((name) => `${name}: trusted publishing verified`));
+  assert.equal(output.join(" ").includes(oidcToken), false);
+  assert.equal(output.join(" ").includes(npmToken), false);
+  assert.doesNotMatch(script, /npm publish|npm whoami|NPM_TOKEN|claims|response\.text/);
+  assert.match(workflow, /inputs\.bootstrap && !inputs\.verify_only/);
+  assert.match(workflow, /github\.event_name != 'workflow_dispatch' \|\| !inputs\.verify_only/);
+});
+
+test("verify-only reports only safe status context on OIDC errors", async () => {
+  const workflow = readFileSync(path.join(root, ".github/workflows/release-package.yml"), "utf8");
+  const startMarker = "// OIDC_VERIFY_SCRIPT_START";
+  const script = workflow.slice(workflow.indexOf(startMarker) + startMarker.length, workflow.indexOf("// OIDC_VERIFY_SCRIPT_END"));
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (...args: string[]) => (...values: unknown[]) => Promise<void>;
+  const verify = new AsyncFunction("process", "fetch", "console", "AbortSignal", "URL", "readFileSync", script);
+  const run = (fetchMock: typeof fetch) => verify(
+    { env: { ACTIONS_ID_TOKEN_REQUEST_URL: "https://actions.example/id-token", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-secret" } },
+    fetchMock,
+    { log: () => assert.fail("failed verification must not log success") },
+    AbortSignal,
+    URL,
+    () => JSON.stringify({ name: "@vrev/cli" }),
+  );
+  const rejectedError = async (promise: Promise<void>) => {
+    try {
+      await promise;
+      assert.fail("verification unexpectedly succeeded");
+    } catch (error) {
+      return error as Error;
+    }
+  };
+
+  const githubFailure = await rejectedError(run(async () => new Response("sensitive error response", { status: 403 })));
+  assert.match(githubFailure.message, /@vrev\/cli: GitHub OIDC request failed \(HTTP 403\)/);
+  assert.doesNotMatch(githubFailure.message, /sensitive|request-secret/);
+
+  let request = 0;
+  const exchangeFailure = await rejectedError(run(async () => {
+    request += 1;
+    return request === 1
+      ? new Response(JSON.stringify({ value: "sensitive-id-token" }))
+      : new Response(JSON.stringify({ token: "leaked-token", message: "sensitive body" }), { status: 401 });
+  }));
+  assert.match(exchangeFailure.message, /@vrev\/cli: npm OIDC exchange failed \(HTTP 401\)/);
+  assert.doesNotMatch(exchangeFailure.message, /sensitive|token|body/);
+
+  request = 0;
+  await assert.rejects(run(async () => {
+    request += 1;
+    return request === 1
+      ? new Response(JSON.stringify({ value: "sensitive-id-token" }))
+      : new Response(JSON.stringify({ message: "no token" }));
+  }), /npm OIDC exchange failed \(HTTP 200\)/);
+});
+
 test("AI feature packages consume the reusable ai/v1 capability", () => {
   const ai = readFileSync(path.join(root, "plugins/ai/server/index.js"), "utf8");
   const issue = readFileSync(path.join(root, "plugins/github-issue/server/index.js"), "utf8");
@@ -106,7 +208,8 @@ test("release workflow publishes built feature artifacts to npm with OIDC proven
   assert.match(workflow, /id-token: write/);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install --global npm@11\.19\.1/);
-  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.bootstrap/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.bootstrap && !inputs\.verify_only/);
+  assert.match(workflow, /verify_only:/);
   assert.match(workflow, /secrets\.NPM_TOKEN/);
   assert.match(workflow, /npm whoami --registry https:\/\/registry\.npmjs\.org/);
   assert.doesNotMatch(workflow, /^\s+registry-url:/m, "avoid dummy credentials masking an OIDC exchange failure");
