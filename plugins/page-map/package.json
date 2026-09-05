@@ -4,6 +4,11 @@
   "description": "Static HTML transition map for Vrev",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/page-map"
+  },
   "files": [
     "index.d.ts",
     "server",

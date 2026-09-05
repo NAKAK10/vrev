@@ -4,6 +4,11 @@
   "description": "Default annotation post-save workflow policy for Vrev",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/annotation-workflow"
+  },
   "files": [
     "README.md",
     "index.js",

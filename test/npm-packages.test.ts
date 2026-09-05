@@ -22,6 +22,7 @@ test("the agreed package set targets public npm and feature packages expose pack
   for (const [directory, expectedName] of packages) {
     const packageJson = JSON.parse(readFileSync(path.join(root, directory, "package.json"), "utf8")) as {
       name: string;
+      repository: { type: string; url: string; directory?: string };
       license: string;
       publishConfig?: { access?: string; registry?: string };
       bin?: Record<string, string>;
@@ -29,6 +30,9 @@ test("the agreed package set targets public npm and feature packages expose pack
       dependencies?: Record<string, string>;
     };
     assert.equal(packageJson.name, expectedName);
+    assert.equal(packageJson.repository.type, "git");
+    assert.equal(packageJson.repository.url, "git+https://github.com/NAKAK10/vrev.git");
+    if (directory !== ".") assert.equal(packageJson.repository.directory, directory);
     assert.equal(packageJson.license, "MIT");
     assert.equal(readFileSync(path.join(root, directory, "LICENSE"), "utf8"), readFileSync(path.join(root, "LICENSE"), "utf8"));
     assert.deepEqual(packageJson.publishConfig, { access: "public", registry: "https://registry.npmjs.org" });
@@ -85,6 +89,8 @@ test("release workflow publishes built feature artifacts to npm with OIDC proven
   assert.match(workflow, /npm whoami --registry https:\/\/registry\.npmjs\.org/);
   assert.doesNotMatch(workflow, /^\s+registry-url:/m, "avoid dummy credentials masking an OIDC exchange failure");
   assert.match(workflow, /--provenance/);
+  assert.match(workflow, /data\.repository =/);
+  assert.match(workflow, /git\+https:\/\/github\.com\/NAKAK10\/vrev\.git/);
   assert.match(workflow, /dist\/plugins\/ai/);
   assert.match(workflow, /dist\/plugins\/firestore/);
   assert.doesNotMatch(workflow, /dist\/plugins\/(?:runner-local|custom-command)/);

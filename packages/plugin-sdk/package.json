@@ -4,6 +4,11 @@
   "description": "Stable plugin contracts and TypeScript types for Vrev",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "packages/plugin-sdk"
+  },
   "files": [
     "README.md",
     "index.js",

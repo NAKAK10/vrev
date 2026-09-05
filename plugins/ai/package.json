@@ -4,6 +4,11 @@
   "description": "Reusable AI capability and integration-method facade for Vrev",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/ai"
+  },
   "files": [
     "README.md",
     "server",

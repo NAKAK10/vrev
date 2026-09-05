@@ -3,6 +3,11 @@
   "version": "1.0.0-beta",
   "description": "Firestore WorkspaceStorageProviderV1 backend for Vrev, one document per storage key",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/firestore"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=20"

@@ -3,6 +3,11 @@
   "version": "1.0.0-beta",
   "description": "AI-assisted GitHub Issue workflow for Vrev",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/github-issue"
+  },
   "license": "MIT",
   "files": [
     "index.js",

@@ -34,7 +34,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Apply release tag version to every package
+      - name: Apply release version and repository metadata to every package
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
         run: |
@@ -65,6 +65,14 @@ jobs:
           for (const file of files) {
             const data = JSON.parse(fs.readFileSync(file, "utf8"));
             data.version = process.env.RELEASE_VERSION;
+            // Old tags can be recovered without moving their source references.
+            if (file.endsWith("/package.json")) {
+              data.repository = {
+                type: "git",
+                url: "git+https://github.com/NAKAK10/vrev.git",
+                directory: file.slice(0, -"/package.json".length),
+              };
+            }
             fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
           }
           NODE

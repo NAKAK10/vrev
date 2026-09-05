@@ -4,6 +4,11 @@
   "private": false,
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NAKAK10/vrev.git",
+    "directory": "plugins/review"
+  },
   "files": [
     "README.md",
     "server",
