@@ -1,6 +1,6 @@
 # Pre-publication audit
 
-Audit date: 2026-09-05. Release code reviewed: `3d5305e` (`v1.3.4`).
+Audit date: 2026-09-05. Release code reviewed: `26d59cb` (`v1.3.4`, after the approved email-metadata rewrite).
 
 ## Scope and results
 
@@ -16,7 +16,8 @@ These are automated checks and targeted review, not proof that no sensitive info
 ## Decisions required before public exposure
 
 - The GitHub repository is currently private. npm publication and GitHub visibility are separate actions; this audit does not change either.
-- Historical commit metadata includes two old non-noreply email identities. The repository-local Git configuration now uses `nakashima@fuku60.com` for new commits. This does not remove existing metadata. Rewriting and force-pushing historical branches/tags still requires explicit approval.
+- With the owner's explicit approval, all 80 existing commits and all 19 tags were rewritten so author, committer, and tagger email metadata uses `nakashima@fuku60.com`. The main branch and tags were pushed atomically with explicit old-ref leases; every commit's file tree was verified unchanged. A private backup was retained outside the repository. Future commits use the same address.
+- Other clones must synchronize with the rewritten history. This rewrite does not purge old GitHub Actions logs/artifacts, cached commit pages, forks, or existing clones; GitHub-side removal may require a separate cleanup or support request before making the repository public.
 - Package metadata and documentation intentionally identify the GitHub owner and repository. npm tarballs expose this identity even if GitHub remains private.
 - Following the owner's request, the current source and all eight packages use the MIT license. Each package includes the same LICENSE notice. Previously created release tags retain their original license metadata until a new release is created.
 - Private-network URLs in examples/tests are functional fixtures, not credentials. Review them if they were copied from a real environment.
