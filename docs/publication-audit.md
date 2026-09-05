@@ -15,13 +15,13 @@ These are automated checks and targeted review, not proof that no sensitive info
 
 ## Decisions required before public exposure
 
-- The GitHub repository is currently private. npm publication and GitHub visibility are separate actions; this audit does not change either.
+- After the owner's explicit approval, the GitHub repository was made public on 2026-09-05. All eight npm packages were also published as `1.0.0-beta` with MIT licenses and provenance. The CLI package uses `@vrev/cli` because npm rejected the unscoped `vrev` name. See [releasing.md](releasing.md) for current tags and authentication follow-up.
 - With the owner's explicit approval, all 80 existing commits and all 19 tags were rewritten so author, committer, and tagger email metadata uses `nakashima@fuku60.com`. The main branch and tags were pushed atomically with explicit old-ref leases; every commit's file tree was verified unchanged. A private backup was retained outside the repository. Future commits use the same address.
 - Other clones must synchronize with the rewritten history. This rewrite does not purge old GitHub Actions logs/artifacts, cached commit pages, forks, or existing clones; GitHub-side removal may require a separate cleanup or support request before making the repository public.
 - Package metadata and documentation intentionally identify the GitHub owner and repository. npm tarballs expose this identity even if GitHub remains private.
 - Following the owner's request, the current source and all eight packages use the MIT license. Each package includes the same LICENSE notice. Previously created release tags retain their original license metadata until a new release is created.
 - Private-network URLs in examples/tests are functional fixtures, not credentials. Review them if they were copied from a real environment.
-- First publication still requires npm ownership/publish access for the package names and scope; see [releasing.md](releasing.md).
+- The free npm `@vrev` organization was created under the owner's account, and initial publication is complete. Tokenless Trusted Publishing configuration remains a follow-up; see [releasing.md](releasing.md).
 
 ## Ongoing checks
 

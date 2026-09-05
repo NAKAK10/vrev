@@ -4,7 +4,11 @@
 
 ## Current beta release identity
 
-All eight package versions and all six plugin manifest versions must be exactly `1.0.0-beta`. Create the GitHub release from tag `v1.0.0-beta` and publish npm packages with dist-tag `beta`; do not assign this prerelease to `latest`.
+All eight package versions and all six plugin manifest versions are `1.0.0-beta`. The packages were published publicly with MIT licenses and provenance on 2026-09-05 from tag `v1.0.0-beta`, using `--tag beta`. Keep published versions and the published tag immutable.
+
+The registry currently also assigns `latest` to this initial beta. Attempting to remove it with the bootstrap token returned HTTP 403; tag administration is separate from publishing. Until this is adjusted through an authorized npm account, use `npx @vrev/cli@beta` explicitly. The workflow does not silently change or delete existing tags.
+
+The GitHub repository is now public. First publication succeeded using the temporary `NPM_TOKEN` (expires 2026-09-12). Configuring and validating Trusted Publishing on all eight packages remains necessary before removing that token. Normal release events are not yet verified without bootstrap credentials.
 
 ## Authentication
 

@@ -111,9 +111,6 @@ test("release workflow publishes built feature artifacts to npm with OIDC proven
   assert.match(workflow, /npm whoami --registry https:\/\/registry\.npmjs\.org/);
   assert.doesNotMatch(workflow, /^\s+registry-url:/m, "avoid dummy credentials masking an OIDC exchange failure");
   assert.match(workflow, /--provenance/);
-  assert.ok(workflow.includes('if [[ "$DIST_TAG" != "latest" ]]'));
-  assert.ok(workflow.includes('if [[ "$latest_version" == "$version" ]]'));
-  assert.ok(workflow.includes('npm dist-tag rm "$name" latest'));
   assert.match(workflow, /data\.repository =/);
   assert.match(workflow, /git\+https:\/\/github\.com\/NAKAK10\/vrev\.git/);
   assert.match(workflow, /dist\/plugins\/ai/);
