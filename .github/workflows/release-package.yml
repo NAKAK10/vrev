@@ -170,7 +170,24 @@ jobs:
             directory="$1"
             name="$(node -p "require('./${directory}/package.json').name")"
             version="$(node -p "require('./${directory}/package.json').version")"
-            if npm view "${name}@${version}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            # Query the public version endpoint directly. Never treat npm CLI/auth
+            # or network errors as evidence that an immutable version is missing.
+            publication_state="$(PACKAGE_NAME="$name" PACKAGE_VERSION="$version" node --input-type=module <<'NODE'
+          const name = process.env.PACKAGE_NAME;
+          const version = process.env.PACKAGE_VERSION;
+          const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
+          const response = await fetch(url, { headers: { "cache-control": "no-cache" }, signal: AbortSignal.timeout(30_000) });
+          if (response.status === 404) {
+            console.log("missing");
+          } else {
+            if (!response.ok) throw new Error(`Registry version lookup failed: HTTP ${response.status}`);
+            const metadata = await response.json();
+            if (metadata.name !== name || metadata.version !== version) throw new Error("Registry returned unexpected package metadata");
+            console.log("present");
+          }
+          NODE
+            )" || return 1
+            if [[ "$publication_state" == "present" ]]; then
               echo "Skipping existing ${name}@${version}"
             else
               echo "Publishing ${name}@${version} with provenance"

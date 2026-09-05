@@ -57,6 +57,28 @@ test("the agreed package set targets public npm and feature packages expose pack
   assert.equal(existsSync(path.join(root, "plugins/custom-command")), false);
 });
 
+test("release version lookup skips existing versions and fails closed on registry errors", async () => {
+  const workflow = readFileSync(path.join(root, ".github/workflows/release-package.yml"), "utf8");
+  const start = workflow.indexOf("const name = process.env.PACKAGE_NAME;");
+  const end = workflow.indexOf("\n          NODE", start);
+  assert.ok(start > 0 && end > start);
+  const lookup = new Function("process", "fetch", "console", "AbortSignal", `return (async () => {${workflow.slice(start, end)}})()`);
+  const output: string[] = [];
+  const env = { env: { PACKAGE_NAME: "@vrev/cli", PACKAGE_VERSION: "1.0.0-beta" } };
+  const run = (response: Response) => lookup(env, async (url: string) => {
+    assert.equal(url, "https://registry.npmjs.org/%40vrev%2Fcli/1.0.0-beta");
+    return response;
+  }, { log: (value: string) => output.push(value) }, AbortSignal) as Promise<void>;
+  await run(new Response(JSON.stringify({ name: "@vrev/cli", version: "1.0.0-beta" })));
+  await run(new Response(null, { status: 404 }));
+  assert.deepEqual(output, ["present", "missing"]);
+  for (const status of [401, 403, 429, 500, 503]) {
+    await assert.rejects(run(new Response(null, { status })), /Registry version lookup failed/);
+  }
+  await assert.rejects(run(new Response(JSON.stringify({ name: "wrong", version: "other" }))), /unexpected package metadata/);
+  assert.deepEqual(output, ["present", "missing"], "errors must never be reported as missing versions");
+});
+
 test("AI feature packages consume the reusable ai/v1 capability", () => {
   const ai = readFileSync(path.join(root, "plugins/ai/server/index.js"), "utf8");
   const issue = readFileSync(path.join(root, "plugins/github-issue/server/index.js"), "utf8");
