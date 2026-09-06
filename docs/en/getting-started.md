@@ -22,15 +22,15 @@ In the project you want to review, install Core and the standard feature package
 
 ```bash
 npm install --save-dev \
-  @vrev/cli@1.0.0-beta.2 \
-  @vrev/ai@1.0.0-beta.2 \
-  @vrev/review@1.0.0-beta.2 \
-  @vrev/annotation-workflow@1.0.0-beta.2 \
-  @vrev/page-map@1.0.0-beta.2 \
-  @vrev/github-issue@1.0.0-beta.2
+  @vrev/cli@1.0.0-beta2 \
+  @vrev/ai@1.0.0-beta2 \
+  @vrev/review@1.0.0-beta2 \
+  @vrev/annotation-workflow@1.0.0-beta2 \
+  @vrev/page-map@1.0.0-beta2 \
+  @vrev/github-issue@1.0.0-beta2
 ```
 
-Add `@vrev/storage-firestore@1.0.0-beta.2` if you need Firestore remote storage. Core discovers plugins from direct dependencies in your project's `package.json`.
+Add `@vrev/storage-firestore@1.0.0-beta2` if you need Firestore remote storage. Core discovers plugins from direct dependencies in your project's `package.json`.
 
 ## 3. Open a target
 

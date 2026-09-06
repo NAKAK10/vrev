@@ -4,7 +4,7 @@
 
 ## Current beta release identity
 
-The beta 2 release uses `1.0.0-beta.2` for all eight packages and all six plugin manifests, tag `v1.0.0-beta.2`, and npm dist-tag `beta`. It updates the CLI README with Japanese, English, and Simplified Chinese documentation links and ships the redesigned documentation site. Install it explicitly with `npm install --save-dev @vrev/cli@1.0.0-beta.2` or follow the [quick start](./getting-started) for the complete package set. Do not move the stable `latest` dist-tag when publishing a prerelease.
+The beta 2 release uses `1.0.0-beta2` for all eight packages and all six plugin manifests, tag `v1.0.0-beta2`, and npm dist-tag `beta`. It updates the CLI README with Japanese, English, and Simplified Chinese documentation links and ships the redesigned documentation site. Install it explicitly with `npm install --save-dev @vrev/cli@1.0.0-beta2` or follow the [quick start](./getting-started) for the complete package set. Do not move the stable `latest` dist-tag when publishing a prerelease.
 
 ### Initial beta history
 

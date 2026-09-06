@@ -22,15 +22,15 @@ AI 和 GitHub 可以稍后配置。先打开一个审阅对象，添加第一条
 
 ```bash
 npm install --save-dev \
-  @vrev/cli@1.0.0-beta.2 \
-  @vrev/ai@1.0.0-beta.2 \
-  @vrev/review@1.0.0-beta.2 \
-  @vrev/annotation-workflow@1.0.0-beta.2 \
-  @vrev/page-map@1.0.0-beta.2 \
-  @vrev/github-issue@1.0.0-beta.2
+  @vrev/cli@1.0.0-beta2 \
+  @vrev/ai@1.0.0-beta2 \
+  @vrev/review@1.0.0-beta2 \
+  @vrev/annotation-workflow@1.0.0-beta2 \
+  @vrev/page-map@1.0.0-beta2 \
+  @vrev/github-issue@1.0.0-beta2
 ```
 
-如需使用 Firestore 远程存储，请额外安装 `@vrev/storage-firestore@1.0.0-beta.2`。Core 从项目 `package.json` 的直接依赖中发现插件。
+如需使用 Firestore 远程存储，请额外安装 `@vrev/storage-firestore@1.0.0-beta2`。Core 从项目 `package.json` 的直接依赖中发现插件。
 
 ## 3. 打开审阅对象
 

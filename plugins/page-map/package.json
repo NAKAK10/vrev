@@ -1,6 +1,6 @@
 {
   "name": "@vrev/page-map",
-  "version": "1.0.0-beta.2",
+  "version": "1.0.0-beta2",
   "description": "Static HTML transition map for Vrev",
   "license": "MIT",
   "type": "module",

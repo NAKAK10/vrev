@@ -22,15 +22,15 @@ AI や GitHub の設定は後から追加できます。まずは対象を開い
 
 ```bash
 npm install --save-dev \
-  @vrev/cli@1.0.0-beta.2 \
-  @vrev/ai@1.0.0-beta.2 \
-  @vrev/review@1.0.0-beta.2 \
-  @vrev/annotation-workflow@1.0.0-beta.2 \
-  @vrev/page-map@1.0.0-beta.2 \
-  @vrev/github-issue@1.0.0-beta.2
+  @vrev/cli@1.0.0-beta2 \
+  @vrev/ai@1.0.0-beta2 \
+  @vrev/review@1.0.0-beta2 \
+  @vrev/annotation-workflow@1.0.0-beta2 \
+  @vrev/page-map@1.0.0-beta2 \
+  @vrev/github-issue@1.0.0-beta2
 ```
 
-Firestore によるリモートストレージが必要な場合は、`@vrev/storage-firestore@1.0.0-beta.2` も追加してください。Core はプロジェクトの `package.json` にある直接依存からプラグインを検出します。
+Firestore によるリモートストレージが必要な場合は、`@vrev/storage-firestore@1.0.0-beta2` も追加してください。Core はプロジェクトの `package.json` にある直接依存からプラグインを検出します。
 
 ## 3. 対象を開く
 

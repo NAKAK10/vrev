@@ -126,6 +126,10 @@ jobs:
           if [[ "$package_version" == *-* ]]; then
             prerelease="${package_version#*-}"
             dist_tag="${prerelease%%.*}"
+            # Both beta.2 and beta2 releases belong to the beta channel.
+            if [[ "$dist_tag" =~ ^beta[0-9]*$ ]]; then
+              dist_tag="beta"
+            fi
           else
             dist_tag="latest"
           fi

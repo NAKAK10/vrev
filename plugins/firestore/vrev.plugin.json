@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "firestore",
-  "version": "1.0.0-beta.2",
+  "version": "1.0.0-beta2",
   "display": {
     "title": "Firestore",
     "summary": "Firestore を Vrev の workspace storage backend として使います。",
