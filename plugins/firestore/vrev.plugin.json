@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "id": "firestore",
-  "version": "1.0.0-beta2",
+  "version": "1.0.0-beta3",
   "display": {
     "title": "Firestore",
     "summary": "Firestore を Vrev の workspace storage backend として使います。",
@@ -17,10 +17,22 @@
       "required": true,
       "default": "access_token",
       "options": [
-        { "value": "access_token", "label": "環境変数のaccess token" },
-        { "value": "service_account", "label": "サービスアカウントkey" },
-        { "value": "gcloud", "label": "gcloud CLI" },
-        { "value": "firebase_web", "label": "firebaseConfig（Firebase Auth匿名ログイン）" }
+        {
+          "value": "access_token",
+          "label": "環境変数のaccess token"
+        },
+        {
+          "value": "service_account",
+          "label": "サービスアカウントkey"
+        },
+        {
+          "value": "gcloud",
+          "label": "gcloud CLI"
+        },
+        {
+          "value": "firebase_web",
+          "label": "firebaseConfig（Firebase Auth匿名ログイン）"
+        }
       ]
     },
     {

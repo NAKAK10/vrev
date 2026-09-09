@@ -104,6 +104,7 @@ test("annotation workflow delegates AI selection to the AI package", async () =>
   await manager.enqueue({ max_parallel: 1 });
   await waitFor(() => invocations.length === 1);
   assert.equal(Object.hasOwn(invocations[0]!, "method_id"), false);
+  assert.equal(Object.hasOwn(invocations[0]!, "timeout_ms"), false);
   assert.equal(invocations[0]!.mode, "workspace-write");
   await manager.close();
 });

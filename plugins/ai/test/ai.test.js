@@ -164,6 +164,37 @@ test("AI timeout and cancellation settle even when an integration ignores its si
   capability.stop();
 });
 
+test("AI invocation without timeout_ms never times out on its own and still settles on cancel", async () => {
+  const integrationRegistry = createAiIntegrationRegistry();
+  integrationRegistry.register("hanging", {
+    list: () => [{ method_id: "remote", name: "Hanging Remote", method_kind: "remote", modes: ["text-only"] }],
+    invoke: () => ({ cancel() {}, result: new Promise(() => undefined) }),
+  });
+  const capability = createAiCapability({
+    workspaceRoot: "/workspace",
+    runnerRegistry: { list: () => [], resolve: () => { throw new Error("unused"); } },
+    processSupervisor: { run: () => { throw new Error("unused"); } },
+    integrationRegistry,
+  });
+  const unlimited = capability.invoke({ method_id: "hanging:remote", mode: "text-only", prompt: "draft" });
+  let settled = false;
+  void unlimited.result.then(() => { settled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(settled, false);
+  unlimited.cancel();
+  assert.equal((await unlimited.result).status, "cancelled");
+  capability.stop();
+});
+
+test("AI timeout_ms is validated (invalid values throw, values beyond 10 minutes are accepted)", async () => {
+  const { capability } = fixture();
+  for (const invalid of [0, -1, 1.5, "1000", null]) {
+    assert.throws(() => capability.invoke({ method_id: "claude", mode: "text-only", prompt: "draft", timeout_ms: invalid }), /AI timeout is invalid/);
+  }
+  const longRunning = capability.invoke({ method_id: "claude", mode: "text-only", prompt: "draft", timeout_ms: 30 * 60 * 1000 });
+  assert.equal((await longRunning.result).status, "completed");
+});
+
 test("server provider exposes ai/v1 and owns both process-backed provider registrations", async () => {
   const capabilities = [];
   const registered = [];

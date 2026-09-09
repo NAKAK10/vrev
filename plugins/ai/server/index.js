@@ -19,7 +19,6 @@ const METHOD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const METHOD_KINDS = new Set(["cli", "external-command", "api", "sdk", "remote", "integration"]);
 const MODES = new Set(["workspace-write", "text-only"]);
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_OUTPUT_LIMIT = 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
 
@@ -55,6 +54,13 @@ function integerInRange(value, fallback, minimum, maximum, label) {
   const resolved = value === undefined ? fallback : value;
   if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) throw new Error(`${label} is invalid`);
   return resolved;
+}
+// No default and no upper clamp: an omitted timeout means "no timeout" (undefined), and an
+// explicit timeout is only bounded below (must be a positive safe integer of milliseconds).
+function resolveTimeoutMs(value) {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error("AI timeout is invalid");
+  return value;
 }
 function normalizeOptions(value) {
   if (value === undefined) return {};
@@ -167,7 +173,7 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
     if (request.method_id !== undefined && (typeof request.method_id !== "string" || !METHOD_ID.test(request.method_id))) throw new Error("AI method ID is invalid");
     assertMode(request.mode);
     if (typeof request.prompt !== "string" || !request.prompt.trim() || Buffer.byteLength(request.prompt, "utf8") > 256 * 1024) throw new Error("AI prompt must be nonblank and at most 256 KiB");
-    const timeoutMs = integerInRange(request.timeout_ms, DEFAULT_TIMEOUT_MS, 1, DEFAULT_TIMEOUT_MS, "AI timeout");
+    const timeoutMs = resolveTimeoutMs(request.timeout_ms);
     const outputLimit = integerInRange(request.output_limit_bytes, DEFAULT_OUTPUT_LIMIT, 1, DEFAULT_OUTPUT_LIMIT, "AI output limit");
     const options = normalizeOptions(request.options);
     const invocation = { running: undefined, abortController: new AbortController(), cancelled: false, timedOut: false, interrupt: undefined };
@@ -183,16 +189,19 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
     };
     invocation.cancel = cancel;
     active.add(invocation);
-    const timer = setTimeout(() => {
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
       if (invocation.cancelled || invocation.timedOut) return;
       invocation.timedOut = true;
       invocation.abortController.abort();
       invocation.running?.cancel();
       invocation.interrupt(timeoutResult());
     }, timeoutMs);
-    // Keep the deadline alive even when a delegated integration leaves only a
-    // pending Promise. Otherwise Node can exit before the invocation settles.
-    // The result's finally handler clears this timer on success or cancellation.
+    // Keep the process alive while the invocation is pending, even when a delegated
+    // integration leaves only a pending Promise. Otherwise Node can exit before the
+    // invocation settles. A finite timeout's own timer already does this; when there is
+    // no timeout (unlimited), a ref'd interval takes over the same role instead. Both are
+    // cleared together in the result's finally handler below, on success or cancellation.
+    const keepAlive = timeoutMs === undefined ? setInterval(() => undefined, 60_000) : undefined;
 
     const execution = (async () => {
       try {
@@ -205,14 +214,14 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
         const methodId = request.method_id ?? selectAiMethod(workspaceRoot, methods)?.method_id ?? methods[0]?.method_id;
         if (!methodId || !methods.some(({ method_id }) => method_id === methodId)) throw new Error("AIパッケージで選択されたAIはこの処理に利用できません");
         if (integrationRegistry.has(methodId)) {
-          const delegated = await integrationRegistry.invoke(methodId, Object.freeze({ workspaceRoot, mode: request.mode, prompt: request.prompt, timeout_ms: timeoutMs, output_limit_bytes: outputLimit, options, signal: invocation.abortController.signal }));
+          const delegated = await integrationRegistry.invoke(methodId, Object.freeze({ workspaceRoot, mode: request.mode, prompt: request.prompt, ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }), output_limit_bytes: outputLimit, options, signal: invocation.abortController.signal }));
           invocation.running = { cancel: () => delegated.cancel(), result: delegated.result.then(processResultFromAi) };
         } else {
           const resolveOptions = request.mode === "text-only" ? { ...options, profile: "text-only" } : options;
           const spec = await runnerRegistry.resolve(methodId, { workspaceRoot, prompt: request.prompt, options: resolveOptions });
           if (invocation.timedOut) return timeoutResult();
           if (invocation.cancelled || stopped) return cancelledResult();
-          invocation.running = processSupervisor.run({ command: spec.command, args: [...spec.args], cwd: spec.cwd ?? workspaceRoot, env: spec.env ?? { ...process.env }, timeoutMs, stdoutLimit: outputLimit });
+          invocation.running = processSupervisor.run({ command: spec.command, args: [...spec.args], cwd: spec.cwd ?? workspaceRoot, env: spec.env ?? { ...process.env }, timeoutMs: timeoutMs ?? Number.POSITIVE_INFINITY, stdoutLimit: outputLimit });
         }
         if (invocation.timedOut) { invocation.running.cancel(); return timeoutResult(); }
         if (invocation.cancelled || stopped) { invocation.running.cancel(); return cancelledResult(); }
@@ -230,7 +239,7 @@ export function createAiCapability({ workspaceRoot, runnerRegistry, processSuper
         return { status: "failed", output: "", exit_code: null, message: diagnosticMessage(error), retryable: false };
       }
     })();
-    const result = Promise.race([execution, interrupted]).finally(() => { clearTimeout(timer); active.delete(invocation); });
+    const result = Promise.race([execution, interrupted]).finally(() => { clearTimeout(timer); clearInterval(keepAlive); active.delete(invocation); });
     return Object.freeze({ result, cancel });
   };
 

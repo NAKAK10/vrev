@@ -60,7 +60,7 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS;
   const stdoutLimit = options.stdoutLimit ?? DEFAULT_PROCESS_STDOUT_LIMIT;
   const killGraceMs = options.killGraceMs ?? 2_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("timeoutMs must be non-negative");
+  if (typeof timeoutMs !== "number" || Number.isNaN(timeoutMs) || timeoutMs < 0) throw new Error("timeoutMs must be non-negative (Infinity is allowed for no timeout)");
   if (!Number.isSafeInteger(stdoutLimit) || stdoutLimit < 0) throw new Error("stdoutLimit must be a non-negative integer");
   if (!Number.isFinite(killGraceMs) || killGraceMs < 0) throw new Error("killGraceMs must be non-negative");
 
@@ -72,7 +72,7 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
     run(spec): RunningProcessV1 {
       const invocationTimeoutMs = spec.timeoutMs ?? timeoutMs;
       const invocationStdoutLimit = spec.stdoutLimit ?? stdoutLimit;
-      if (!Number.isFinite(invocationTimeoutMs) || invocationTimeoutMs < 0) throw new Error("process timeoutMs must be non-negative");
+      if (typeof invocationTimeoutMs !== "number" || Number.isNaN(invocationTimeoutMs) || invocationTimeoutMs < 0) throw new Error("process timeoutMs must be non-negative (Infinity is allowed for no timeout)");
       if (!Number.isSafeInteger(invocationStdoutLimit) || invocationStdoutLimit < 0) throw new Error("process stdoutLimit must be a non-negative integer");
       let child: ChildProcess & { stdout: Readable; stderr: Readable };
       let requestedReason: ProcessResultV1["reason"] | undefined;
@@ -164,8 +164,10 @@ export function createProcessSupervisor(options: ProcessSupervisorOptions = {}):
         finish(null, requestedReason ?? "spawn-error");
       });
       child.once("close", (code) => finish(code, requestedReason ?? "exit"));
-      timeoutTimer = setTimeout(() => terminate("timeout"), invocationTimeoutMs);
-      timeoutTimer.unref();
+      if (Number.isFinite(invocationTimeoutMs)) {
+        timeoutTimer = setTimeout(() => terminate("timeout"), invocationTimeoutMs);
+        timeoutTimer.unref();
+      }
       return { result, cancel: () => terminate("cancelled") };
     },
   };
