@@ -243,3 +243,13 @@ test("process supervisor supports explicit cancellation", async () => {
   const result = await running.result;
   assert.equal(result.reason, "cancelled");
 });
+
+test("process supervisor treats an infinite timeout as no timer, and rejects NaN", async () => {
+  assert.throws(() => createProcessSupervisor({ timeoutMs: Number.NaN }), /timeoutMs must be non-negative/);
+  const supervisor = createProcessSupervisor({ timeoutMs: 20, killGraceMs: 20 });
+  assert.throws(() => supervisor.run({ ...nodeProcess("process.stdout.write('x')"), timeoutMs: Number.NaN }), /timeoutMs must be non-negative/);
+  // The supervisor's own default timeout (20ms) would normally kill this, but an explicit
+  // Infinity override on the invocation must skip arming a timeout timer entirely.
+  const completed = await supervisor.run({ ...nodeProcess("setTimeout(() => process.stdout.write('done'), 100)"), timeoutMs: Number.POSITIVE_INFINITY }).result;
+  assert.deepEqual(completed, { exitCode: 0, reason: "exit", stdout: "done" });
+});

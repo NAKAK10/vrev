@@ -16,6 +16,7 @@ export interface AiInvocationRequestV1 {
   readonly method_id?: string;
   readonly mode: AiModeV1;
   readonly prompt: string;
+  /** Milliseconds. Omit for no timeout (unlimited). */
   readonly timeout_ms?: number;
   readonly output_limit_bytes?: number;
   readonly options?: Readonly<Record<string, string | number | boolean | null>>;

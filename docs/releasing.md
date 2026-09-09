@@ -4,7 +4,11 @@
 
 ## Current beta release identity
 
-The beta 2 release uses `1.0.0-beta2` for all eight packages and all six plugin manifests, tag `v1.0.0-beta2`, and npm dist-tag `beta`. It updates the CLI README with Japanese, English, and Simplified Chinese documentation links and ships the redesigned documentation site. Install it explicitly with `npm install --save-dev @vrev/cli@1.0.0-beta2` or follow the [quick start](./getting-started) for the complete package set. Do not move the stable `latest` dist-tag when publishing a prerelease.
+The beta 3 release uses `1.0.0-beta3` for all eight packages and all six plugin manifests, tag `v1.0.0-beta3`, and npm dist-tag `beta`. It removes the AI invocation deadline: `timeout_ms` has no default and no upper bound, an omitted value means no timeout, and the AI batch-fix coordinator now runs unbounded. Failures unrelated to a timeout (cancelled, output-limit, spawn-error, and nonzero exit) are still reported as errors. Install it explicitly with `npm install --save-dev @vrev/cli@1.0.0-beta3` or follow the [quick start](./getting-started) for the complete package set. Do not move the stable `latest` dist-tag when publishing a prerelease.
+
+### Beta 2 history
+
+The beta 2 release used `1.0.0-beta2` for all eight packages and all six plugin manifests, tag `v1.0.0-beta2`, and npm dist-tag `beta`. It updated the CLI README with Japanese, English, and Simplified Chinese documentation links and shipped the redesigned documentation site.
 
 ### Initial beta history
 

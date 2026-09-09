@@ -369,7 +369,6 @@ export class JobManager {
         const invocation = await this.ai.invoke({
           mode: "workspace-write",
           prompt,
-          timeout_ms: 10 * 60 * 1000,
           output_limit_bytes: 64 * 1024,
         });
         command = {
